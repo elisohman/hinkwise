@@ -23,8 +23,17 @@ ApplicationWindow {
         Component.onCompleted: dashboardModel.reload()
     }
 
+    // Before there is a household there is nothing to show in the rail, so the
+    // first run takes the whole window. Once the wizard has written the
+    // profile, dashboardModel.hasProfile flips and the shell appears.
+    OnboardingPage {
+        anchors.fill: parent
+        visible: !dashboardModel.hasProfile
+    }
+
     RowLayout {
         anchors.fill: parent
+        visible: dashboardModel.hasProfile
         spacing: 0
 
         NavRail {
@@ -44,9 +53,7 @@ ApplicationWindow {
                 dashboard: dashboardModel
             }
 
-            PlaceholderPage {
-                title: qsTr("Buckets")
-                note: qsTr("Accounts and valuations arrive next.")
+            BucketsPage {
             }
 
             PlaceholderPage {

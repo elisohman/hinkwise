@@ -71,6 +71,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(hinkwise_infrastructure PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Presentation helpers with no QML or widget dependency: the money-in, text-out
+# edge that both the view models and their unit tests compile against.
+add_library(hinkwise_presentation STATIC
+    src/presentation/catalog.cpp
+    src/presentation/input_text.cpp
+)
+target_include_directories(hinkwise_presentation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(hinkwise_presentation PUBLIC hinkwise_domain Qt6::Core)
+target_compile_features(hinkwise_presentation PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hinkwise_presentation PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 qt_add_executable(hinkwise
     src/main.cpp
 )
@@ -86,20 +100,31 @@ qt_add_qml_module(hinkwise
     URI Hinkwise
     VERSION ${PROJECT_VERSION}
     SOURCES
+        src/presentation/accounts_view_model.cpp
+        src/presentation/accounts_view_model.h
         src/presentation/app_controller.cpp
         src/presentation/app_controller.h
         src/presentation/dashboard_view_model.cpp
         src/presentation/dashboard_view_model.h
+        src/presentation/wizard_view_model.cpp
+        src/presentation/wizard_view_model.h
     QML_FILES
         qml/Main.qml
         qml/theme/Theme.qml
         qml/components/BucketCard.qml
         qml/components/BucketGauge.qml
+        qml/components/ChoiceField.qml
+        qml/components/ConfirmDialog.qml
+        qml/components/FormRow.qml
         qml/components/InsightCard.qml
+        qml/components/MoneyField.qml
         qml/components/NavRail.qml
+        qml/components/PrimaryButton.qml
         qml/components/SectionHeader.qml
         qml/components/StatBlock.qml
+        qml/pages/BucketsPage.qml
         qml/pages/DashboardPage.qml
+        qml/pages/OnboardingPage.qml
         qml/pages/PlaceholderPage.qml
 )
 
@@ -107,6 +132,7 @@ target_link_libraries(hinkwise PRIVATE
     hinkwise_application
     hinkwise_domain
     hinkwise_infrastructure
+    hinkwise_presentation
     Qt6::Core
     Qt6::Gui
     Qt6::Quick

@@ -6,6 +6,7 @@
 #include "app_controller.h"
 #include "domain/insight.h"
 #include "domain/phase.h"
+#include "input_text.h"
 
 #include <QDate>
 #include <QLocale>
@@ -18,18 +19,6 @@
 namespace hinkwise::presentation {
 
 namespace {
-
-/// Money becomes text here and nowhere else: the amount is exact until the
-/// formatter sees it, and the ISO code travels with it so the household never
-/// has to guess which currency a figure is in.
-QString formatMoney(const domain::Money& amount)
-{
-    const QLocale locale;
-    const double divisor =
-        std::pow(10.0, static_cast<double>(domain::traitsOf(amount.currency()).minorDigits));
-    return locale.toCurrencyString(static_cast<double>(amount.minorUnits()) / divisor,
-                                   QString::fromLatin1(domain::isoCodeOf(amount.currency())));
-}
 
 QString colourKeyOf(domain::Bucket bucket)
 {
@@ -64,6 +53,35 @@ double trackPosition(domain::Money amount, double axis)
     if (axis <= 0.0)
         return 0.0;
     return std::clamp(static_cast<double>(amount.minorUnits()) / axis, 0.0, 1.0);
+}
+
+/// How long a bucket's money is meant to sit: the horizon the model gives it,
+/// as a phrase rather than a range of years.
+QString horizonLabel(domain::Bucket bucket)
+{
+    const domain::Horizon& horizon = domain::factsOf(bucket).horizon;
+    if (!horizon.hasUpperBound()) {
+        if (horizon.minYears > 0)
+            return DashboardViewModel::tr("%1+ years").arg(horizon.minYears);
+        return DashboardViewModel::tr("any horizon");
+    }
+    if (horizon.minYears == 0)
+        return DashboardViewModel::tr("under %1 years").arg(*horizon.maxYears);
+    return DashboardViewModel::tr("%1–%2 years").arg(horizon.minYears).arg(*horizon.maxYears);
+}
+
+/// The band, cap or absence of one, in the words the model uses.
+QString targetLabel(const domain::ResolvedTarget& target)
+{
+    if (target.hasTarget()) {
+        return DashboardViewModel::tr("Target: %1 – %2")
+            .arg(formatMoney(target.band.low), formatMoney(target.band.high));
+    }
+    if (target.hasCap())
+        return DashboardViewModel::tr("Cap: %1").arg(formatMoney(*target.cap));
+    if (target.kind == domain::BucketTarget::Kind::AsLargeAsPossible)
+        return DashboardViewModel::tr("As large as possible");
+    return DashboardViewModel::tr("No target");
 }
 
 QString severityKeyOf(domain::Severity severity)
@@ -210,11 +228,41 @@ void InsightsModel::setRows(QVector<InsightRow> rows)
 // Dashboard
 // ---------------------------------------------------------------------------
 
+QVector<BucketRow> bucketRowsOf(const application::DashboardSnapshot& snapshot)
+{
+    QVector<BucketRow> rows;
+    rows.reserve(static_cast<qsizetype>(domain::allBuckets().size()));
+    for (const domain::Bucket bucket : domain::allBuckets()) {
+        const std::size_t index = static_cast<std::size_t>(bucket);
+        const domain::Money balance = snapshot.facts.sheet.perBucket[index];
+        const domain::ResolvedTarget& target = snapshot.facts.targets[index];
+        const double axis = gaugeAxis(balance, target);
+
+        rows.push_back(BucketRow{
+            QString::fromUtf8(domain::labelOf(bucket)),
+            horizonLabel(bucket),
+            formatMoney(balance),
+            targetLabel(target),
+            colourKeyOf(bucket),
+            target.hasTarget() ? trackPosition(target.band.low, axis) : 0.0,
+            target.hasTarget() ? trackPosition(target.band.high, axis) : 0.0,
+            trackPosition(balance, axis),
+            target.hasCap() ? trackPosition(*target.cap, axis) : 0.0,
+            target.hasTarget(),
+            target.hasCap(),
+        });
+    }
+    return rows;
+}
+
 DashboardViewModel::DashboardViewModel(QObject* parent)
     : QObject(parent)
     , m_buckets(new BucketsModel(this))
     , m_insights(new InsightsModel(this))
 {
+    if (AppController* controller = AppController::instance()) {
+        connect(controller, &AppController::dataChanged, this, &DashboardViewModel::reload);
+    }
 }
 
 void DashboardViewModel::reload()
@@ -274,29 +322,7 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_savingsRateLabel = percentLabel(snapshot.metrics.savingsRate);
     m_fiProgressLabel = percentLabel(snapshot.metrics.fiProgress);
 
-    QVector<BucketRow> bucketRows;
-    bucketRows.reserve(static_cast<qsizetype>(domain::allBuckets().size()));
-    for (const domain::Bucket bucket : domain::allBuckets()) {
-        const std::size_t index = static_cast<std::size_t>(bucket);
-        const domain::Money balance = snapshot.facts.sheet.perBucket[index];
-        const domain::ResolvedTarget& target = snapshot.facts.targets[index];
-        const double axis = gaugeAxis(balance, target);
-
-        bucketRows.push_back(BucketRow{
-            QString::fromUtf8(domain::labelOf(bucket)),
-            horizonLabel(bucket),
-            formatMoney(balance),
-            targetLabel(target),
-            colourKeyOf(bucket),
-            target.hasTarget() ? trackPosition(target.band.low, axis) : 0.0,
-            target.hasTarget() ? trackPosition(target.band.high, axis) : 0.0,
-            trackPosition(balance, axis),
-            target.hasCap() ? trackPosition(*target.cap, axis) : 0.0,
-            target.hasTarget(),
-            target.hasCap(),
-        });
-    }
-    m_buckets->setRows(std::move(bucketRows));
+    m_buckets->setRows(bucketRowsOf(snapshot));
 
     QVector<InsightRow> insightRows;
     insightRows.reserve(static_cast<qsizetype>(snapshot.insights.size()));
@@ -313,32 +339,6 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_insights->setRows(std::move(insightRows));
 
     emit changed();
-}
-
-QString DashboardViewModel::horizonLabel(domain::Bucket bucket) const
-{
-    const domain::Horizon& horizon = domain::factsOf(bucket).horizon;
-    if (!horizon.hasUpperBound()) {
-        if (horizon.minYears > 0)
-            return tr("%1+ years").arg(horizon.minYears);
-        return tr("any horizon");
-    }
-    if (horizon.minYears == 0)
-        return tr("under %1 years").arg(*horizon.maxYears);
-    return tr("%1–%2 years").arg(horizon.minYears).arg(*horizon.maxYears);
-}
-
-QString DashboardViewModel::targetLabel(const domain::ResolvedTarget& target) const
-{
-    if (target.hasTarget()) {
-        return tr("Target: %1 – %2")
-            .arg(formatMoney(target.band.low), formatMoney(target.band.high));
-    }
-    if (target.hasCap())
-        return tr("Cap: %1").arg(formatMoney(*target.cap));
-    if (target.kind == domain::BucketTarget::Kind::AsLargeAsPossible)
-        return tr("As large as possible");
-    return tr("No target");
 }
 
 QString DashboardViewModel::monthsLabel(domain::Percentage months) const

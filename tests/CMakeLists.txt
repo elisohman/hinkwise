@@ -15,6 +15,14 @@ function(hinkwise_add_application_test target source)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
+# Presentation tests compile the money-in, text-out helpers that the view
+# models call. No QML engine is needed: the parsing is plain C++.
+function(hinkwise_add_presentation_test target source)
+    add_executable(${target} ${source})
+    target_link_libraries(${target} PRIVATE hinkwise_presentation Qt6::Test)
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
 # The infrastructure tests open real database files and write real JSON, so they
 # link the infrastructure layer rather than the model alone.
 function(hinkwise_add_infrastructure_test target source)
@@ -38,6 +46,36 @@ hinkwise_add_test(tst_rebalance domain/tst_rebalance.cpp)
 
 hinkwise_add_application_test(tst_dashboard application/tst_dashboard.cpp)
 hinkwise_add_application_test(tst_use_cases application/tst_use_cases.cpp)
+
+hinkwise_add_presentation_test(tst_input_text presentation/tst_input_text.cpp)
+
+# The setup wizard and the buckets page are tested together against a real
+# database in a temporary directory: creating a household is the one flow that
+# has to work end to end for the application to be usable at all. The view
+# models live in the executable, so the sources are compiled in here too.
+add_executable(tst_setup_flow
+    presentation/tst_setup_flow.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/accounts_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/app_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/catalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/dashboard_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/input_text.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/wizard_view_model.cpp
+)
+target_link_libraries(tst_setup_flow PRIVATE
+    hinkwise_application
+    hinkwise_domain
+    hinkwise_infrastructure
+    Qt6::Core
+    Qt6::Qml
+    Qt6::Sql
+    Qt6::Test
+)
+target_include_directories(tst_setup_flow PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/presentation
+)
+add_test(NAME tst_setup_flow COMMAND tst_setup_flow)
 
 # Serialisation belongs to the domain, so this one needs no database.
 hinkwise_add_test(tst_serialisation infrastructure/tst_serialisation.cpp)

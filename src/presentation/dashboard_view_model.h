@@ -38,6 +38,12 @@ struct BucketRow {
     bool hasCap = false;
 };
 
+/// The four buckets as a screen reads them, resolved from one snapshot: the
+/// labels already formatted, and the band, balance and cap already turned into
+/// positions along one shared track. The dashboard and the buckets page read
+/// the same household through this, so the two cannot draw it differently.
+QVector<BucketRow> bucketRowsOf(const application::DashboardSnapshot& snapshot);
+
 /// The bucket rows as a QML list model, in fill order.
 class BucketsModel : public QAbstractListModel {
     Q_OBJECT
@@ -112,8 +118,9 @@ private:
 ///
 /// The view model never does arithmetic the model cares about: it asks the
 /// application layer for a DashboardSnapshot and turns each figure into text
-/// with QLocale. Money keeps its ISO code, because "kr" and "$" are ambiguous
-/// on a machine with more than one household currency.
+/// with QLocale. It reloads whenever AppController reports a write, so the
+/// dashboard cannot describe a household some other page has already changed. Money keeps its ISO
+/// code, because "kr" and "$" are ambiguous on a machine with more than one household currency.
 class DashboardViewModel : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -186,8 +193,6 @@ signals:
 private:
     void apply(const application::DashboardSnapshot& snapshot);
 
-    QString horizonLabel(domain::Bucket bucket) const;
-    QString targetLabel(const domain::ResolvedTarget& target) const;
     QString monthsLabel(domain::Percentage months) const;
     QString percentLabel(domain::Percentage percentage) const;
 
