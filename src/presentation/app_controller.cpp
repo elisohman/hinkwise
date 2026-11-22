@@ -5,13 +5,18 @@
 
 #include "application/use_cases.h"
 #include "domain/year_month.h"
+#include "infrastructure/json/backup.h"
 #include "infrastructure/sqlite/database.h"
 #include "infrastructure/sqlite/repositories.h"
 
 #include <QDate>
+#include <QDateTime>
 #include <QQmlEngine>
+#include <QSaveFile>
 #include <QSqlDatabase>
 #include <QString>
+#include <algorithm>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,6 +30,14 @@ namespace {
 template <typename T> std::vector<T> rowsOrEmpty(const application::Result<std::vector<T>>& result)
 {
     return result.ok() ? result.value() : std::vector<T>{};
+}
+
+/// One amount at one month, moved from the application layer's port type to the
+/// backup format's own. The two carry the same fields because both sit on the
+/// storage edge; the conversion is here so neither layer has to know the other.
+infrastructure::json::MoneyPoint toBackupPoint(const application::MoneyPoint& point)
+{
+    return infrastructure::json::MoneyPoint{point.month, point.amount};
 }
 
 std::string toStd(const QString& text)
@@ -95,6 +108,8 @@ bool AppController::initialise()
     m_flows = std::make_unique<infrastructure::sqlite::SqliteMonthFlowRepository>(connection);
     m_plannedExpenses =
         std::make_unique<infrastructure::sqlite::SqlitePlannedExpenseRepository>(connection);
+    m_phaseHistory =
+        std::make_unique<infrastructure::sqlite::SqlitePhaseHistoryRepository>(connection);
 
     m_lastError.clear();
     return true;
@@ -126,6 +141,147 @@ std::optional<domain::Profile> AppController::profile() const
         return std::nullopt;
     const application::Result<std::optional<domain::Profile>> loaded = m_profiles->load();
     return loaded.ok() ? loaded.value() : std::nullopt;
+}
+
+application::Status AppController::saveProfile(const domain::Profile& profile)
+{
+    if (!m_profiles)
+        return application::Status::err(toStd(tr("The database is not open.")));
+    if (profile.displayName.empty())
+        return application::Status::err(toStd(tr("A household needs a name.")));
+    return report(m_profiles->save(profile));
+}
+
+application::Status AppController::changePhase(domain::Phase next)
+{
+    if (!m_profiles || !m_phaseHistory)
+        return application::Status::err(toStd(tr("The database is not open.")));
+
+    std::optional<domain::Profile> current = profile();
+    if (!current.has_value())
+        return application::Status::err(toStd(tr("There is no household to change phase for.")));
+
+    const QString stamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    return report(
+        application::changePhase(*m_profiles, *m_phaseHistory, *current, next, toStd(stamp)));
+}
+
+std::vector<application::PhaseChange> AppController::phaseHistory() const
+{
+    if (!m_phaseHistory)
+        return {};
+    return rowsOrEmpty(m_phaseHistory->all());
+}
+
+QString AppController::databasePath() const
+{
+    if (m_database)
+        return m_database->path();
+    return infrastructure::sqlite::Database::defaultPath();
+}
+
+application::Result<int> AppController::exportBackup(const QString& path) const
+{
+    using Outcome = application::Result<int>;
+
+    if (!m_database || !m_profiles || !m_assets || !m_liabilities || !m_plannedExpenses ||
+        !m_valuations || !m_debtBalances || !m_flows || !m_phaseHistory)
+        return Outcome::err(toStd(tr("The database is not open.")));
+    if (path.isEmpty())
+        return Outcome::err(toStd(tr("A backup needs a file to be written to.")));
+
+    const application::Result<std::optional<domain::Profile>> loaded = m_profiles->load();
+    if (!loaded.ok())
+        return Outcome::err(loaded.error());
+    if (!loaded.value().has_value())
+        return Outcome::err(toStd(tr("There is no household to back up yet.")));
+
+    infrastructure::json::BackupData data;
+    data.profile = *loaded.value();
+
+    const application::Result<std::vector<domain::Asset>> assets = m_assets->all();
+    if (!assets.ok())
+        return Outcome::err(assets.error());
+    data.assets = assets.value();
+
+    const application::Result<std::vector<domain::Liability>> liabilities = m_liabilities->all();
+    if (!liabilities.ok())
+        return Outcome::err(liabilities.error());
+    data.liabilities = liabilities.value();
+
+    const application::Result<std::vector<domain::PlannedExpense>> expenses =
+        m_plannedExpenses->all();
+    if (!expenses.ok())
+        return Outcome::err(expenses.error());
+    data.plannedExpenses = expenses.value();
+
+    int records = static_cast<int>(data.assets.size() + data.liabilities.size() +
+                                   data.plannedExpenses.size());
+
+    data.assetValuations.reserve(data.assets.size());
+    for (const domain::Asset& asset : data.assets) {
+        const application::Result<std::vector<application::MoneyPoint>> points =
+            m_valuations->history(asset.id);
+        if (!points.ok())
+            return Outcome::err(points.error());
+
+        infrastructure::json::AssetValuations entry;
+        entry.assetId = asset.id;
+        entry.points.reserve(points.value().size());
+        for (const application::MoneyPoint& point : points.value())
+            entry.points.push_back(toBackupPoint(point));
+        records += static_cast<int>(entry.points.size());
+        data.assetValuations.push_back(std::move(entry));
+    }
+
+    data.liabilityBalances.reserve(data.liabilities.size());
+    for (const domain::Liability& liability : data.liabilities) {
+        const application::Result<std::vector<application::MoneyPoint>> points =
+            m_debtBalances->history(liability.id);
+        if (!points.ok())
+            return Outcome::err(points.error());
+
+        infrastructure::json::LiabilityBalances entry;
+        entry.liabilityId = liability.id;
+        entry.points.reserve(points.value().size());
+        for (const application::MoneyPoint& point : points.value())
+            entry.points.push_back(toBackupPoint(point));
+        records += static_cast<int>(entry.points.size());
+        data.liabilityBalances.push_back(std::move(entry));
+    }
+
+    const application::Result<std::vector<application::MonthFlowRecord>> flows =
+        m_flows->recent(std::numeric_limits<int>::max());
+    if (!flows.ok())
+        return Outcome::err(flows.error());
+    data.monthFlows = flows.value();
+    // recent() hands them back newest first because that is what a chart wants;
+    // a file is read oldest first, where the first month is where the story
+    // begins.
+    std::sort(data.monthFlows.begin(), data.monthFlows.end(),
+              [](const application::MonthFlowRecord& left,
+                 const application::MonthFlowRecord& right) { return left.month < right.month; });
+    records += static_cast<int>(data.monthFlows.size());
+
+    const application::Result<std::vector<application::PhaseChange>> history =
+        m_phaseHistory->all();
+    if (!history.ok())
+        return Outcome::err(history.error());
+    data.phaseHistory = history.value();
+    records += static_cast<int>(data.phaseHistory.size());
+
+    QSaveFile file{path};
+    if (!file.open(QIODevice::WriteOnly))
+        return Outcome::err(toStd(tr("Cannot open %1: %2").arg(path, file.errorString())));
+
+    const QByteArray bytes = QByteArray::fromStdString(infrastructure::json::toJson(data));
+    if (file.write(bytes) != bytes.size())
+        return Outcome::err(toStd(tr("Cannot write %1: %2").arg(path, file.errorString())));
+    if (!file.commit())
+        return Outcome::err(
+            toStd(tr("Cannot finish writing %1: %2").arg(path, file.errorString())));
+
+    return Outcome::ok(records);
 }
 
 std::vector<domain::Asset> AppController::assets() const

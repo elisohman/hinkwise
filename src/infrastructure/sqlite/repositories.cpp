@@ -127,6 +127,15 @@ constexpr const char* kSelectLatestValuation = R"(
     LIMIT 1
 )";
 
+// "YYYY-MM" sorts chronologically as text, so ORDER BY month is the calendar
+// order the history is read back in.
+constexpr const char* kSelectValuationHistory = R"(
+    SELECT month, amount_minor, currency
+    FROM valuation
+    WHERE asset_id = ?
+    ORDER BY month ASC
+)";
+
 constexpr const char* kUpsertValuation = R"(
     INSERT INTO valuation (asset_id, month, amount_minor, currency)
     VALUES (?, ?, ?, ?)
@@ -147,6 +156,13 @@ constexpr const char* kSelectLatestDebtBalance = R"(
     WHERE liability_id = ?
     ORDER BY month DESC
     LIMIT 1
+)";
+
+constexpr const char* kSelectDebtBalanceHistory = R"(
+    SELECT month, amount_minor, currency
+    FROM debt_balance
+    WHERE liability_id = ?
+    ORDER BY month ASC
 )";
 
 constexpr const char* kUpsertDebtBalance = R"(
@@ -610,6 +626,33 @@ SqliteValuationRepository::latest(std::string_view assetId) const
     return Outcome::ok(amount.value());
 }
 
+application::Result<std::vector<application::MoneyPoint>>
+SqliteValuationRepository::history(std::string_view assetId) const
+{
+    using Outcome = application::Result<std::vector<application::MoneyPoint>>;
+
+    Statement statement{m_connection, kSelectValuationHistory, "load valuation history"};
+    const application::Status ran = statement.exec({toQString(assetId)});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+
+    std::vector<application::MoneyPoint> points;
+    while (statement.next()) {
+        const application::Result<domain::YearMonth> month =
+            decodeMonth(statement.value(0), "valuation of '" + toStd(toQString(assetId)) + "'");
+        if (!month.ok())
+            return Outcome::err(month.error());
+
+        const application::Result<domain::Money> amount = decodeMoney(
+            statement.value(1), statement.value(2),
+            "valuation of '" + toStd(toQString(assetId)) + "' in " + month.value().toString());
+        if (!amount.ok())
+            return Outcome::err(amount.error());
+        points.push_back(application::MoneyPoint{month.value(), amount.value()});
+    }
+    return Outcome::ok(std::move(points));
+}
+
 application::Status SqliteValuationRepository::upsert(std::string_view assetId,
                                                       domain::YearMonth month,
                                                       domain::Money balance)
@@ -671,6 +714,34 @@ SqliteDebtBalanceRepository::latest(std::string_view liabilityId) const
     if (!amount.ok())
         return Outcome::err(amount.error());
     return Outcome::ok(amount.value());
+}
+
+application::Result<std::vector<application::MoneyPoint>>
+SqliteDebtBalanceRepository::history(std::string_view liabilityId) const
+{
+    using Outcome = application::Result<std::vector<application::MoneyPoint>>;
+
+    Statement statement{m_connection, kSelectDebtBalanceHistory, "load debt balance history"};
+    const application::Status ran = statement.exec({toQString(liabilityId)});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+
+    std::vector<application::MoneyPoint> points;
+    while (statement.next()) {
+        const application::Result<domain::YearMonth> month = decodeMonth(
+            statement.value(0), "debt balance of '" + toStd(toQString(liabilityId)) + "'");
+        if (!month.ok())
+            return Outcome::err(month.error());
+
+        const application::Result<domain::Money> amount =
+            decodeMoney(statement.value(1), statement.value(2),
+                        "debt balance of '" + toStd(toQString(liabilityId)) + "' in " +
+                            month.value().toString());
+        if (!amount.ok())
+            return Outcome::err(amount.error());
+        points.push_back(application::MoneyPoint{month.value(), amount.value()});
+    }
+    return Outcome::ok(std::move(points));
 }
 
 application::Status SqliteDebtBalanceRepository::upsert(std::string_view liabilityId,

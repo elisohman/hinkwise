@@ -63,9 +63,7 @@ ApplicationWindow {
                 onNavigateRequested: (index) => rail.currentIndex = index
             }
 
-            PlaceholderPage {
-                title: qsTr("Settings")
-                note: qsTr("Profile, currency and jurisdiction arrive next.")
+            SettingsPage {
             }
         }
     }

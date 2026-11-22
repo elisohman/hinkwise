@@ -35,6 +35,14 @@ struct PhaseChange {
     domain::Phase phase;
 };
 
+/// One amount at one month: a valuation of an asset or a balance of a debt.
+/// The month was the key the amount was stored under, so the point carries it.
+/// history() returns these oldest first.
+struct MoneyPoint {
+    domain::YearMonth month;
+    domain::Money amount;
+};
+
 /// The repositories are the application layer's view of storage: pure virtual,
 /// no Qt types, and every failure reported through Result. The infrastructure
 /// layer implements them; tests and future in-memory doubles implement the same
@@ -105,6 +113,11 @@ public:
     /// std::nullopt when the asset has never been valued.
     virtual Result<std::optional<domain::Money>> latest(std::string_view assetId) const = 0;
 
+    /// Every valuation ever recorded for the asset, oldest first. An asset that
+    /// has never been valued has no points rather than an error. This is what a
+    /// backup is written from: latest() alone would lose the history.
+    virtual Result<std::vector<MoneyPoint>> history(std::string_view assetId) const = 0;
+
     virtual Status upsert(std::string_view assetId, domain::YearMonth month,
                           domain::Money balance) = 0;
 };
@@ -117,6 +130,10 @@ public:
                                                            domain::YearMonth month) const = 0;
 
     virtual Result<std::optional<domain::Money>> latest(std::string_view liabilityId) const = 0;
+
+    /// Every balance ever recorded for the debt, oldest first. A debt with no
+    /// recorded balance has no points rather than an error.
+    virtual Result<std::vector<MoneyPoint>> history(std::string_view liabilityId) const = 0;
 
     virtual Status upsert(std::string_view liabilityId, domain::YearMonth month,
                           domain::Money balance) = 0;

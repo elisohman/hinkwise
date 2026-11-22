@@ -333,6 +333,25 @@ void TestRepositories::valuationRoundTrip()
     QVERIFY(count.exec(QStringLiteral("SELECT count(*) FROM valuation WHERE asset_id = 'fund'")));
     QVERIFY(count.next());
     QCOMPARE(count.value(0).toInt(), 2);
+
+    // The whole history, oldest first: a backup is written from this, and
+    // latest() alone would lose the months before it.
+    const application::Result<std::vector<application::MoneyPoint>> history =
+        valuations.history("fund");
+    QVERIFY2(history.ok(), history.error().c_str());
+    QCOMPARE(history.value().size(), std::size_t{2});
+    QCOMPARE(QString::fromStdString(history.value().at(0).month.toString()),
+             QStringLiteral("2026-01"));
+    QCOMPARE(history.value().at(0).amount.minorUnits(), qint64(1000000));
+    QCOMPARE(QString::fromStdString(history.value().at(1).month.toString()),
+             QStringLiteral("2026-03"));
+    QCOMPARE(history.value().at(1).amount.minorUnits(), qint64(1250000));
+
+    // An asset that was never valued has no points, which is not an error.
+    const application::Result<std::vector<application::MoneyPoint>> nothing =
+        valuations.history("missing");
+    QVERIFY2(nothing.ok(), nothing.error().c_str());
+    QVERIFY(nothing.value().empty());
 }
 
 void TestRepositories::deletingAnAssetCascadesItsValuations()
@@ -391,6 +410,22 @@ void TestRepositories::debtBalanceRoundTrip()
     const application::Result<std::optional<domain::Money>> corrected = balances.latest("bolan");
     QVERIFY2(corrected.ok(), corrected.error().c_str());
     QCOMPARE(corrected.value()->minorUnits(), qint64(247000000));
+
+    // Every recorded balance, oldest first, with the corrected month in place.
+    const application::Result<std::vector<application::MoneyPoint>> history =
+        balances.history("bolan");
+    QVERIFY2(history.ok(), history.error().c_str());
+    QCOMPARE(history.value().size(), std::size_t{2});
+    QCOMPARE(QString::fromStdString(history.value().at(0).month.toString()),
+             QStringLiteral("2026-01"));
+    QCOMPARE(history.value().at(0).amount.minorUnits(), qint64(250000000));
+    QCOMPARE(history.value().at(1).amount.minorUnits(), qint64(247000000));
+
+    // A debt nobody has recorded a balance for has no points, not an error.
+    const application::Result<std::vector<application::MoneyPoint>> nothing =
+        balances.history("missing");
+    QVERIFY2(nothing.ok(), nothing.error().c_str());
+    QVERIFY(nothing.value().empty());
 }
 
 void TestRepositories::monthFlowRoundTrip()

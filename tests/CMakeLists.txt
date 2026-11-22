@@ -87,6 +87,31 @@ target_include_directories(tst_setup_flow PRIVATE
 )
 add_test(NAME tst_setup_flow COMMAND tst_setup_flow)
 
+# The settings page changes the profile rather than the accounts, and writes the
+# backup that is the household's only copy outside the database. It is tested
+# against the same real database the setup flow uses.
+add_executable(tst_settings_flow
+    presentation/tst_settings_flow.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/app_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/catalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/input_text.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/settings_view_model.cpp
+)
+target_link_libraries(tst_settings_flow PRIVATE
+    hinkwise_application
+    hinkwise_domain
+    hinkwise_infrastructure
+    Qt6::Core
+    Qt6::Qml
+    Qt6::Sql
+    Qt6::Test
+)
+target_include_directories(tst_settings_flow PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/presentation
+)
+add_test(NAME tst_settings_flow COMMAND tst_settings_flow)
+
 # Serialisation belongs to the domain, so this one needs no database.
 hinkwise_add_test(tst_serialisation infrastructure/tst_serialisation.cpp)
 

@@ -154,6 +154,11 @@ public:
         return Result<std::optional<Money>>::ok(found->second);
     }
 
+    Result<std::vector<MoneyPoint>> history(std::string_view) const override
+    {
+        return Result<std::vector<MoneyPoint>>::ok({});
+    }
+
     Status upsert(std::string_view assetId, YearMonth, Money balance) override
     {
         latestBalance[std::string{assetId}] = balance;
@@ -176,6 +181,11 @@ public:
         if (found == latestBalance.end())
             return Result<std::optional<Money>>::ok(std::nullopt);
         return Result<std::optional<Money>>::ok(found->second);
+    }
+
+    Result<std::vector<MoneyPoint>> history(std::string_view) const override
+    {
+        return Result<std::vector<MoneyPoint>>::ok({});
     }
 
     Status upsert(std::string_view liabilityId, YearMonth, Money balance) override

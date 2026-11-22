@@ -119,6 +119,8 @@ qt_add_qml_module(hinkwise
         src/presentation/plan_view_model.h
         src/presentation/review_view_model.cpp
         src/presentation/review_view_model.h
+        src/presentation/settings_view_model.cpp
+        src/presentation/settings_view_model.h
         src/presentation/wizard_view_model.cpp
         src/presentation/wizard_view_model.h
     QML_FILES
@@ -140,7 +142,7 @@ qt_add_qml_module(hinkwise
         qml/pages/DashboardPage.qml
         qml/pages/OnboardingPage.qml
         qml/pages/PlanPage.qml
-        qml/pages/PlaceholderPage.qml
+        qml/pages/SettingsPage.qml
         qml/pages/YearEndReviewPage.qml
 )
 

@@ -31,6 +31,7 @@ class SqliteAssetRepository;
 class SqliteDebtBalanceRepository;
 class SqliteLiabilityRepository;
 class SqliteMonthFlowRepository;
+class SqlitePhaseHistoryRepository;
 class SqlitePlannedExpenseRepository;
 class SqliteProfileRepository;
 class SqliteValuationRepository;
@@ -83,6 +84,29 @@ public:
 
     /// The stored profile, std::nullopt until the household has been set up.
     std::optional<domain::Profile> profile() const;
+
+    /// Saves the profile as a whole, which is how settings edits the name and
+    /// the jurisdiction: the row is one value, and the use cases only read it.
+    application::Status saveProfile(const domain::Profile& profile);
+
+    /// Moves the household to `next` through the changePhase use case, which
+    /// appends the history entry as well as saving. The timestamp is stamped
+    /// here because the application layer never reads a clock.
+    application::Status changePhase(domain::Phase next);
+
+    /// Every phase change ever recorded, oldest first.
+    std::vector<application::PhaseChange> phaseHistory() const;
+
+    /// The database file this session has open, or the one it would open.
+    QString databasePath() const;
+
+    /// Writes the whole household to `path` as the JSON backup the
+    /// infrastructure layer defines. Returns the number of records written.
+    ///
+    /// Every valuation and every debt balance goes in, not just the latest: a
+    /// backup that dropped the history would be worth less than none. The file
+    /// is written through QSaveFile, so a failure leaves no partial file behind.
+    application::Result<int> exportBackup(const QString& path) const;
 
     /// Everything the household holds, ordered by name. A read that fails
     /// leaves the list empty rather than failing the screen, the same way
@@ -148,6 +172,7 @@ private:
     std::unique_ptr<infrastructure::sqlite::SqliteValuationRepository> m_valuations;
     std::unique_ptr<infrastructure::sqlite::SqliteMonthFlowRepository> m_flows;
     std::unique_ptr<infrastructure::sqlite::SqlitePlannedExpenseRepository> m_plannedExpenses;
+    std::unique_ptr<infrastructure::sqlite::SqlitePhaseHistoryRepository> m_phaseHistory;
     QString m_lastError;
 
     static AppController* s_instance;
