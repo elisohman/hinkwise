@@ -1,0 +1,15 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+PointerAlignment: Left
+ReferenceAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+BreakBeforeBraces: Attach
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+NamespaceIndentation: None
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4

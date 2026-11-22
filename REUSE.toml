@@ -1,0 +1,15 @@
+version = 1
+
+[[annotations]]
+path = [
+  "README.md",
+  "CMakeLists.txt",
+  "CMakePresets.json",
+  "REUSE.toml",
+  ".clang-format",
+  ".editorconfig",
+  ".gitignore",
+  "docs/**",
+]
+SPDX-FileCopyrightText = "2026 Elis"
+SPDX-License-Identifier = "GPL-3.0-or-later"

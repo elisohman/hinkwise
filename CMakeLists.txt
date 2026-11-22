@@ -1,0 +1,50 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(hinkwise
+    VERSION 0.1.0
+    DESCRIPTION "Personal finance planning around the four-bucket model"
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Sql Test)
+
+qt_standard_project_setup(REQUIRES 6.8)
+
+qt_add_executable(hinkwise
+    src/main.cpp
+)
+
+# Theme is a QML singleton; this must be set before qt_add_qml_module().
+set_source_files_properties(qml/theme/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
+qt_add_qml_module(hinkwise
+    URI Hinkwise
+    VERSION ${PROJECT_VERSION}
+    QML_FILES
+        qml/Main.qml
+        qml/theme/Theme.qml
+        qml/components/BucketCard.qml
+)
+
+target_link_libraries(hinkwise PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::QuickControls2
+)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hinkwise PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+include(GNUInstallDirs)
+install(TARGETS hinkwise
+    BUNDLE  DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+enable_testing()

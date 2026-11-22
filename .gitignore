@@ -1,0 +1,22 @@
+# Build trees
+/build/
+/build-*/
+build*/
+
+# CMake / tooling artifacts
+compile_commands.json
+.cache/
+.ccache/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local application data (never commit real finances)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/scratch/
