@@ -14,6 +14,18 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Sql Test)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
+# Domain layer: plain C++20, no Qt dependency, so it stays fast to test and
+# impossible to entangle with the UI.
+add_library(hinkwise_domain STATIC
+    src/domain/year_month.cpp
+)
+target_include_directories(hinkwise_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(hinkwise_domain PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hinkwise_domain PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 qt_add_executable(hinkwise
     src/main.cpp
 )
@@ -31,6 +43,7 @@ qt_add_qml_module(hinkwise
 )
 
 target_link_libraries(hinkwise PRIVATE
+    hinkwise_domain
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
@@ -48,3 +61,4 @@ install(TARGETS hinkwise
 )
 
 enable_testing()
+add_subdirectory(tests)

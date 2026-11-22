@@ -5,7 +5,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     QGuiApplication app(argc, argv);
 
