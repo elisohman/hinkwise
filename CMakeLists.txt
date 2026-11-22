@@ -17,6 +17,9 @@ qt_standard_project_setup(REQUIRES 6.8)
 # Domain layer: plain C++20, no Qt dependency, so it stays fast to test and
 # impossible to entangle with the UI.
 add_library(hinkwise_domain STATIC
+    src/domain/bucket.cpp
+    src/domain/phase.cpp
+    src/domain/targets.cpp
     src/domain/year_month.cpp
 )
 target_include_directories(hinkwise_domain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
