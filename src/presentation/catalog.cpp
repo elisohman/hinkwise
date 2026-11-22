@@ -46,6 +46,21 @@ QString bucketLabel(domain::Bucket bucket)
     return QString::fromUtf8(domain::labelOf(bucket));
 }
 
+QString bucketColourKey(domain::Bucket bucket)
+{
+    switch (bucket) {
+    case domain::Bucket::Buffer:
+        return QStringLiteral("buffer");
+    case domain::Bucket::Preserve:
+        return QStringLiteral("preserve");
+    case domain::Bucket::Growth:
+        return QStringLiteral("growth");
+    case domain::Bucket::Play:
+        return QStringLiteral("play");
+    }
+    return QStringLiteral("buffer");
+}
+
 QStringList assetKindLabels()
 {
     QStringList labels;

@@ -4,8 +4,10 @@
 #include "dashboard_view_model.h"
 
 #include "app_controller.h"
+#include "catalog.h"
 #include "domain/insight.h"
 #include "domain/phase.h"
+#include "fi_track.h"
 #include "input_text.h"
 
 #include <QDate>
@@ -19,21 +21,6 @@
 namespace hinkwise::presentation {
 
 namespace {
-
-QString colourKeyOf(domain::Bucket bucket)
-{
-    switch (bucket) {
-    case domain::Bucket::Buffer:
-        return QStringLiteral("buffer");
-    case domain::Bucket::Preserve:
-        return QStringLiteral("preserve");
-    case domain::Bucket::Growth:
-        return QStringLiteral("growth");
-    case domain::Bucket::Play:
-        return QStringLiteral("play");
-    }
-    return QStringLiteral("buffer");
-}
 
 /// The track a bucket's gauge draws on: the widest thing it has to show, plus
 /// a margin, so neither the band nor a balance that overshoots it ends up on
@@ -243,7 +230,7 @@ QVector<BucketRow> bucketRowsOf(const application::DashboardSnapshot& snapshot)
             horizonLabel(bucket),
             formatMoney(balance),
             targetLabel(target),
-            colourKeyOf(bucket),
+            catalog::bucketColourKey(bucket),
             target.hasTarget() ? trackPosition(target.band.low, axis) : 0.0,
             target.hasTarget() ? trackPosition(target.band.high, axis) : 0.0,
             trackPosition(balance, axis),
@@ -285,31 +272,19 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_yearsOfFreedom = snapshot.metrics.yearsOfFreedom.basisPoints() / 10000.0;
     m_yearsOfFreedomLabel = locale.toString(m_yearsOfFreedom, 'f', 1);
 
-    // FI progress and the x21/x25/x33 band share one track. Every position is
-    // a ratio of the default target: the ticks come from the jurisdiction's
-    // multipliers, the progress from the metric the model already computed,
-    // so no money figure is divided anywhere outside the domain.
+    // FI progress and the x21/x25/x33 band share one track. The positions are
+    // worked out once, in fiTrackOf(), so the plan page draws the same track
+    // the dashboard does.
     const domain::Jurisdiction& jurisdiction = snapshot.profile.jurisdiction;
-    m_fiMultiplierLow = jurisdiction.fiMultiplierLow;
-    m_fiMultiplierDefault = jurisdiction.fiMultiplierDefault;
-    m_fiMultiplierHigh = jurisdiction.fiMultiplierHigh;
-    m_fiTargetKnown = snapshot.metrics.fiTargetDefault.isPositive();
-
-    m_fiProgressRatio = 0.0;
-    m_fiTargetLowRatio = 0.0;
-    m_fiTargetDefaultRatio = 0.0;
-    m_fiTargetHighRatio = 0.0;
-    if (m_fiTargetKnown && m_fiMultiplierDefault > 0) {
-        const double defaultMultiplier = static_cast<double>(m_fiMultiplierDefault);
-        const double progress = snapshot.metrics.fiProgress.asFraction();
-        const double high = static_cast<double>(m_fiMultiplierHigh) / defaultMultiplier;
-        const double axis = std::max({1.0, high, progress}) * 1.08;
-        m_fiProgressRatio = std::clamp(progress / axis, 0.0, 1.0);
-        m_fiTargetLowRatio =
-            std::clamp(static_cast<double>(m_fiMultiplierLow) / defaultMultiplier / axis, 0.0, 1.0);
-        m_fiTargetDefaultRatio = std::clamp(1.0 / axis, 0.0, 1.0);
-        m_fiTargetHighRatio = std::clamp(high / axis, 0.0, 1.0);
-    }
+    const FiTrack track = fiTrackOf(snapshot.metrics, jurisdiction);
+    m_fiMultiplierLow = track.lowMultiplier;
+    m_fiMultiplierDefault = track.defaultMultiplier;
+    m_fiMultiplierHigh = track.highMultiplier;
+    m_fiTargetKnown = track.known;
+    m_fiProgressRatio = track.progressRatio;
+    m_fiTargetLowRatio = track.lowRatio;
+    m_fiTargetDefaultRatio = track.defaultRatio;
+    m_fiTargetHighRatio = track.highRatio;
 
     m_annualExpensesLabel = formatMoney(snapshot.metrics.annualExpenses);
     m_monthlyExpensesLabel = formatMoney(snapshot.metrics.monthlyExpenses);

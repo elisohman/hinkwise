@@ -10,6 +10,7 @@
 #include "domain/liability.h"
 #include "domain/money.h"
 #include "domain/phase.h"
+#include "domain/planned_expense.h"
 #include "domain/profile.h"
 #include "domain/year_month.h"
 
@@ -30,6 +31,7 @@ class SqliteAssetRepository;
 class SqliteDebtBalanceRepository;
 class SqliteLiabilityRepository;
 class SqliteMonthFlowRepository;
+class SqlitePlannedExpenseRepository;
 class SqliteProfileRepository;
 class SqliteValuationRepository;
 } // namespace hinkwise::infrastructure::sqlite
@@ -95,6 +97,19 @@ public:
                                                 domain::YearMonth month) const;
     std::optional<domain::Money> latestDebtBalance(std::string_view liabilityId) const;
 
+    /// The recorded month flows, newest first, at most `count` of them. This is
+    /// what the cashflow history is drawn from: a month the household never
+    /// recorded is simply not in the list, which is different from a month of
+    /// zeros.
+    std::vector<application::MonthFlowRecord> recentFlows(int count) const;
+
+    /// The flow recorded for one month, std::nullopt when there is none.
+    std::optional<domain::MonthFlow> monthFlow(domain::YearMonth month) const;
+
+    /// Known future costs, soonest first. Their amounts carry their own
+    /// currency; the buffer target only takes the ones in the profile's.
+    std::vector<domain::PlannedExpense> plannedExpenses() const;
+
     /// The use cases, with the repository each one needs already supplied.
     ///
     /// Every one returns the use case's own message on failure, and emits
@@ -105,6 +120,8 @@ public:
     application::Status removeAsset(std::string_view assetId);
     application::Status addLiability(const domain::Liability& liability);
     application::Status removeLiability(std::string_view liabilityId);
+    application::Status addPlannedExpense(const domain::PlannedExpense& expense);
+    application::Status removePlannedExpense(std::string_view expenseId);
     application::Status recordMonth(domain::YearMonth month, const domain::MonthFlow& flow);
     application::Status recordValuation(std::string_view assetId, domain::YearMonth month,
                                         domain::Money balance);
@@ -130,6 +147,7 @@ private:
     std::unique_ptr<infrastructure::sqlite::SqliteDebtBalanceRepository> m_debtBalances;
     std::unique_ptr<infrastructure::sqlite::SqliteValuationRepository> m_valuations;
     std::unique_ptr<infrastructure::sqlite::SqliteMonthFlowRepository> m_flows;
+    std::unique_ptr<infrastructure::sqlite::SqlitePlannedExpenseRepository> m_plannedExpenses;
     QString m_lastError;
 
     static AppController* s_instance;

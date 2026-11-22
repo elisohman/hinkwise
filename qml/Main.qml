@@ -56,14 +56,11 @@ ApplicationWindow {
             BucketsPage {
             }
 
-            PlaceholderPage {
-                title: qsTr("Cashflow")
-                note: qsTr("Monthly income and spending arrive next.")
+            CashflowPage {
             }
 
-            PlaceholderPage {
-                title: qsTr("Plan")
-                note: qsTr("Targets, projections and rebalancing arrive next.")
+            PlanPage {
+                onNavigateRequested: (index) => rail.currentIndex = index
             }
 
             PlaceholderPage {

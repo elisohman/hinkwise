@@ -72,13 +72,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Presentation helpers with no QML or widget dependency: the money-in, text-out
-# edge that both the view models and their unit tests compile against.
+# edge and the series the charts draw, which both the view models and their unit
+# tests compile against.
 add_library(hinkwise_presentation STATIC
+    src/presentation/cashflow_series.cpp
     src/presentation/catalog.cpp
+    src/presentation/fi_track.cpp
     src/presentation/input_text.cpp
+    src/presentation/projection_series.cpp
 )
 target_include_directories(hinkwise_presentation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(hinkwise_presentation PUBLIC hinkwise_domain Qt6::Core)
+# The series helpers read the month flows the application layer hands them, so
+# the application layer is a dependency of the text edge and not the other way
+# round.
+target_link_libraries(hinkwise_presentation PUBLIC hinkwise_application Qt6::Core)
 target_compile_features(hinkwise_presentation PUBLIC cxx_std_20)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -104,8 +111,14 @@ qt_add_qml_module(hinkwise
         src/presentation/accounts_view_model.h
         src/presentation/app_controller.cpp
         src/presentation/app_controller.h
+        src/presentation/cashflow_view_model.cpp
+        src/presentation/cashflow_view_model.h
         src/presentation/dashboard_view_model.cpp
         src/presentation/dashboard_view_model.h
+        src/presentation/plan_view_model.cpp
+        src/presentation/plan_view_model.h
+        src/presentation/review_view_model.cpp
+        src/presentation/review_view_model.h
         src/presentation/wizard_view_model.cpp
         src/presentation/wizard_view_model.h
     QML_FILES
@@ -123,9 +136,12 @@ qt_add_qml_module(hinkwise
         qml/components/SectionHeader.qml
         qml/components/StatBlock.qml
         qml/pages/BucketsPage.qml
+        qml/pages/CashflowPage.qml
         qml/pages/DashboardPage.qml
         qml/pages/OnboardingPage.qml
+        qml/pages/PlanPage.qml
         qml/pages/PlaceholderPage.qml
+        qml/pages/YearEndReviewPage.qml
 )
 
 target_link_libraries(hinkwise PRIVATE

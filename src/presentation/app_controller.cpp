@@ -93,6 +93,8 @@ bool AppController::initialise()
         std::make_unique<infrastructure::sqlite::SqliteDebtBalanceRepository>(connection);
     m_valuations = std::make_unique<infrastructure::sqlite::SqliteValuationRepository>(connection);
     m_flows = std::make_unique<infrastructure::sqlite::SqliteMonthFlowRepository>(connection);
+    m_plannedExpenses =
+        std::make_unique<infrastructure::sqlite::SqlitePlannedExpenseRepository>(connection);
 
     m_lastError.clear();
     return true;
@@ -167,6 +169,28 @@ std::optional<domain::Money> AppController::latestDebtBalance(std::string_view l
     return loaded.ok() ? loaded.value() : std::nullopt;
 }
 
+std::vector<application::MonthFlowRecord> AppController::recentFlows(int count) const
+{
+    if (!m_flows)
+        return {};
+    return rowsOrEmpty(m_flows->recent(count));
+}
+
+std::optional<domain::MonthFlow> AppController::monthFlow(domain::YearMonth month) const
+{
+    if (!m_flows)
+        return std::nullopt;
+    const application::Result<std::optional<domain::MonthFlow>> loaded = m_flows->at(month);
+    return loaded.ok() ? loaded.value() : std::nullopt;
+}
+
+std::vector<domain::PlannedExpense> AppController::plannedExpenses() const
+{
+    if (!m_plannedExpenses)
+        return {};
+    return rowsOrEmpty(m_plannedExpenses->all());
+}
+
 application::Status AppController::report(application::Status status)
 {
     if (status.ok())
@@ -215,6 +239,30 @@ application::Status AppController::removeLiability(std::string_view liabilityId)
     if (!m_liabilities)
         return application::Status::err(toStd(tr("The database is not open.")));
     return report(application::removeLiability(*m_liabilities, liabilityId));
+}
+
+application::Status AppController::addPlannedExpense(const domain::PlannedExpense& expense)
+{
+    // The application layer has no use case for a planned expense yet, so the
+    // checks one would make are made here, the same way recordDebtBalance()
+    // carries its own. Move them into the use case when it arrives.
+    if (!m_plannedExpenses)
+        return application::Status::err(toStd(tr("The database is not open.")));
+    if (expense.id.empty() || expense.name.empty())
+        return application::Status::err(toStd(tr("A planned purchase needs a name.")));
+    if (!expense.amount.isPositive())
+        return application::Status::err(toStd(tr("A planned purchase needs an amount.")));
+
+    return report(m_plannedExpenses->upsert(expense));
+}
+
+application::Status AppController::removePlannedExpense(std::string_view expenseId)
+{
+    if (!m_plannedExpenses)
+        return application::Status::err(toStd(tr("The database is not open.")));
+    if (expenseId.empty())
+        return application::Status::err(toStd(tr("A planned purchase id is needed to remove it.")));
+    return report(m_plannedExpenses->remove(expenseId));
 }
 
 application::Status AppController::recordMonth(domain::YearMonth month,

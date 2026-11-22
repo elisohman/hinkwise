@@ -3,8 +3,11 @@
 
 #include "presentation/accounts_view_model.h"
 #include "presentation/app_controller.h"
+#include "presentation/cashflow_view_model.h"
 #include "presentation/dashboard_view_model.h"
 #include "presentation/input_text.h"
+#include "presentation/plan_view_model.h"
+#include "presentation/review_view_model.h"
 #include "presentation/wizard_view_model.h"
 
 #include <QCoreApplication>
@@ -22,8 +25,9 @@ using namespace hinkwise::presentation;
 
 /// The setup wizard is the only way a household comes into existence, so it is
 /// tested against the real database, the real repositories and the real use
-/// cases rather than a double. The buckets page's writes are exercised through
-/// the same controller, because a mutation that bypasses it would leave the
+/// cases rather than a double. The pages that read and write the household -
+/// buckets, cashflow, plan and the year-end review - are exercised through the
+/// same controller, because a mutation that bypasses it would leave the
 /// dashboard describing a household that no longer exists.
 class TestSetupFlow : public QObject {
     Q_OBJECT
@@ -38,6 +42,9 @@ private slots:
     void bucketsPageEditsAndDeletes();
     void bucketsPageAddsAndRemovesADebt();
     void rejectsWhatTheUseCasesReject();
+    void cashflowPageRecordsAndChecksTheMonth();
+    void planPageProjectsTheHousehold();
+    void reviewPageAddsAGoalAndProposesNothingAutomatic();
 
 private:
     QTemporaryDir m_dataDirectory;
@@ -345,6 +352,94 @@ void TestSetupFlow::rejectsWhatTheUseCasesReject()
     // None of those failures reached the database.
     QCOMPARE(accounts.debts()->count(), 0);
     QCOMPARE(accounts.accounts()->count(), 1);
+}
+
+void TestSetupFlow::cashflowPageRecordsAndChecksTheMonth()
+{
+    CashflowViewModel cashflow;
+    QCOMPARE(cashflow.history()->count(), cashflow.historyMonths());
+    QCOMPARE(cashflow.currencyCode(), QStringLiteral("EUR"));
+
+    // The household's month is already recorded, so it is the selected column
+    // and the strip does not call it missing.
+    QVERIFY(cashflow.selectedMonthRecorded());
+    QVERIFY(qAbs(cashflow.needsRatio() - 0.5) < 1e-9);
+    QVERIFY(qAbs(cashflow.savingRatio() - 0.2) < 1e-9);
+
+    // Outflows that add up to more than income are refused before they reach
+    // the use case: saving is part of income, not something on top of it.
+    QVERIFY(!cashflow
+                 .saveMonth(QStringLiteral("30000"), QStringLiteral("20000"),
+                            QStringLiteral("9000"), QStringLiteral("6000"))
+                 .isEmpty());
+    QVERIFY(!cashflow
+                 .saveMonth(QString{}, QStringLiteral("15000"), QStringLiteral("9000"),
+                            QStringLiteral("6000"))
+                 .isEmpty());
+
+    // A month that adds up is recorded, and the figures follow it.
+    QCOMPARE(cashflow.saveMonth(QStringLiteral("30000"), QStringLiteral("18000"),
+                                QStringLiteral("9000"), QStringLiteral("3000")),
+             QString{});
+    QVERIFY(qAbs(cashflow.needsRatio() - 0.6) < 1e-9);
+    QVERIFY(qAbs(cashflow.savingRatio() - 0.1) < 1e-9);
+    QVERIFY(cashflow.savingsPoints().size() >= 1);
+
+    const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
+    QCOMPARE(snapshot.facts.flow.needs.minorUnits(), std::int64_t{1800000});
+    QCOMPARE(snapshot.facts.flow.saving.minorUnits(), std::int64_t{300000});
+}
+
+void TestSetupFlow::planPageProjectsTheHousehold()
+{
+    PlanViewModel plan;
+    QCOMPARE(plan.currencyCode(), QStringLiteral("EUR"));
+    QVERIFY(plan.fiTargetKnown());
+    QVERIFY(!plan.chartEmpty());
+    QVERIFY(!plan.projectionBands().isEmpty());
+    QVERIFY(!plan.assumptions().isEmpty());
+
+    // The household is preserving, where the model allocates no free money, so
+    // the what-if has no bucket to test and says so rather than pretending.
+    QVERIFY(!plan.extraSavingAvailable());
+    QVERIFY(!plan.baseYearsLabel().isEmpty());
+
+    // An unreadable amount is reported and does not wipe the chart.
+    plan.setExtraMonthlySaving(QStringLiteral("lots"));
+    QVERIFY(!plan.extraSavingError().isEmpty());
+    QVERIFY(!plan.chartEmpty());
+
+    plan.setExtraMonthlySaving(QStringLiteral("500"));
+    QVERIFY(plan.extraSavingError().isEmpty());
+    QVERIFY(plan.extraSavingActive());
+}
+
+void TestSetupFlow::reviewPageAddsAGoalAndProposesNothingAutomatic()
+{
+    ReviewViewModel review;
+    QCOMPARE(review.goals()->count(), 0);
+    QVERIFY(review.hasFlow());
+
+    const QString before = review.bufferTargetNowLabel();
+    QCOMPARE(review.addGoal(QStringLiteral("Roof"), QStringLiteral("20000"), 5, 1), QString{});
+    QCOMPARE(review.goals()->count(), 1);
+    // A purchase inside three years moves the buffer target the review reasons
+    // about, which is the reason the step exists.
+    QVERIFY(review.bufferTargetWithGoalsLabel() != before);
+
+    const QString id =
+        review.goals()->data(review.goals()->index(0, 0), GoalRowModel::IdRole).toString();
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(review.removeGoal(id), QString{});
+    QCOMPARE(review.goals()->count(), 0);
+
+    // The switch changes what the planner is told, and the review page itself
+    // never writes a transfer anywhere.
+    review.setMarketDown(true);
+    QVERIFY(review.marketDown());
+    QVERIFY(!review.rationaleLabel().isEmpty());
+    QVERIFY(!review.hasNextContribution());
+    review.setMarketDown(false);
 }
 
 QTEST_GUILESS_MAIN(TestSetupFlow)

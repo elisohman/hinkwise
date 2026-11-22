@@ -48,18 +48,28 @@ hinkwise_add_application_test(tst_dashboard application/tst_dashboard.cpp)
 hinkwise_add_application_test(tst_use_cases application/tst_use_cases.cpp)
 
 hinkwise_add_presentation_test(tst_input_text presentation/tst_input_text.cpp)
+hinkwise_add_presentation_test(tst_cashflow_series presentation/tst_cashflow_series.cpp)
+hinkwise_add_presentation_test(tst_projection_series presentation/tst_projection_series.cpp)
+hinkwise_add_presentation_test(tst_fi_track presentation/tst_fi_track.cpp)
 
-# The setup wizard and the buckets page are tested together against a real
-# database in a temporary directory: creating a household is the one flow that
-# has to work end to end for the application to be usable at all. The view
-# models live in the executable, so the sources are compiled in here too.
+# The setup wizard and the pages that read or write the household are tested
+# together against a real database in a temporary directory: creating a
+# household, recording a month and acting on the plan are the flows that have to
+# work end to end for the application to be usable at all. The view models live
+# in the executable, so the sources are compiled in here too.
 add_executable(tst_setup_flow
     presentation/tst_setup_flow.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/accounts_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/app_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/cashflow_series.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/cashflow_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/catalog.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/dashboard_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/fi_track.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/input_text.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/plan_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/projection_series.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/review_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/wizard_view_model.cpp
 )
 target_link_libraries(tst_setup_flow PRIVATE

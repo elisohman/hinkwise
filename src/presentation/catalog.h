@@ -24,6 +24,10 @@ QString assetKindLabel(domain::AssetKind kind);
 QString liabilityKindLabel(domain::LiabilityKind kind);
 QString bucketLabel(domain::Bucket bucket);
 
+/// The untranslated handle the theme colours a bucket by, so every page that
+/// draws one reads the same key out of the same function.
+QString bucketColourKey(domain::Bucket bucket);
+
 /// Every label, in the domain's order, ready for a picker whose index is the
 /// enum value.
 QStringList assetKindLabels();
