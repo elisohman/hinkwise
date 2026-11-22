@@ -7,6 +7,14 @@ function(hinkwise_add_test target source)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
+# Application use cases and the dashboard snapshot link the application layer
+# alone: no database, no Qt beyond the test framework itself.
+function(hinkwise_add_application_test target source)
+    add_executable(${target} ${source})
+    target_link_libraries(${target} PRIVATE hinkwise_application Qt6::Test)
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
 # The infrastructure tests open real database files and write real JSON, so they
 # link the infrastructure layer rather than the model alone.
 function(hinkwise_add_infrastructure_test target source)
@@ -27,6 +35,9 @@ hinkwise_add_test(tst_metrics domain/tst_metrics.cpp)
 hinkwise_add_test(tst_rules domain/tst_rules.cpp)
 hinkwise_add_test(tst_projection domain/tst_projection.cpp)
 hinkwise_add_test(tst_rebalance domain/tst_rebalance.cpp)
+
+hinkwise_add_application_test(tst_dashboard application/tst_dashboard.cpp)
+hinkwise_add_application_test(tst_use_cases application/tst_use_cases.cpp)
 
 # Serialisation belongs to the domain, so this one needs no database.
 hinkwise_add_test(tst_serialisation infrastructure/tst_serialisation.cpp)

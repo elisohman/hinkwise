@@ -39,6 +39,19 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(hinkwise_domain PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Application layer: the use cases and the dashboard snapshot. Qt-free like the
+# domain, so the calculations stay testable without a GUI or a database.
+add_library(hinkwise_application STATIC
+    src/application/dashboard.cpp
+    src/application/use_cases.cpp
+)
+target_link_libraries(hinkwise_application PUBLIC hinkwise_domain)
+target_compile_features(hinkwise_application PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hinkwise_application PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 # Infrastructure layer: the outside world. SQLite and the JSON backup format
 # live here, with Qt keeping its distance from the model.
 add_library(hinkwise_infrastructure STATIC
@@ -62,12 +75,21 @@ qt_add_executable(hinkwise
     src/main.cpp
 )
 
+# The generated QML type registration includes the presentation headers by
+# name, so their directory has to be on the compiler's include path.
+target_include_directories(hinkwise PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/presentation)
+
 # Theme is a QML singleton; this must be set before qt_add_qml_module().
 set_source_files_properties(qml/theme/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(hinkwise
     URI Hinkwise
     VERSION ${PROJECT_VERSION}
+    SOURCES
+        src/presentation/app_controller.cpp
+        src/presentation/app_controller.h
+        src/presentation/dashboard_view_model.cpp
+        src/presentation/dashboard_view_model.h
     QML_FILES
         qml/Main.qml
         qml/theme/Theme.qml
@@ -75,6 +97,7 @@ qt_add_qml_module(hinkwise
 )
 
 target_link_libraries(hinkwise PRIVATE
+    hinkwise_application
     hinkwise_domain
     hinkwise_infrastructure
     Qt6::Core
