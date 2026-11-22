@@ -30,6 +30,9 @@ Build hinkwise. Configure is idempotent, so running it repeatedly is cheap.
   scripts/build.sh -p release      # optimised build
   scripts/build.sh -j 4            # limit parallel compile jobs
   scripts/build.sh --clean -p dev  # wipe build/dev and rebuild
+  scripts/build.sh --install       # install to ~/.local (no root needed)
+  scripts/build.sh --install --prefix /usr/local
+  scripts/build.sh --uninstall     # reverse the last install
 EOF
 }
 
@@ -37,7 +40,10 @@ preset=dev
 do_run=0
 do_test=0
 do_clean=0
+do_install=0
+do_uninstall=0
 job_count=""
+prefix="${HOME}/.local"
 
 while (($#)); do
     case "$1" in
@@ -56,6 +62,18 @@ while (($#)); do
     -c | --clean)
         do_clean=1
         shift
+        ;;
+    -i | --install)
+        do_install=1
+        shift
+        ;;
+    -u | --uninstall)
+        do_uninstall=1
+        shift
+        ;;
+    --prefix)
+        prefix="${2:?--prefix needs a value}"
+        shift 2
         ;;
     -j)
         job_count="${2:?-j needs a number}"
@@ -88,6 +106,26 @@ fi
 
 build_dir="build/${preset}"
 
+# Uninstall needs no build, only the manifest CMake wrote last time.
+if ((do_uninstall)); then
+    manifest="${build_dir}/install_manifest.txt"
+    if [[ ! -f "$manifest" ]]; then
+        printf 'nothing to uninstall: %s not found\n' "$manifest" >&2
+        exit 1
+    fi
+    printf '== uninstall ==\n'
+    # CMake does not guarantee a trailing newline on the last manifest entry,
+    # and `read` returns non-zero at EOF, so the final path would be skipped.
+    while IFS= read -r installed || [[ -n "$installed" ]]; do
+        if [[ -e "$installed" ]]; then
+            rm -f "$installed"
+            printf 'removed %s\n' "$installed"
+        fi
+    done <"$manifest"
+    rm -f "$manifest"
+    exit 0
+fi
+
 if ((do_clean)); then
     printf 'removing %s\n' "$build_dir"
     rm -rf "$build_dir"
@@ -106,6 +144,11 @@ cmake --build "${build_args[@]}"
 if ((do_test)); then
     printf '\n== tests ==\n'
     ctest --preset "$preset" --output-on-failure
+fi
+
+if ((do_install)); then
+    printf '\n== install (%s) ==\n' "$prefix"
+    cmake --install "$build_dir" --prefix "$prefix"
 fi
 
 if ((do_run)); then

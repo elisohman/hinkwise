@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Elis -->
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>io.github.elisohman.hinkwise</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Hinkwise</name>
+  <summary>Plan your personal economy with the four-bucket model</summary>
+
+  <description>
+    <p>
+      Hinkwise is a local-first planner for personal finances, built around the
+      four-bucket model: a buffer for money you need soon, a preserve-value
+      bucket for the middle years, a growth bucket for the long run, and a small
+      play bucket so the rest stays untouched.
+    </p>
+    <p>
+      It sizes each bucket against your own monthly expenses, counts housing and
+      pension so you can see how much you are really worth, and expresses your
+      position in years of freedom rather than in kronor.
+    </p>
+    <p>
+      Your data never leaves the machine. There is no network code, no account
+      and no telemetry.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.elisohman.hinkwise.desktop</launchable>
+
+  <url type="homepage">https://github.com/elisohman/hinkwise</url>
+  <url type="bugtracker">https://github.com/elisohman/hinkwise/issues</url>
+
+  <developer id="io.github.elisohman">
+    <name>Elis</name>
+  </developer>
+
+  <content_rating type="oars-1.1"/>
+
+  <categories>
+    <category>Office</category>
+    <category>Finance</category>
+  </categories>
+
+  <keywords>
+    <keyword>finance</keyword>
+    <keyword>budget</keyword>
+    <keyword>savings</keyword>
+    <keyword>investing</keyword>
+    <keyword>economy</keyword>
+  </keywords>
+
+  <releases>
+    <release version="0.1.0" date="2026-11-22">
+      <description>
+        <p>Initial skeleton: window, theme and bucket overview.</p>
+      </description>
+    </release>
+  </releases>
+</component>

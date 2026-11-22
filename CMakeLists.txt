@@ -66,5 +66,17 @@ install(TARGETS hinkwise
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+# Desktop integration. Without these the binary installs but never appears in a
+# launcher, and the Wayland app_id has nothing to match against.
+install(FILES packaging/io.github.elisohman.hinkwise.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+)
+install(FILES packaging/io.github.elisohman.hinkwise.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+)
+install(FILES packaging/io.github.elisohman.hinkwise.metainfo.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
+)
+
 enable_testing()
 add_subdirectory(tests)

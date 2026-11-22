@@ -35,6 +35,38 @@ cmake --build --preset dev
 ./build/dev/hinkwise
 ```
 
+### Installing
+
+There is no `install/` directory in the tree: CMake installs to a *prefix*, not
+into the build folder. The default prefix is `/usr/local`, which needs root, so
+for a personal install:
+
+```sh
+scripts/build.sh --install              # to ~/.local, no root
+scripts/build.sh --install --prefix /usr/local
+scripts/build.sh --uninstall            # reverses the last install
+```
+
+That installs four things:
+
+```
+~/.local/bin/hinkwise
+~/.local/share/applications/io.github.elisohman.hinkwise.desktop
+~/.local/share/icons/hicolor/scalable/apps/io.github.elisohman.hinkwise.svg
+~/.local/share/metainfo/io.github.elisohman.hinkwise.metainfo.xml
+```
+
+The desktop entry and icon are what make the app appear in a launcher. The
+desktop file's basename matches the app id the binary reports on Wayland
+(`io.github.elisohman.hinkwise`), which is what lets a compositor such as niri
+associate the window with the entry and apply window rules.
+
+To stage a build without installing anywhere:
+
+```sh
+cmake --install build/dev --prefix /tmp/stage
+```
+
 QML linting runs through CMake, which sets up the module import paths for you:
 
 ```sh
@@ -53,6 +85,7 @@ ctest --preset dev
 src/            C++ sources; domain, application, infrastructure, presentation
 qml/            QML: Main.qml, theme/, components/, and later pages/
 tests/          domain unit tests and QML tests
+packaging/      .desktop entry, icon and AppStream metadata for installs
 scripts/        build.sh and check.sh, the local developer entry points
 docs/           model notes, architecture decision records, licensing
 ```

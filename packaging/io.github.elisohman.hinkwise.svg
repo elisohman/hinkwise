@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Elis -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="28" fill="#0f1419"/>
+  <!-- Four buckets, filled to the proportions the model intends:
+       a solid buffer, a smaller preserve, the largest growth, and a
+       deliberately tiny play bucket. -->
+  <rect x="20" y="30" width="18" height="68" rx="5" fill="#1d2733"/>
+  <rect x="20" y="66" width="18" height="32" rx="5" fill="#4ea1d3"/>
+
+  <rect x="43" y="30" width="18" height="68" rx="5" fill="#1d2733"/>
+  <rect x="43" y="55" width="18" height="43" rx="5" fill="#5ac8a0"/>
+
+  <rect x="66" y="30" width="18" height="68" rx="5" fill="#1d2733"/>
+  <rect x="66" y="40" width="18" height="58" rx="5" fill="#c9a227"/>
+
+  <rect x="89" y="30" width="18" height="68" rx="5" fill="#1d2733"/>
+  <rect x="89" y="85" width="18" height="13" rx="5" fill="#b06ab3"/>
+</svg>

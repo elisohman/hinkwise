@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Hinkwise
+GenericName=Personal Finance Planner
+Comment=Plan and evaluate your personal economy with the four-bucket model
+Exec=hinkwise
+Icon=io.github.elisohman.hinkwise
+Terminal=false
+Categories=Office;Finance;
+Keywords=finance;budget;savings;investing;buckets;economy;
+StartupNotify=true
+StartupWMClass=io.github.elisohman.hinkwise
