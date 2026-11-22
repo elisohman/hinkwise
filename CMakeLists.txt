@@ -20,8 +20,12 @@ add_library(hinkwise_domain STATIC
     src/domain/asset.cpp
     src/domain/balance_sheet.cpp
     src/domain/bucket.cpp
+    src/domain/insight.cpp
+    src/domain/jurisdiction.cpp
     src/domain/liability.cpp
+    src/domain/metrics.cpp
     src/domain/phase.cpp
+    src/domain/rules.cpp
     src/domain/targets.cpp
     src/domain/year_month.cpp
 )

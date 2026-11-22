@@ -70,6 +70,9 @@ void TestPercentage::comparesAndClamps()
     const Percentage high = Percentage::fromBasisPoints(900);
 
     QVERIFY(low < high);
+    QVERIFY(high > low);
+    QVERIFY(low <= low);
+    QVERIFY(high >= high);
     QVERIFY(low == Percentage::fromBasisPoints(100));
 
     QCOMPARE(clamp(Percentage::fromBasisPoints(50), low, high).basisPoints(), 100);

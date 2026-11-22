@@ -53,6 +53,12 @@ public:
         return m_basisPoints < other.m_basisPoints;
     }
 
+    constexpr bool operator>(Percentage other) const noexcept { return other < *this; }
+
+    constexpr bool operator<=(Percentage other) const noexcept { return !(other < *this); }
+
+    constexpr bool operator>=(Percentage other) const noexcept { return !(*this < other); }
+
     constexpr bool isZero() const noexcept { return m_basisPoints == 0; }
     constexpr bool isNegative() const noexcept { return m_basisPoints < 0; }
 
