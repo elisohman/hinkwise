@@ -94,6 +94,13 @@ qt_add_qml_module(hinkwise
         qml/Main.qml
         qml/theme/Theme.qml
         qml/components/BucketCard.qml
+        qml/components/BucketGauge.qml
+        qml/components/InsightCard.qml
+        qml/components/NavRail.qml
+        qml/components/SectionHeader.qml
+        qml/components/StatBlock.qml
+        qml/pages/DashboardPage.qml
+        qml/pages/PlaceholderPage.qml
 )
 
 target_link_libraries(hinkwise PRIVATE

@@ -28,8 +28,10 @@ QtObject {
     readonly property color danger: "#d9534f"
 
     // Type scale
+    readonly property int fontHero: 56
     readonly property int fontDisplay: 34
     readonly property int fontTitle: 20
+    readonly property int fontMetric: 26
     readonly property int fontBody: 14
     readonly property int fontCaption: 12
 
@@ -41,6 +43,7 @@ QtObject {
     readonly property int spaceXl: 40
 
     readonly property int radius: 10
+    readonly property int radiusSmall: 4
 
     function bucketColour(key: string): color {
         switch (key) {
@@ -52,6 +55,19 @@ QtObject {
             return growth;
         case "play":
             return play;
+        default:
+            return textMuted;
+        }
+    }
+
+    function severityColour(key: string): color {
+        switch (key) {
+        case "critical":
+            return danger;
+        case "warning":
+            return warning;
+        case "advice":
+            return preserve;
         default:
             return textMuted;
         }

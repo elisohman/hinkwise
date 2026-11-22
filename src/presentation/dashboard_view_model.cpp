@@ -7,12 +7,12 @@
 #include "domain/insight.h"
 #include "domain/phase.h"
 
+#include <QDate>
 #include <QLocale>
 #include <QString>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <optional>
 #include <utility>
 
 namespace hinkwise::presentation {
@@ -46,23 +46,39 @@ QString colourKeyOf(domain::Bucket bucket)
     return QStringLiteral("buffer");
 }
 
-/// How full the bar is. A bucket's target point is what it is aiming for; a
-/// bucket with no target but a cap fills against the cap. Everything else has
-/// nothing to be full of and stays at zero.
-double fillRatioOf(domain::Money balance, const domain::ResolvedTarget& target)
+/// The track a bucket's gauge draws on: the widest thing it has to show, plus
+/// a margin, so neither the band nor a balance that overshoots it ends up on
+/// the rim where it cannot be read.
+double gaugeAxis(domain::Money balance, const domain::ResolvedTarget& target)
 {
-    std::optional<domain::Money> denominator;
-    if (target.hasTarget() && target.point.isPositive())
-        denominator = target.point;
-    else if (target.hasCap() && target.cap->isPositive())
-        denominator = *target.cap;
+    double widest = std::max(static_cast<double>(balance.minorUnits()), 1.0);
+    if (target.hasTarget())
+        widest = std::max(widest, static_cast<double>(target.band.high.minorUnits()));
+    if (target.hasCap())
+        widest = std::max(widest, static_cast<double>(target.cap->minorUnits()));
+    return widest * 1.08;
+}
 
-    if (!denominator.has_value())
+double trackPosition(domain::Money amount, double axis)
+{
+    if (axis <= 0.0)
         return 0.0;
+    return std::clamp(static_cast<double>(amount.minorUnits()) / axis, 0.0, 1.0);
+}
 
-    const double ratio =
-        static_cast<double>(balance.minorUnits()) / static_cast<double>(denominator->minorUnits());
-    return std::clamp(ratio, 0.0, 1.0);
+QString severityKeyOf(domain::Severity severity)
+{
+    switch (severity) {
+    case domain::Severity::Critical:
+        return QStringLiteral("critical");
+    case domain::Severity::Warning:
+        return QStringLiteral("warning");
+    case domain::Severity::Advice:
+        return QStringLiteral("advice");
+    case domain::Severity::Info:
+        return QStringLiteral("info");
+    }
+    return QStringLiteral("info");
 }
 
 } // namespace
@@ -96,12 +112,20 @@ QVariant BucketsModel::data(const QModelIndex& index, int role) const
         return QVariant{row.balanceLabel};
     case TargetLabelRole:
         return QVariant{row.targetLabel};
-    case FillRatioRole:
-        return QVariant{row.fillRatio};
     case ColourKeyRole:
         return QVariant{row.colourKey};
+    case BandStartRole:
+        return QVariant{row.bandStart};
+    case BandEndRole:
+        return QVariant{row.bandEnd};
+    case BalanceMarkerRole:
+        return QVariant{row.balanceMarker};
+    case CapMarkerRole:
+        return QVariant{row.capMarker};
     case HasTargetRole:
         return QVariant{row.hasTarget};
+    case HasCapRole:
+        return QVariant{row.hasCap};
     default:
         return QVariant{};
     }
@@ -114,9 +138,13 @@ QHash<int, QByteArray> BucketsModel::roleNames() const
         {HorizonLabelRole, "horizonLabel"},
         {BalanceLabelRole, "balanceLabel"},
         {TargetLabelRole, "targetLabel"},
-        {FillRatioRole, "fillRatio"},
         {ColourKeyRole, "colourKey"},
+        {BandStartRole, "bandStart"},
+        {BandEndRole, "bandEnd"},
+        {BalanceMarkerRole, "balanceMarker"},
+        {CapMarkerRole, "capMarker"},
         {HasTargetRole, "hasTarget"},
+        {HasCapRole, "hasCap"},
     };
 }
 
@@ -150,6 +178,8 @@ QVariant InsightsModel::data(const QModelIndex& index, int role) const
     switch (role) {
     case SeverityRole:
         return QVariant{row.severity};
+    case SeverityKeyRole:
+        return QVariant{row.severityKey};
     case TitleRole:
         return QVariant{row.title};
     case WhyRole:
@@ -164,10 +194,8 @@ QVariant InsightsModel::data(const QModelIndex& index, int role) const
 QHash<int, QByteArray> InsightsModel::roleNames() const
 {
     return {
-        {SeverityRole, "severity"},
-        {TitleRole, "title"},
-        {WhyRole, "why"},
-        {SuggestionRole, "suggestion"},
+        {SeverityRole, "severity"}, {SeverityKeyRole, "severityKey"}, {TitleRole, "title"},
+        {WhyRole, "why"},           {SuggestionRole, "suggestion"},
     };
 }
 
@@ -198,10 +226,42 @@ void DashboardViewModel::reload()
 
 void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
 {
+    const QLocale locale;
+
     m_hasProfile = snapshot.hasProfile;
+    // AppController builds the snapshot for the current month, so the header
+    // names the same month the figures describe.
+    m_monthLabel = locale.toString(QDate::currentDate(), QStringLiteral("MMMM yyyy"));
     m_phaseLabel = QString::fromUtf8(domain::labelOf(snapshot.profile.phase));
     m_currencyLabel = QString::fromLatin1(domain::isoCodeOf(snapshot.profile.baseCurrency));
     m_yearsOfFreedom = snapshot.metrics.yearsOfFreedom.basisPoints() / 10000.0;
+    m_yearsOfFreedomLabel = locale.toString(m_yearsOfFreedom, 'f', 1);
+
+    // FI progress and the x21/x25/x33 band share one track. Every position is
+    // a ratio of the default target: the ticks come from the jurisdiction's
+    // multipliers, the progress from the metric the model already computed,
+    // so no money figure is divided anywhere outside the domain.
+    const domain::Jurisdiction& jurisdiction = snapshot.profile.jurisdiction;
+    m_fiMultiplierLow = jurisdiction.fiMultiplierLow;
+    m_fiMultiplierDefault = jurisdiction.fiMultiplierDefault;
+    m_fiMultiplierHigh = jurisdiction.fiMultiplierHigh;
+    m_fiTargetKnown = snapshot.metrics.fiTargetDefault.isPositive();
+
+    m_fiProgressRatio = 0.0;
+    m_fiTargetLowRatio = 0.0;
+    m_fiTargetDefaultRatio = 0.0;
+    m_fiTargetHighRatio = 0.0;
+    if (m_fiTargetKnown && m_fiMultiplierDefault > 0) {
+        const double defaultMultiplier = static_cast<double>(m_fiMultiplierDefault);
+        const double progress = snapshot.metrics.fiProgress.asFraction();
+        const double high = static_cast<double>(m_fiMultiplierHigh) / defaultMultiplier;
+        const double axis = std::max({1.0, high, progress}) * 1.08;
+        m_fiProgressRatio = std::clamp(progress / axis, 0.0, 1.0);
+        m_fiTargetLowRatio =
+            std::clamp(static_cast<double>(m_fiMultiplierLow) / defaultMultiplier / axis, 0.0, 1.0);
+        m_fiTargetDefaultRatio = std::clamp(1.0 / axis, 0.0, 1.0);
+        m_fiTargetHighRatio = std::clamp(high / axis, 0.0, 1.0);
+    }
 
     m_annualExpensesLabel = formatMoney(snapshot.metrics.annualExpenses);
     m_monthlyExpensesLabel = formatMoney(snapshot.metrics.monthlyExpenses);
@@ -220,15 +280,20 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
         const std::size_t index = static_cast<std::size_t>(bucket);
         const domain::Money balance = snapshot.facts.sheet.perBucket[index];
         const domain::ResolvedTarget& target = snapshot.facts.targets[index];
+        const double axis = gaugeAxis(balance, target);
 
         bucketRows.push_back(BucketRow{
             QString::fromUtf8(domain::labelOf(bucket)),
             horizonLabel(bucket),
             formatMoney(balance),
             targetLabel(target),
-            fillRatioOf(balance, target),
             colourKeyOf(bucket),
+            target.hasTarget() ? trackPosition(target.band.low, axis) : 0.0,
+            target.hasTarget() ? trackPosition(target.band.high, axis) : 0.0,
+            trackPosition(balance, axis),
+            target.hasCap() ? trackPosition(*target.cap, axis) : 0.0,
             target.hasTarget(),
+            target.hasCap(),
         });
     }
     m_buckets->setRows(std::move(bucketRows));
@@ -238,6 +303,7 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     for (const domain::Insight& insight : snapshot.insights) {
         insightRows.push_back(InsightRow{
             QString::fromUtf8(domain::labelOf(insight.severity)),
+            severityKeyOf(insight.severity),
             QString::fromStdString(insight.title),
             QString::fromStdString(insight.why),
             QString::fromStdString(insight.suggestion),

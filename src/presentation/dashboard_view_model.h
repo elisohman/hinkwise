@@ -22,15 +22,20 @@
 namespace hinkwise::presentation {
 
 /// One bucket as a screen reads it: the labels are already formatted, and the
-/// fill ratio is a plain 0..1 number for the progress bar.
+/// band, the balance and the cap are plain 0..1 positions along one shared
+/// track, so a gauge only multiplies them by pixels.
 struct BucketRow {
     QString label;
     QString horizonLabel;
     QString balanceLabel;
     QString targetLabel;
-    double fillRatio = 0.0;
     QString colourKey;
+    double bandStart = 0.0;
+    double bandEnd = 0.0;
+    double balanceMarker = 0.0;
+    double capMarker = 0.0;
     bool hasTarget = false;
+    bool hasCap = false;
 };
 
 /// The bucket rows as a QML list model, in fill order.
@@ -44,9 +49,13 @@ public:
         HorizonLabelRole,
         BalanceLabelRole,
         TargetLabelRole,
-        FillRatioRole,
         ColourKeyRole,
+        BandStartRole,
+        BandEndRole,
+        BalanceMarkerRole,
+        CapMarkerRole,
         HasTargetRole,
+        HasCapRole,
     };
 
     explicit BucketsModel(QObject* parent = nullptr);
@@ -63,8 +72,11 @@ private:
 
 /// One insight as a screen reads it. The text is the rule's own coaching, not
 /// a rephrasing here, so the message and the check cannot drift apart.
+/// `severityKey` is the untranslated handle a screen colours the entry by, in
+/// the same way colourKey names a bucket.
 struct InsightRow {
     QString severity;
+    QString severityKey;
     QString title;
     QString why;
     QString suggestion;
@@ -78,6 +90,7 @@ class InsightsModel : public QAbstractListModel {
 public:
     enum Role {
         SeverityRole = Qt::UserRole + 1,
+        SeverityKeyRole,
         TitleRole,
         WhyRole,
         SuggestionRole,
@@ -106,9 +119,19 @@ class DashboardViewModel : public QObject {
     QML_ELEMENT
 
     Q_PROPERTY(bool hasProfile READ hasProfile NOTIFY changed)
+    Q_PROPERTY(QString monthLabel READ monthLabel NOTIFY changed)
     Q_PROPERTY(QString phaseLabel READ phaseLabel NOTIFY changed)
     Q_PROPERTY(QString currencyLabel READ currencyLabel NOTIFY changed)
     Q_PROPERTY(double yearsOfFreedom READ yearsOfFreedom NOTIFY changed)
+    Q_PROPERTY(QString yearsOfFreedomLabel READ yearsOfFreedomLabel NOTIFY changed)
+    Q_PROPERTY(bool fiTargetKnown READ fiTargetKnown NOTIFY changed)
+    Q_PROPERTY(double fiProgressRatio READ fiProgressRatio NOTIFY changed)
+    Q_PROPERTY(double fiTargetLowRatio READ fiTargetLowRatio NOTIFY changed)
+    Q_PROPERTY(double fiTargetDefaultRatio READ fiTargetDefaultRatio NOTIFY changed)
+    Q_PROPERTY(double fiTargetHighRatio READ fiTargetHighRatio NOTIFY changed)
+    Q_PROPERTY(int fiMultiplierLow READ fiMultiplierLow NOTIFY changed)
+    Q_PROPERTY(int fiMultiplierDefault READ fiMultiplierDefault NOTIFY changed)
+    Q_PROPERTY(int fiMultiplierHigh READ fiMultiplierHigh NOTIFY changed)
     Q_PROPERTY(QString annualExpensesLabel READ annualExpensesLabel NOTIFY changed)
     Q_PROPERTY(QString monthlyExpensesLabel READ monthlyExpensesLabel NOTIFY changed)
     Q_PROPERTY(QString bufferMonthsLabel READ bufferMonthsLabel NOTIFY changed)
@@ -130,9 +153,19 @@ public:
     Q_INVOKABLE void reload();
 
     bool hasProfile() const { return m_hasProfile; }
+    QString monthLabel() const { return m_monthLabel; }
     QString phaseLabel() const { return m_phaseLabel; }
     QString currencyLabel() const { return m_currencyLabel; }
     double yearsOfFreedom() const { return m_yearsOfFreedom; }
+    QString yearsOfFreedomLabel() const { return m_yearsOfFreedomLabel; }
+    bool fiTargetKnown() const { return m_fiTargetKnown; }
+    double fiProgressRatio() const { return m_fiProgressRatio; }
+    double fiTargetLowRatio() const { return m_fiTargetLowRatio; }
+    double fiTargetDefaultRatio() const { return m_fiTargetDefaultRatio; }
+    double fiTargetHighRatio() const { return m_fiTargetHighRatio; }
+    int fiMultiplierLow() const { return m_fiMultiplierLow; }
+    int fiMultiplierDefault() const { return m_fiMultiplierDefault; }
+    int fiMultiplierHigh() const { return m_fiMultiplierHigh; }
     QString annualExpensesLabel() const { return m_annualExpensesLabel; }
     QString monthlyExpensesLabel() const { return m_monthlyExpensesLabel; }
     QString bufferMonthsLabel() const { return m_bufferMonthsLabel; }
@@ -159,9 +192,19 @@ private:
     QString percentLabel(domain::Percentage percentage) const;
 
     bool m_hasProfile = false;
+    QString m_monthLabel;
     QString m_phaseLabel;
     QString m_currencyLabel;
     double m_yearsOfFreedom = 0.0;
+    QString m_yearsOfFreedomLabel;
+    bool m_fiTargetKnown = false;
+    double m_fiProgressRatio = 0.0;
+    double m_fiTargetLowRatio = 0.0;
+    double m_fiTargetDefaultRatio = 0.0;
+    double m_fiTargetHighRatio = 0.0;
+    int m_fiMultiplierLow = 0;
+    int m_fiMultiplierDefault = 0;
+    int m_fiMultiplierHigh = 0;
     QString m_annualExpensesLabel;
     QString m_monthlyExpensesLabel;
     QString m_bufferMonthsLabel;
