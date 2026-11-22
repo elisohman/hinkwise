@@ -16,6 +16,8 @@ class TestInputText : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
+    void cleanupTestCase();
     void roundTripsThroughPlainText_data();
     void roundTripsThroughPlainText();
     void readsTheSeparatorTheHouseholdTyped_data();
@@ -24,9 +26,29 @@ private slots:
     void rejectsWhatIsNotAnAmount();
     void refusesOneMinorUnitPastTheMaximum();
     void readsRatesAsBasisPoints();
+    void rejectsRatesWithTooManyDecimals_data();
     void rejectsRatesWithTooManyDecimals();
     void formatsWithTheCurrencyCode();
+
+private:
+    QLocale m_previousLocale;
 };
+
+void TestInputText::initTestCase()
+{
+    // The parser reads separators without asking the locale first, but the
+    // locale still decides what is ambiguous. Pin one so the suite is
+    // deterministic: under a C locale "4,567" is a grouped 4567, under a
+    // comma-decimal locale it is 4.567. Tests that care about a specific
+    // convention set their own locale and restore it afterwards.
+    m_previousLocale = QLocale();
+    QLocale::setDefault(QLocale{QStringLiteral("sv_SE")});
+}
+
+void TestInputText::cleanupTestCase()
+{
+    QLocale::setDefault(m_previousLocale);
+}
 
 void TestInputText::roundTripsThroughPlainText_data()
 {
@@ -171,11 +193,31 @@ void TestInputText::readsRatesAsBasisPoints()
     QVERIFY(!empty.error.isEmpty());
 }
 
+void TestInputText::rejectsRatesWithTooManyDecimals_data()
+{
+    QTest::addColumn<QString>("locale");
+    QTest::addColumn<QString>("text");
+
+    QTest::newRow("comma decimals") << QStringLiteral("sv_SE") << QStringLiteral("4,567");
+    QTest::newRow("dot decimals") << QStringLiteral("en_US") << QStringLiteral("4.567");
+}
+
 void TestInputText::rejectsRatesWithTooManyDecimals()
 {
-    const PercentageInput parsed = parsePercentageInput(QStringLiteral("4,567"));
+    QFETCH(QString, locale);
+    QFETCH(QString, text);
+
+    // A rate is stored in basis points, so anything past two decimals must be
+    // refused rather than silently rounded. Which character is the decimal
+    // separator depends on the locale, so each row pins its own.
+    const QLocale previous = QLocale();
+    QLocale::setDefault(QLocale{locale});
+
+    const PercentageInput parsed = parsePercentageInput(text);
     QVERIFY(!parsed.ok);
     QVERIFY(!parsed.error.isEmpty());
+
+    QLocale::setDefault(previous);
 }
 
 void TestInputText::formatsWithTheCurrencyCode()
