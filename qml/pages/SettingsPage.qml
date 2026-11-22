@@ -949,7 +949,12 @@ Item {
                     text: qsTr("Cancel")
                     filled: false
                     focus: true
-                    onClicked: settings.cancelPhaseChange()
+                    // Close the sheet rather than clearing the pending phase
+                    // behind it: onClosed is the single place that resets the
+                    // pending state, so cancelling and dismissing stay identical.
+                    // Clearing here left the sheet open reading from a phase
+                    // that no longer existed, with a blank title and no rows.
+                    onClicked: phaseSheet.close()
                 }
 
                 PrimaryButton {
@@ -961,6 +966,19 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // The inverse of onClosed: whenever the pending phase is cleared - by a
+    // successful change, by cancel, or by any future path - the sheet closes.
+    // The sheet is the only thing that may hold a pending phase, so the two can
+    // never disagree again, whatever a button forgets to do.
+    Connections {
+        target: settings
+
+        function onChanged() {
+            if (!settings.comparisonVisible)
+                phaseSheet.close();
         }
     }
 }
