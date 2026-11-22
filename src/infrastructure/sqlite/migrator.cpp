@@ -159,6 +159,13 @@ application::Result<int> applyMigrations(QSqlDatabase& database,
         return stored;
 
     int current = stored.value();
+    const int latest = migrations.empty() ? 0 : migrations.back().version;
+    if (current > latest)
+        return application::Result<int>::err(
+            "migration: the database is at schema version " + std::to_string(current) +
+            ", but this build of hinkwise only knows version " + std::to_string(latest) +
+            "; the database was written by a newer hinkwise");
+
     for (const Migration& migration : migrations) {
         if (migration.version <= current)
             continue;

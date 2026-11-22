@@ -53,6 +53,7 @@ Item {
 
         Text {
             text: balanceRow.name
+            textFormat: Text.PlainText
             color: Theme.textPrimary
             font.pixelSize: Theme.fontBody
             elide: Text.ElideRight
@@ -266,6 +267,7 @@ Item {
 
                             Text {
                                 text: debtRow.name
+                                textFormat: Text.PlainText
                                 color: Theme.textPrimary
                                 font.pixelSize: Theme.fontBody
                                 elide: Text.ElideRight
@@ -447,6 +449,7 @@ Item {
 
                                     Text {
                                         text: accountCard.name
+                                        textFormat: Text.PlainText
                                         color: Theme.textPrimary
                                         font.pixelSize: Theme.fontBody
                                         font.weight: Font.DemiBold
@@ -517,6 +520,7 @@ Item {
             Text {
                 visible: page.pageError.length > 0
                 text: page.pageError
+                textFormat: Text.PlainText
                 color: Theme.danger
                 font.pixelSize: Theme.fontCaption
                 Layout.fillWidth: true
@@ -615,6 +619,7 @@ Item {
                 id: accountError
 
                 visible: text.length > 0
+                textFormat: Text.PlainText
                 color: Theme.danger
                 font.pixelSize: Theme.fontCaption
                 Layout.fillWidth: true
@@ -688,6 +693,7 @@ Item {
             Text {
                 id: valuationTitle
 
+                textFormat: Text.PlainText
                 color: Theme.textPrimary
                 font.pixelSize: Theme.fontTitle
                 font.weight: Font.DemiBold
@@ -718,6 +724,7 @@ Item {
                 id: valuationError
 
                 visible: text.length > 0
+                textFormat: Text.PlainText
                 color: Theme.danger
                 font.pixelSize: Theme.fontCaption
                 Layout.fillWidth: true
@@ -979,6 +986,7 @@ Item {
                 id: debtError
 
                 visible: text.length > 0
+                textFormat: Text.PlainText
                 color: Theme.danger
                 font.pixelSize: Theme.fontCaption
                 Layout.fillWidth: true

@@ -4,6 +4,7 @@
 #include "domain/year_month.h"
 
 #include <QTest>
+#include <stdexcept>
 
 using namespace hinkwise::domain;
 
@@ -15,6 +16,7 @@ private slots:
     void indexes();
     void advancesAcrossYearBoundaries_data();
     void advancesAcrossYearBoundaries();
+    void throwsOutsideTheSupportedYearRange();
     void countsMonthsBetween();
     void parsesValidInput_data();
     void parsesValidInput();
@@ -75,6 +77,20 @@ void TestYearMonth::advancesAcrossYearBoundaries()
     QCOMPARE(result.month(), expectedMonth);
 }
 
+void TestYearMonth::throwsOutsideTheSupportedYearRange()
+{
+    // A month at the edge of the range has a successor, but not one this type
+    // can represent. Throwing says so; a noexcept function would terminate.
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, YearMonth{9999, 12}.nextMonth());
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, YearMonth{9999, 12}.plusMonths(1));
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, YearMonth{1, 1}.plusMonths(-1));
+
+    // Staying inside the range still works, boundary or not.
+    const YearMonth last = YearMonth{9999, 12}.plusMonths(0);
+    QCOMPARE(last.year(), 9999);
+    QCOMPARE(last.month(), 12u);
+}
+
 void TestYearMonth::countsMonthsBetween()
 {
     const YearMonth jan2025{2025, 1u};
@@ -97,6 +113,8 @@ void TestYearMonth::parsesValidInput_data()
     QTest::newRow("canonical") << QStringLiteral("2026-11") << 2026 << 11u;
     QTest::newRow("january") << QStringLiteral("1970-01") << 1970 << 1u;
     QTest::newRow("december") << QStringLiteral("2030-12") << 2030 << 12u;
+    QTest::newRow("first month") << QStringLiteral("0001-01") << 1 << 1u;
+    QTest::newRow("last month") << QStringLiteral("9999-12") << 9999 << 12u;
 }
 
 void TestYearMonth::parsesValidInput()
@@ -118,6 +136,7 @@ void TestYearMonth::rejectsInvalidInput_data()
 
     QTest::newRow("empty") << QString();
     QTest::newRow("too short") << QStringLiteral("2026-1");
+    QTest::newRow("year zero") << QStringLiteral("0000-01");
     QTest::newRow("month zero") << QStringLiteral("2026-00");
     QTest::newRow("month thirteen") << QStringLiteral("2026-13");
     QTest::newRow("wrong separator") << QStringLiteral("2026/11");

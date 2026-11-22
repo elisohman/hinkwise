@@ -24,9 +24,11 @@ public:
     /// The real file, under QStandardPaths::AppDataLocation.
     static QString defaultPath();
 
-    /// Opens `path`, creating the parent directory and the file itself. An
-    /// explicit path is what makes the tests use a real file in a temporary
-    /// directory instead of :memory:.
+    /// Opens `path`, creating the parent directory and the file itself if it is
+    /// not there. Creation is atomic and an existing file is opened without
+    /// truncation, so two processes starting at once cannot wipe each other's
+    /// database. An explicit path is what makes the tests use a real file in a
+    /// temporary directory instead of :memory:.
     static application::Result<Database> open(const QString& path);
 
     Database(Database&& other) noexcept;

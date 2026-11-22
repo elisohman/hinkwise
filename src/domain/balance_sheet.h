@@ -40,6 +40,11 @@ struct BalanceSheet {
     Money liquidAssets{};
     /// Indexed by Bucket, in fill order.
     std::array<Money, 4> perBucket{};
+    /// Indexed by Bucket. The same holdings as perBucket with housing and the
+    /// pension kinds left out, because a projection that starts from a flat
+    /// would measure a household as funded on money it cannot spend. Their sum
+    /// is headlineAssets.
+    std::array<Money, 4> investablePerBucket{};
     /// Assets that count in the cautious headline: everything except housing
     /// and the pension kinds, further filtered by Asset::includedInHeadline.
     /// Kept as a figure because the sheet no longer holds the holdings.

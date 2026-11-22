@@ -607,6 +607,7 @@ Item {
 
                                     Text {
                                         text: reviewAccount.name
+                                        textFormat: Text.PlainText
                                         color: Theme.textPrimary
                                         font.pixelSize: Theme.fontBody
                                         elide: Text.ElideRight
@@ -637,6 +638,7 @@ Item {
                         Text {
                             visible: wizard.createError.length > 0
                             text: wizard.createError
+                            textFormat: Text.PlainText
                             color: Theme.danger
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true
@@ -666,6 +668,7 @@ Item {
                 Text {
                     visible: text.length > 0
                     text: wizard.blockingReason
+                    textFormat: Text.PlainText
                     color: Theme.textMuted
                     font.pixelSize: Theme.fontCaption
                     Layout.maximumWidth: 380

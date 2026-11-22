@@ -103,10 +103,13 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_fiTargetHighLabel = formatMoney(snapshot.metrics.fiTargetHigh);
 
     // What the projection starts from, and what is added to it each year. The
-    // saving figure is last month's, kept flat for the whole horizon: the page
-    // says so, because pretending a household's saving rises with its income
-    // would be a forecast dressed as arithmetic.
-    m_baseInput.startingBalances = snapshot.facts.sheet.perBucket;
+    // starting balances are investable capital: housing and pension promises
+    // are left out, the same exclusion the cautious headline uses, so a
+    // household that owns a flat does not look funded in year zero. The saving
+    // figure is last month's, kept flat for the whole horizon: the page says
+    // so, because pretending a household's saving rises with its income would
+    // be a forecast dressed as arithmetic.
+    m_baseInput.startingBalances = snapshot.facts.sheet.investablePerBucket;
     m_baseInput.annualExpenses = snapshot.metrics.annualExpenses;
     m_baseInput.fiTarget = snapshot.metrics.fiTargetDefault;
     m_baseInput.years = kHorizonYears;

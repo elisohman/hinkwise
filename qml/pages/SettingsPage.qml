@@ -510,6 +510,7 @@ Item {
 
                             Text {
                                 text: settings.databasePath
+                                textFormat: Text.PlainText
                                 color: Theme.textSecondary
                                 font.pixelSize: Theme.fontCaption
                                 Layout.fillWidth: true
@@ -535,6 +536,7 @@ Item {
                         Text {
                             visible: settings.backupMessage.length > 0
                             text: settings.backupMessage
+                            textFormat: Text.PlainText
                             color: Theme.positive
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true
@@ -544,6 +546,7 @@ Item {
                         Text {
                             visible: settings.backupError.length > 0
                             text: settings.backupError
+                            textFormat: Text.PlainText
                             color: Theme.danger
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true

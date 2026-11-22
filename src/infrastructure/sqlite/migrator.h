@@ -31,6 +31,11 @@ MigrationList schemaMigrations();
 /// reached. Already applied steps are skipped, so calling this on every start is
 /// the intended use.
 ///
+/// A version above the highest known migration means a newer hinkwise wrote the
+/// file. That is an error rather than a silent success: this build cannot know
+/// what the newer schema means, and reading it as if it were the old one would
+/// corrupt what the newer release stored.
+///
 /// Each step, including its `PRAGMA user_version` bump, is one transaction: when
 /// `apply` reports an error the step is rolled back and the version stays where
 /// it was, which keeps the file loadable by the previous release.

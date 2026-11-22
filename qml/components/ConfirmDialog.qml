@@ -42,6 +42,7 @@ Popup {
 
         Text {
             text: root.title
+            textFormat: Text.PlainText
             color: Theme.textPrimary
             font.pixelSize: Theme.fontTitle
             font.weight: Font.DemiBold
@@ -51,6 +52,7 @@ Popup {
 
         Text {
             text: root.message
+            textFormat: Text.PlainText
             color: Theme.textSecondary
             font.pixelSize: Theme.fontBody
             Layout.fillWidth: true

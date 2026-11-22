@@ -338,6 +338,7 @@ Item {
                         Text {
                             visible: text.length > 0
                             text: cashflow.saveError
+                            textFormat: Text.PlainText
                             color: Theme.danger
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true

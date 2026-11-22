@@ -11,6 +11,9 @@
 
 #include <QDate>
 #include <QDateTime>
+#include <QFile>
+#include <QFileDevice>
+#include <QFileInfo>
 #include <QQmlEngine>
 #include <QSaveFile>
 #include <QSqlDatabase>
@@ -43,6 +46,33 @@ infrastructure::json::MoneyPoint toBackupPoint(const application::MoneyPoint& po
 std::string toStd(const QString& text)
 {
     return text.toStdString();
+}
+
+/// The form of `path` two paths can be compared in: the canonical one where the
+/// file exists, the absolute one where it does not yet. A backup destination is
+/// often a name that has never been written, while the database is always there.
+QString comparablePath(const QString& path)
+{
+    const QFileInfo info{path};
+    const QString canonical = info.canonicalFilePath();
+    return canonical.isEmpty() ? info.absoluteFilePath() : canonical;
+}
+
+/// True when `destination` is the live database file or one of SQLite's own
+/// sidecars. Writing a backup there replaces the household's data with JSON:
+/// the database no longer opens, and nothing in the backup can be imported back
+/// yet, so the loss is total.
+bool namesTheDatabase(const QString& destination, const QString& databasePath)
+{
+    static constexpr const char* kSidecarSuffixes[] = {"", "-wal", "-shm", "-journal"};
+
+    const QString target = comparablePath(destination);
+    for (const char* suffix : kSidecarSuffixes) {
+        const QString candidate = databasePath + QString::fromLatin1(suffix);
+        if (target == comparablePath(candidate))
+            return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -190,6 +220,13 @@ application::Result<int> AppController::exportBackup(const QString& path) const
     if (path.isEmpty())
         return Outcome::err(toStd(tr("A backup needs a file to be written to.")));
 
+    const QString databasePath = m_database->path();
+    if (namesTheDatabase(path, databasePath))
+        return Outcome::err(
+            toStd(tr("That is the database file (%1). Choose another name: a backup cannot "
+                     "replace the household's data.")
+                      .arg(databasePath)));
+
     const application::Result<std::optional<domain::Profile>> loaded = m_profiles->load();
     if (!loaded.ok())
         return Outcome::err(loaded.error());
@@ -280,6 +317,12 @@ application::Result<int> AppController::exportBackup(const QString& path) const
     if (!file.commit())
         return Outcome::err(
             toStd(tr("Cannot finish writing %1: %2").arg(path, file.errorString())));
+
+    // A backup holds the whole balance sheet, so it is readable by its owner
+    // alone. Refusing to leave a world-readable copy is part of having written
+    // one at all.
+    if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return Outcome::err(toStd(tr("Cannot set owner-only permissions on %1.").arg(path)));
 
     return Outcome::ok(records);
 }

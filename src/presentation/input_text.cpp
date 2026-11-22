@@ -148,6 +148,11 @@ NumberReading readNumber(const QString& text, int decimals)
         return {NumberError::TooLarge, 0};
     for (qsizetype index = minorPart.size(); index < decimals; ++index)
         fraction *= 10;
+    // The whole units were checked against the scaled maximum above, but the
+    // fraction is added afterwards. Adding it unchecked would wrap at the
+    // int64 limit and store a small amount from a huge input.
+    if (fraction > std::numeric_limits<std::int64_t>::max() - units)
+        return {NumberError::TooLarge, 0};
     units += fraction;
 
     return {NumberError::None, units};

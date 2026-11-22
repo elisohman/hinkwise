@@ -36,6 +36,8 @@ std::optional<YearMonth> YearMonth::parse(std::string_view text)
         month = month * 10 + static_cast<unsigned>(text[i] - '0');
     }
 
+    if (year < kMinYear || year > kMaxYear)
+        return std::nullopt;
     if (month < 1 || month > 12)
         return std::nullopt;
 

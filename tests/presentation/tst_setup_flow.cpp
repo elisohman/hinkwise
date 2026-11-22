@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QLocale>
+#include <QSignalSpy>
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -36,6 +37,7 @@ private slots:
     void initTestCase();
     void startsWithoutAHousehold();
     void refusesToLeaveTheIncomeStepUnfilled();
+    void accountEditsReachTheWizardsChangedSignal();
     void createsTheHouseholdItReviewed();
     void bucketsPageAddsAndValuesAnAccount();
     void bucketsPageRecordsTheWholeMonth();
@@ -44,6 +46,7 @@ private slots:
     void rejectsWhatTheUseCasesReject();
     void cashflowPageRecordsAndChecksTheMonth();
     void planPageProjectsTheHousehold();
+    void planDoesNotCountTheHouseAsSpendable();
     void reviewPageAddsAGoalAndProposesNothingAutomatic();
 
 private:
@@ -117,6 +120,39 @@ void TestSetupFlow::refusesToLeaveTheIncomeStepUnfilled()
 
     wizard.back();
     QCOMPARE(wizard.step(), 1);
+}
+
+void TestSetupFlow::accountEditsReachTheWizardsChangedSignal()
+{
+    WizardViewModel wizard;
+    wizard.setIncomeText(QStringLiteral("30000"));
+    wizard.setNeedsText(QStringLiteral("15000"));
+    wizard.setWantsText(QStringLiteral("9000"));
+    wizard.next();
+    wizard.next();
+    wizard.next();
+    QCOMPARE(wizard.step(), 3);
+    QVERIFY(!wizard.canGoNext());
+
+    // canGoNext is notified by changed. Every edit of an account row has to
+    // announce itself, or the Next button keeps the state it had before.
+    QSignalSpy changed{&wizard, &WizardViewModel::changed};
+
+    wizard.accounts()->setBalanceText(0, QStringLiteral("25000"));
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(!wizard.canGoNext());
+
+    wizard.accounts()->setBalanceText(1, QStringLiteral("100000"));
+    QCOMPARE(changed.count(), 2);
+    QVERIFY(wizard.canGoNext());
+
+    wizard.accounts()->addRow();
+    QCOMPARE(changed.count(), 3);
+    QVERIFY(!wizard.canGoNext());
+
+    wizard.accounts()->removeRow(2);
+    QCOMPARE(changed.count(), 4);
+    QVERIFY(wizard.canGoNext());
 }
 
 void TestSetupFlow::createsTheHouseholdItReviewed()
@@ -412,6 +448,29 @@ void TestSetupFlow::planPageProjectsTheHousehold()
     plan.setExtraMonthlySaving(QStringLiteral("500"));
     QVERIFY(plan.extraSavingError().isEmpty());
     QVERIFY(plan.extraSavingActive());
+}
+
+void TestSetupFlow::planDoesNotCountTheHouseAsSpendable()
+{
+    PlanViewModel withoutHouse;
+    QVERIFY(!withoutHouse.hasFiMarker());
+
+    // The flat is worth more than the FI target, but it is not money the
+    // household can live off. A projection that started from every bucket
+    // would report the target reached in year zero.
+    const domain::Asset house = domain::makeAsset("house", "House", domain::AssetKind::RealEstate);
+    QVERIFY(m_controller->addAsset(house).ok());
+    QVERIFY(m_controller
+                ->recordValuation("house", AppController::currentMonth(),
+                                  domain::Money{1000000000, domain::Currency::Eur})
+                .ok());
+
+    PlanViewModel plan;
+    QVERIFY(!plan.chartEmpty());
+    QVERIFY(!plan.hasFiMarker());
+    QVERIFY(plan.baseYearsLabel().contains(QStringLiteral("Not within")));
+
+    QVERIFY(m_controller->removeAsset("house").ok());
 }
 
 void TestSetupFlow::reviewPageAddsAGoalAndProposesNothingAutomatic()

@@ -77,6 +77,7 @@ private slots:
     void monthFlowCurrencyMismatchIsAnError();
     void unknownStoredTextIsAnError();
     void databaseFileIsOwnerOnly();
+    void reopeningTheSameFileKeepsItsRows();
 
 private:
     QSqlDatabase connection() const;
@@ -529,6 +530,38 @@ void TestRepositories::databaseFileIsOwnerOnly()
     QVERIFY(!permissions.testFlag(QFileDevice::WriteGroup));
     QVERIFY(!permissions.testFlag(QFileDevice::ReadOther));
     QVERIFY(!permissions.testFlag(QFileDevice::WriteOther));
+}
+
+void TestRepositories::reopeningTheSameFileKeepsItsRows()
+{
+    domain::Profile profile;
+    profile.displayName = "Elis";
+    profile.baseCurrency = domain::Currency::Sek;
+    profile.phase = domain::Phase::GettingStarted;
+    profile.jurisdiction = domain::swedishJurisdiction();
+
+    {
+        sqlite::SqliteProfileRepository before{connection()};
+        const application::Status saved = before.save(profile);
+        QVERIFY2(saved.ok(), saved.error().c_str());
+    }
+
+    // Opening the path a second time must open what is there, not truncate it
+    // into a new empty file.
+    m_database.reset();
+
+    auto reopened = sqlite::Database::open(m_path);
+    QVERIFY2(reopened.ok(), reopened.error().c_str());
+    m_database.emplace(std::move(reopened.value()));
+
+    const application::Status migrated = m_database->migrate();
+    QVERIFY2(migrated.ok(), migrated.error().c_str());
+
+    sqlite::SqliteProfileRepository after{m_database->connection()};
+    const application::Result<std::optional<domain::Profile>> loaded = after.load();
+    QVERIFY2(loaded.ok(), loaded.error().c_str());
+    QVERIFY(loaded.value().has_value());
+    QCOMPARE(QString::fromStdString(loaded.value()->displayName), QStringLiteral("Elis"));
 }
 
 QTEST_GUILESS_MAIN(TestRepositories)

@@ -21,6 +21,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QLocale>
 #include <QString>
 #include <QTemporaryDir>
@@ -70,6 +71,8 @@ private slots:
     void jurisdictionRefusesWhatIsNotAnAssumption();
     void displayNameIsRequired();
     void exportWritesEveryRecordedPoint();
+    void exportRefusesTheDatabaseFile();
+    void exportRefusesADatabaseSidecar();
     void exportNeedsAFile();
 
 private:
@@ -342,6 +345,16 @@ void TestSettingsFlow::exportWritesEveryRecordedPoint()
     QVERIFY(settings.backupError().isEmpty());
     QVERIFY(settings.backupMessage().contains(path));
 
+    // A backup holds the whole balance sheet, so it is readable by its owner
+    // alone.
+    const QFile::Permissions permissions = QFileInfo{path}.permissions();
+    QVERIFY(permissions.testFlag(QFileDevice::ReadOwner));
+    QVERIFY(permissions.testFlag(QFileDevice::WriteOwner));
+    QVERIFY(!permissions.testFlag(QFileDevice::ReadGroup));
+    QVERIFY(!permissions.testFlag(QFileDevice::WriteGroup));
+    QVERIFY(!permissions.testFlag(QFileDevice::ReadOther));
+    QVERIFY(!permissions.testFlag(QFileDevice::WriteOther));
+
     QFile file{path};
     QVERIFY(file.open(QIODevice::ReadOnly));
     const application::Result<infrastructure::json::BackupData> parsed =
@@ -383,6 +396,47 @@ void TestSettingsFlow::exportWritesEveryRecordedPoint()
     QFile again{path};
     QVERIFY(again.open(QIODevice::ReadOnly));
     QCOMPARE(QString::fromStdString(again.readAll().toStdString()), first);
+}
+
+void TestSettingsFlow::exportRefusesTheDatabaseFile()
+{
+    SettingsViewModel settings;
+    const QString databasePath = m_controller->databasePath();
+    QVERIFY(!databasePath.isEmpty());
+
+    QFile databaseFile{databasePath};
+    QVERIFY(databaseFile.open(QIODevice::ReadOnly));
+    const QByteArray before = databaseFile.readAll();
+    databaseFile.close();
+    QVERIFY(!before.isEmpty());
+
+    // The database path is a valid-looking file to save to. Choosing it must
+    // not replace SQLite with JSON.
+    QVERIFY(!settings.exportBackup(QUrl::fromLocalFile(databasePath)).isEmpty());
+    QVERIFY(settings.backupError().contains(databasePath));
+    QVERIFY(settings.backupMessage().isEmpty());
+
+    QVERIFY(databaseFile.open(QIODevice::ReadOnly));
+    QCOMPARE(databaseFile.readAll(), before);
+    databaseFile.close();
+
+    // The file is still a database: the household reads back and the dashboard
+    // still describes it.
+    QVERIFY(m_controller->profile().has_value());
+    QVERIFY(m_controller->dashboardSnapshot().hasProfile);
+}
+
+void TestSettingsFlow::exportRefusesADatabaseSidecar()
+{
+    SettingsViewModel settings;
+    const QString databasePath = m_controller->databasePath();
+    const QString writeAheadLog = databasePath + QStringLiteral("-wal");
+
+    // The sidecar may not exist yet - SQLite creates it on demand - but writing
+    // a backup with that name would still hand SQLite a JSON file.
+    QVERIFY(!settings.exportBackup(QUrl::fromLocalFile(writeAheadLog)).isEmpty());
+    QVERIFY(settings.backupError().contains(databasePath));
+    QVERIFY(!QFile::exists(writeAheadLog));
 }
 
 void TestSettingsFlow::exportNeedsAFile()

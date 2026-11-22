@@ -20,7 +20,11 @@ namespace hinkwise::domain {
 /// is applied, so a projection speaks in today's money throughout and the one
 /// thing a household cannot predict stays out of the arithmetic.
 struct ProjectionInput {
-    /// Indexed by Bucket.
+    /// Indexed by Bucket. Investable capital only: the household's holdings
+    /// with housing and the four pension kinds left out, exactly the assets
+    /// BalanceSheet::investablePerBucket sums. A flat or a pension promise is
+    /// wealth, but a projection that counted it as spendable would report a
+    /// household as funded on money it cannot live off.
     std::array<Money, 4> startingBalances{};
     /// Indexed by Bucket. Added once per year, after that year's growth.
     std::array<Money, 4> annualContributions{};

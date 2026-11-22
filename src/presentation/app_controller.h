@@ -106,6 +106,10 @@ public:
     /// Every valuation and every debt balance goes in, not just the latest: a
     /// backup that dropped the history would be worth less than none. The file
     /// is written through QSaveFile, so a failure leaves no partial file behind.
+    ///
+    /// The database file and its SQLite sidecars are refused as destinations,
+    /// because overwriting them destroys the household's only copy, and the
+    /// committed backup is given owner-only permissions.
     application::Result<int> exportBackup(const QString& path) const;
 
     /// Everything the household holds, ordered by name. A read that fails

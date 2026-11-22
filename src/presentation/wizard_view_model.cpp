@@ -256,6 +256,13 @@ WizardViewModel::WizardViewModel(QObject* parent)
     : QObject(parent)
     , m_accounts(new AccountDraftModel(this))
 {
+    // canGoNext and blockingReason are NOTIFY changed, so every way an account
+    // row can change has to announce it. Without these the Next button keeps
+    // the state it had before the household filled in the last balance.
+    connect(m_accounts, &AccountDraftModel::dataChanged, this, &WizardViewModel::changed);
+    connect(m_accounts, &AccountDraftModel::rowsInserted, this, &WizardViewModel::changed);
+    connect(m_accounts, &AccountDraftModel::rowsRemoved, this, &WizardViewModel::changed);
+
     m_income.value = domain::Money::zero(currency());
     m_needs.value = domain::Money::zero(currency());
     m_wants.value = domain::Money::zero(currency());

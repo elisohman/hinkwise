@@ -68,6 +68,7 @@ ColumnLayout {
     Text {
         visible: text.length > 0
         text: root.error
+        textFormat: Text.PlainText
         color: Theme.danger
         font.pixelSize: Theme.fontCaption
         Layout.fillWidth: true

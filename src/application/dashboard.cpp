@@ -43,8 +43,10 @@ domain::BalanceSheet emptyBalanceSheet(domain::Currency currency)
     sheet.netWorth = zero;
     sheet.liquidAssets = zero;
     sheet.headlineAssets = zero;
-    for (const Bucket bucket : domain::allBuckets())
+    for (const Bucket bucket : domain::allBuckets()) {
         sheet.perBucket[static_cast<std::size_t>(bucket)] = zero;
+        sheet.investablePerBucket[static_cast<std::size_t>(bucket)] = zero;
+    }
     return sheet;
 }
 

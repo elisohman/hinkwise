@@ -67,6 +67,7 @@ class TestMigrator : public QObject {
 private slots:
     void freshFileMigratesToTheExpectedVersion();
     void migratingTwiceChangesNothing();
+    void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
     void migrationsMustBeListedInOrder();
 };
@@ -123,6 +124,35 @@ void TestMigrator::migratingTwiceChangesNothing()
     QVERIFY(count.exec(QStringLiteral("SELECT count(*) FROM meta")));
     QVERIFY(count.next());
     QCOMPARE(count.value(0).toInt(), 1);
+}
+
+void TestMigrator::newerSchemaIsRefused()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    QSqlQuery bump{connection};
+    const QString statement = QStringLiteral("PRAGMA user_version = %1").arg(kExpectedVersion + 1);
+    QVERIFY2(bump.exec(statement), qPrintable(bump.lastError().text()));
+
+    const application::Status migrated = database.migrate();
+    QVERIFY(!migrated.ok());
+    QVERIFY(migrated.error().find("version 2") != std::string::npos);
+    QVERIFY(migrated.error().find("version 1") != std::string::npos);
+    QVERIFY(migrated.error().find("newer hinkwise") != std::string::npos);
+
+    // Refusing is not the same as downgrading: the file is left exactly as the
+    // newer release wrote it, with no half-built old schema beside it.
+    const application::Result<int> version = sqlite::schemaVersion(connection);
+    QVERIFY2(version.ok(), version.error().c_str());
+    QCOMPARE(version.value(), kExpectedVersion + 1);
+    for (const char* table : kTables)
+        QCOMPARE(tableCount(connection, table), 0);
 }
 
 void TestMigrator::failedMigrationLeavesTheVersionUnchanged()

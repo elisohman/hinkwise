@@ -14,6 +14,7 @@
 #include "domain/percentage.h"
 #include "domain/phase.h"
 #include "domain/profile.h"
+#include "domain/projection.h"
 #include "domain/year_month.h"
 
 #include <QTest>
@@ -303,6 +304,7 @@ private slots:
     void emptyDatabaseHasNoProfileAndZeroMetrics();
     void populatedHouseholdReportsItsMetrics();
     void populatedHouseholdShowsItsInsightsAndRebalance();
+    void projectionStartsFromInvestableCapital();
     void assetWithoutValuationCountsAsZero();
     void flowIsUsedWhenItIsNotLaterThanTheSnapshotMonth();
     void flowLaterThanTheSnapshotMonthIsNotPartOfIt();
@@ -348,6 +350,11 @@ void TestDashboard::populatedHouseholdReportsItsMetrics()
 
     // Housing is not money the household can act on: 420 000 kr is.
     QCOMPARE(ore(snapshot.metrics.financialAssets), qint64(42000000));
+    std::int64_t investable = 0;
+    for (const Bucket bucket : allBuckets())
+        investable +=
+            ore(snapshot.facts.sheet.investablePerBucket[static_cast<std::size_t>(bucket)]);
+    QCOMPARE(investable, ore(snapshot.metrics.financialAssets));
     QCOMPARE(ore(snapshot.facts.sheet.headlineNetWorth(false)), qint64(42000000 - 152000000));
 
     QCOMPARE(bps(snapshot.metrics.needsShare), 4000);
@@ -384,6 +391,62 @@ void TestDashboard::populatedHouseholdShowsItsInsightsAndRebalance()
     QCOMPARE(static_cast<int>(*snapshot.rebalance.nextContribution),
              static_cast<int>(Bucket::Buffer));
     QVERIFY(snapshot.rebalance.transfers.empty());
+}
+
+void TestDashboard::projectionStartsFromInvestableCapital()
+{
+    // A household whose only asset is the flat it lives in. Its buckets hold
+    // the flat, but it has no capital it can spend.
+    FakeHousehold houseOnly;
+    houseOnly.profiles.stored = sampleProfile();
+    houseOnly.assets.stored.push_back(makeAsset("flat", "Flat", AssetKind::RealEstate));
+    houseOnly.valuations.latestBalance["flat"] = sek(200000000);
+    houseOnly.flows.stored.push_back(
+        MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
+
+    const DashboardSnapshot house = houseOnly.build(kSnapshotMonth);
+    QCOMPARE(bucketOf(house.facts.sheet, Bucket::Preserve), qint64(200000000));
+    QCOMPARE(ore(house.facts.sheet.headlineAssets), qint64(0));
+    for (const Bucket bucket : allBuckets())
+        QCOMPARE(ore(house.facts.sheet.investablePerBucket[static_cast<std::size_t>(bucket)]),
+                 qint64(0));
+
+    // The plan page seeds its projection from the investable buckets. Starting
+    // from the whole sheet would call this household funded in year zero.
+    ProjectionInput houseProjection;
+    houseProjection.startingBalances = house.facts.sheet.investablePerBucket;
+    houseProjection.annualExpenses = house.metrics.annualExpenses;
+    houseProjection.fiTarget = house.metrics.fiTargetDefault;
+    houseProjection.years = 30;
+
+    QCOMPARE(bps(project(houseProjection).front().yearsOfFreedom), 0);
+    QVERIFY(!yearsToTarget(houseProjection).has_value());
+
+    // The same target held in a bank account is spendable capital, and is
+    // counted: the exclusion is about housing and pensions, not about cash.
+    FakeHousehold cashOnly;
+    cashOnly.profiles.stored = sampleProfile();
+    cashOnly.assets.stored.push_back(makeAsset("buffer", "Buffer account", AssetKind::BankAccount));
+    cashOnly.valuations.latestBalance["buffer"] = sek(1000000000);
+    cashOnly.flows.stored.push_back(
+        MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
+
+    const DashboardSnapshot cash = cashOnly.build(kSnapshotMonth);
+    QCOMPARE(bucketOf(cash.facts.sheet, Bucket::Buffer), qint64(1000000000));
+    QCOMPARE(ore(cash.facts.sheet.investablePerBucket[static_cast<std::size_t>(Bucket::Buffer)]),
+             qint64(1000000000));
+    QCOMPARE(ore(cash.facts.sheet.headlineAssets), qint64(1000000000));
+
+    ProjectionInput cashProjection;
+    cashProjection.startingBalances = cash.facts.sheet.investablePerBucket;
+    cashProjection.annualExpenses = cash.metrics.annualExpenses;
+    cashProjection.fiTarget = cash.metrics.fiTargetDefault;
+    cashProjection.years = 30;
+
+    QVERIFY(bps(project(cashProjection).front().yearsOfFreedom) > 0);
+    const std::optional<int> reached = yearsToTarget(cashProjection);
+    QVERIFY(reached.has_value());
+    QCOMPARE(*reached, 0);
 }
 
 void TestDashboard::assetWithoutValuationCountsAsZero()

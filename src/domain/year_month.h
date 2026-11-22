@@ -50,12 +50,14 @@ public:
         return YearMonth{static_cast<int>(year), static_cast<unsigned>(month + 1)};
     }
 
-    constexpr YearMonth plusMonths(int months) const noexcept
-    {
-        return fromIndex(index() + months);
-    }
+    /// Throws std::invalid_argument when the result leaves the supported years
+    /// 1..9999. Deliberately not noexcept: a boundary month that cannot be
+    /// represented is a caller bug, and terminating the process would hide it.
+    constexpr YearMonth plusMonths(int months) const { return fromIndex(index() + months); }
 
-    constexpr YearMonth nextMonth() const noexcept { return plusMonths(1); }
+    /// One month later. Throws std::invalid_argument, like plusMonths(), when
+    /// called on the last representable month.
+    constexpr YearMonth nextMonth() const { return plusMonths(1); }
 
     constexpr bool operator==(const YearMonth&) const noexcept = default;
 
@@ -76,7 +78,7 @@ public:
     std::string toString() const;
 
     /// Parses "YYYY-MM". Returns std::nullopt for anything malformed,
-    /// including out-of-range months.
+    /// including out-of-range months and years outside 1..9999.
     static std::optional<YearMonth> parse(std::string_view text);
 
     /// Number of months from `from` to `to`; negative if `to` precedes `from`.

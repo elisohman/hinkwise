@@ -103,11 +103,22 @@ application::Result<Database> Database::open(const QString& path)
                                                   toStd(path) + "'");
 
     // The file is created before SQLite sees it, so the permissions are in place
-    // before a single byte of the household's data is written.
+    // before a single byte of the household's data is written. NewOnly makes
+    // creation atomic: an existence check followed by a truncating open lets two
+    // processes both decide they made the file, and the second one wipes the
+    // first one's fresh database. If the file is already there, open it without
+    // truncation and let SQLite read what it holds.
     QFile file{path};
-    if (!file.exists() && !file.open(QIODevice::WriteOnly))
-        return application::Result<Database>::err("database: cannot create file '" + toStd(path) +
-                                                  "': " + toStd(file.errorString()));
+    if (!file.open(QIODevice::NewOnly)) {
+        const QString createError = file.errorString();
+        file.unsetError();
+        if (!QFile::exists(path))
+            return application::Result<Database>::err("database: cannot create file '" +
+                                                      toStd(path) + "': " + toStd(createError));
+        if (!file.open(QIODevice::ReadWrite))
+            return application::Result<Database>::err("database: cannot open file '" + toStd(path) +
+                                                      "': " + toStd(file.errorString()));
+    }
     file.close();
 
     if (!QFile::setPermissions(path, kOwnerOnly))

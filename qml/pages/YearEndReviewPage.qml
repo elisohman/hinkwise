@@ -326,6 +326,7 @@ Item {
 
                                 Text {
                                     text: goalRow.name
+                                    textFormat: Text.PlainText
                                     color: Theme.textPrimary
                                     font.pixelSize: Theme.fontBody
                                     Layout.fillWidth: true
@@ -447,6 +448,7 @@ Item {
                             Text {
                                 id: goalError
 
+                                textFormat: Text.PlainText
                                 color: Theme.danger
                                 font.pixelSize: Theme.fontCaption
                                 Layout.fillWidth: true

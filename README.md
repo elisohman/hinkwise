@@ -42,6 +42,7 @@ See `docs/model.md` for the rules it implements.
 ## Building
 
 Requires Qt 6.8 or newer (`qt6-base`, `qt6-declarative`), CMake 3.21+, Ninja and a C++20 compiler.
+The checked-in presets need CMake 3.25+.
 
 The short version, from a clean checkout:
 

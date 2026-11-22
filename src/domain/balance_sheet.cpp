@@ -12,7 +12,8 @@ namespace hinkwise::domain {
 namespace {
 
 /// Housing and pension promises are wealth, but not wealth the household can
-/// decide to spend this year. The cautious headline figure leaves them out.
+/// decide to spend this year. The cautious headline figure and the projection's
+/// starting balances both leave them out.
 bool isHousingOrPension(AssetKind kind)
 {
     switch (kind) {
@@ -85,8 +86,10 @@ BalanceSheet buildBalanceSheet(std::span<const Holding> holdings, std::span<cons
     sheet.totalLiabilities = Money::zero(currency);
     sheet.liquidAssets = Money::zero(currency);
     sheet.headlineAssets = Money::zero(currency);
-    for (const Bucket bucket : allBuckets())
+    for (const Bucket bucket : allBuckets()) {
         sheet.perBucket[static_cast<std::size_t>(bucket)] = Money::zero(currency);
+        sheet.investablePerBucket[static_cast<std::size_t>(bucket)] = Money::zero(currency);
+    }
 
     for (const Holding& holding : holdings) {
         if (holding.asset == nullptr)
@@ -97,8 +100,10 @@ BalanceSheet buildBalanceSheet(std::span<const Holding> holdings, std::span<cons
         sheet.perBucket[static_cast<std::size_t>(asset.bucket)] += holding.balance;
         if (asset.liquid)
             sheet.liquidAssets += holding.balance;
-        if (asset.includedInHeadline && !isHousingOrPension(asset.kind))
+        if (asset.includedInHeadline && !isHousingOrPension(asset.kind)) {
             sheet.headlineAssets += holding.balance;
+            sheet.investablePerBucket[static_cast<std::size_t>(asset.bucket)] += holding.balance;
+        }
     }
 
     for (const Debt& debt : debts) {

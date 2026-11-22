@@ -7,6 +7,7 @@
 #include <QTest>
 #include <array>
 #include <cstdint>
+#include <limits>
 
 using namespace hinkwise;
 using namespace hinkwise::presentation;
@@ -21,6 +22,7 @@ private slots:
     void readsTheSeparatorTheHouseholdTyped();
     void rejectsWhatIsNotAnAmount_data();
     void rejectsWhatIsNotAnAmount();
+    void refusesOneMinorUnitPastTheMaximum();
     void readsRatesAsBasisPoints();
     void rejectsRatesWithTooManyDecimals();
     void formatsWithTheCurrencyCode();
@@ -131,6 +133,22 @@ void TestInputText::rejectsWhatIsNotAnAmount()
     QVERIFY(parsed.label.isEmpty());
 
     QLocale::setDefault(previous);
+}
+
+void TestInputText::refusesOneMinorUnitPastTheMaximum()
+{
+    // 92 233 720 368 547 758,07 kr is the largest amount an int64 can hold in
+    // minor units. It has to parse; one ore more has to be refused rather than
+    // wrap around to a small number when the fraction is added.
+    const QString largest = QStringLiteral("92233720368547758,07");
+    const MoneyInput parsed = parseMoneyInput(largest, domain::Currency::Sek);
+    QVERIFY2(parsed.ok, qPrintable(parsed.error));
+    QCOMPARE(parsed.value.minorUnits(), std::numeric_limits<std::int64_t>::max());
+
+    const QString tooLarge = QStringLiteral("92233720368547758,08");
+    const MoneyInput refused = parseMoneyInput(tooLarge, domain::Currency::Sek);
+    QVERIFY(!refused.ok);
+    QVERIFY(!refused.error.isEmpty());
 }
 
 void TestInputText::readsRatesAsBasisPoints()
