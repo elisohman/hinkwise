@@ -7,8 +7,10 @@ path = [
   "CMakePresets.json",
   "REUSE.toml",
   ".clang-format",
+  ".clang-format-version",
   ".editorconfig",
   ".gitignore",
+  "CONTRIBUTING.md",
   "docs/**",
 ]
 SPDX-FileCopyrightText = "2026 Elis"

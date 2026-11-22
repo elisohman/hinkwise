@@ -28,6 +28,7 @@ add_library(hinkwise_domain STATIC
     src/domain/projection.cpp
     src/domain/rebalance.cpp
     src/domain/rules.cpp
+    src/domain/serialisation.cpp
     src/domain/targets.cpp
     src/domain/year_month.cpp
 )
@@ -36,6 +37,25 @@ target_compile_features(hinkwise_domain PUBLIC cxx_std_20)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(hinkwise_domain PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Infrastructure layer: the outside world. SQLite and the JSON backup format
+# live here, with Qt keeping its distance from the model.
+add_library(hinkwise_infrastructure STATIC
+    src/infrastructure/json/backup.cpp
+    src/infrastructure/sqlite/database.cpp
+    src/infrastructure/sqlite/migrator.cpp
+    src/infrastructure/sqlite/repositories.cpp
+)
+target_link_libraries(hinkwise_infrastructure PUBLIC
+    hinkwise_domain
+    Qt6::Core
+    Qt6::Sql
+)
+target_compile_features(hinkwise_infrastructure PUBLIC cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(hinkwise_infrastructure PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 qt_add_executable(hinkwise
@@ -56,6 +76,7 @@ qt_add_qml_module(hinkwise
 
 target_link_libraries(hinkwise PRIVATE
     hinkwise_domain
+    hinkwise_infrastructure
     Qt6::Core
     Qt6::Gui
     Qt6::Quick

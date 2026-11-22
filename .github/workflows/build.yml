@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: 2026 Elis
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The build half of scripts/check.sh, on the ci preset instead of dev. Qt comes
+# from the official binaries: find_package() requires 6.8, so the LTS is the
+# floor here, not whatever Qt the runner image happens to ship.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.preset }}, ${{ matrix.buildType }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: ci
+            buildType: Debug
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Qt Quick needs OpenGL and xkbcommon headers on Linux; the runner image
+      # has no Qt at all.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: linux_gcc_64
+          cache: true
+
+      # The ci preset leaves CMAKE_*_COMPILER_LAUNCHER unset, so point it at
+      # ccache here: without a launcher the cache would stay empty.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-${{ matrix.preset }}-${{ matrix.buildType }}
+
+      - name: Configure
+        run: >-
+          cmake --preset ${{ matrix.preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      # The ci test preset sets QT_QPA_PLATFORM=offscreen, which Qt Test needs
+      # on a runner with no display.
+      - name: Test
+        run: >-
+          ctest --preset ${{ matrix.preset }}
+          --output-on-failure
+          --output-log build/${{ matrix.preset }}/ctest.log
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/ctest.log
+            build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

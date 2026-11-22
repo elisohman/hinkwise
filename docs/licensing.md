@@ -5,7 +5,7 @@ Hinkwise combines two licences. They are compatible, but they are not the same.
 | Component | Licence | Notes |
 |---|---|---|
 | Hinkwise application code (`src/`, `qml/`, `tests/`, docs) | GPL-3.0-or-later | `LICENSES/GPL-3.0-or-later.txt` |
-| Qt 6 (Core, Gui, Quick, QuickControls2, Sql, Test) | LGPL-3.0-only | `LICENSES/LGPL-3.0-only.txt` |
+| Qt 6 (Core, Gui, Quick, QuickControls2, Sql, Test) | LGPL-3.0-only | not redistributed; see below |
 
 ## Why GPL-3.0-or-later for the application
 
@@ -18,8 +18,12 @@ ourselves into a corner by wanting a GPL-only Qt module later (for example Qt Ch
 1. **Dynamic linking only.** Qt is linked as shared libraries. The build must not link
    Qt statically — a static build would turn Qt's LGPL into a relinking obligation that
    requires shipping object files.
-2. **Keep the notices.** Qt's copyright notice and the LGPL-3.0 text ship with the
-   application (`LICENSES/`), and the in-app About screen identifies Qt and its version.
+2. **Keep the notices.** Hinkwise does not redistribute Qt: it links dynamically against
+   the Qt libraries the system already provides, so Qt's own licence text ships with Qt
+   (`/usr/share/licenses/qt6-base/`), not with this repository. The in-app About screen
+   identifies Qt and its version. If a future release ever bundles Qt — an AppImage, for
+   instance — the LGPL-3.0 text must be added back under `LICENSES/` and shipped with the
+   bundle.
 3. **Allow replacement.** Do not prevent a user from substituting their own build of the
    Qt libraries. Dynamic linking satisfies this as long as nothing (code signing,
    sandboxing, adversarial linker flags) blocks it.

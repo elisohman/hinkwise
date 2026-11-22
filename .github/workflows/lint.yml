@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 Elis
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Three independent checks: C++ formatting, SPDX/REUSE compliance and QML lint.
+# Separate jobs so a formatting nit does not hide a licensing problem.
+
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The pinned version is the one .clang-format was written against, so a
+      # newer clang-format must not silently reformat the tree.
+      - name: Install pinned clang-format
+        run: |
+          version="$(cat .clang-format-version)"
+          echo "Installing clang-format $version"
+          pip install "clang-format==$version"
+
+      - name: Check formatting
+        run: |
+          mapfile -t sources < <(git ls-files '*.h' '*.cpp')
+          if ((${#sources[@]} == 0)); then
+            echo "No C++ sources tracked, nothing to check."
+            exit 0
+          fi
+          clang-format --dry-run --Werror "${sources[@]}"
+
+  spdx:
+    name: REUSE / SPDX
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Validates the SPDX headers on every file and that LICENSES/ covers
+      # every identifier in use.
+      - name: REUSE lint
+        uses: fsfe/reuse-action@v5
+
+  qml:
+    name: qmllint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Configure
+        run: cmake --preset ci
+
+      - name: qmllint
+        run: cmake --build --preset ci --target all_qmllint
