@@ -38,7 +38,9 @@ struct Metrics {
 
     std::array<Percentage, 4> bucketShare{};
 
-    /// Buffer + preserve + growth + play: capital the household can act on.
+    /// Capital the household can act on: everything except housing and the
+    /// pension kinds, i.e. BalanceSheet::headlineAssets. Not the sum of the
+    /// buckets, because a home and a pension promise sit in buckets too.
     Money financialAssets{};
 
     Percentage yearsOfFreedom{};

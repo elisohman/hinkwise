@@ -9,8 +9,12 @@ no telemetry, no accounts.
 
 ## Status
 
-Skeleton. The window, theme and bucket cards exist; there is no data model yet.
-See `docs/model.md` for the domain rules the application is being built against.
+The domain layer is complete and tested: money, phases, bucket targets, balance
+sheet, metrics, rules, projection and rebalancing. The desktop application is
+still a shell - the window and bucket cards exist, but nothing is persisted and
+no screen reads real data yet.
+
+See `docs/model.md` for the rules it implements.
 
 ## Building
 
@@ -89,6 +93,18 @@ packaging/      .desktop entry, icon and AppStream metadata for installs
 scripts/        build.sh and check.sh, the local developer entry points
 docs/           model notes, architecture decision records, licensing
 ```
+
+## Documentation
+
+- [`docs/model.md`](docs/model.md) — the four-bucket model as hinkwise implements it:
+  the buckets, the two sizing tables, phase-dependent flow, annual expenses and the
+  4 % rule, and how each part maps to the domain types.
+- [`docs/adr/`](docs/adr/) — architecture decision records:
+  [0001 hexagonal layering](docs/adr/0001-hexagonal-layering.md),
+  [0002 money representation](docs/adr/0002-money-representation.md) and
+  [0003 phase strategy](docs/adr/0003-phase-strategy.md).
+- [`docs/licensing.md`](docs/licensing.md) — the GPL-3.0-or-later application licence
+  and the LGPL-3.0-only obligations that come with Qt.
 
 ## Licence
 

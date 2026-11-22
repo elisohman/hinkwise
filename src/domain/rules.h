@@ -18,8 +18,7 @@ namespace hinkwise::domain {
 /// Rules are separate types rather than a switch, so each one can be tested in
 /// isolation with a hand-built HouseholdFacts and a hand-built Metrics, and so
 /// adding a rule never means editing a growing if-chain.
-class Rule
-{
+class Rule {
 public:
     virtual ~Rule() = default;
 

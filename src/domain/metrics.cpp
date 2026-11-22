@@ -74,9 +74,11 @@ Metrics computeMetrics(const HouseholdFacts& facts)
             ratioOf(balanceOf(sheet, bucket), sheet.totalAssets);
     }
 
-    metrics.financialAssets = sheet.perBucket.front();
-    for (std::size_t index = 1; index < sheet.perBucket.size(); ++index)
-        metrics.financialAssets += sheet.perBucket[index];
+    // Capital the household can act on. This is NOT the sum of the buckets:
+    // every asset is classified into a bucket, including the house and the
+    // pension, so summing them would count a flat as money you can live off.
+    // headlineAssets is the same exclusion the dashboard's cautious figure uses.
+    metrics.financialAssets = sheet.headlineAssets;
 
     metrics.yearsOfFreedom = ratioOf(metrics.financialAssets, metrics.annualExpenses);
 

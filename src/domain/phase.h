@@ -56,7 +56,8 @@ public:
     virtual HeadlineMetric headline() const = 0;
 };
 
-/// The only switch on Phase in the program.
+/// The only switch that decides behaviour. labelOf() also switches, but only
+/// to produce a name.
 const PhasePolicy& policyFor(Phase phase);
 
 /// True for the phases that fill the buckets rather than draw them down.

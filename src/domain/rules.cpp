@@ -193,10 +193,10 @@ public:
             .severity = Severity::Warning,
             .title = "An expensive loan is running beside a thin buffer",
             .why = "Consumer debt above a mortgage rate costs more every month than an unfunded "
-                   "buffer earns, so the household pays for the protection twice.",
-            .suggestion =
-                "Repay the expensive loan first, then refill the buffer to the low end of "
-                "its band.",
+                   "buffer earns. The model's order is buffer first, then the loan, so this is a "
+                   "sequence to fix rather than a choice between them.",
+            .suggestion = "Top up the buffer to the low end of its band, then put everything "
+                          "spare into the loan.",
         };
     }
 };

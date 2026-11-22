@@ -31,10 +31,7 @@ struct Jurisdiction {
 
 Jurisdiction swedishJurisdiction();
 
-Jurisdiction customJurisdiction(Percentage safeWithdrawalRate,
-                                Percentage capitalTaxDrag,
-                                int fiMultiplierLow,
-                                int fiMultiplierDefault,
-                                int fiMultiplierHigh);
+Jurisdiction customJurisdiction(Percentage safeWithdrawalRate, Percentage capitalTaxDrag,
+                                int fiMultiplierLow, int fiMultiplierDefault, int fiMultiplierHigh);
 
 } // namespace hinkwise::domain

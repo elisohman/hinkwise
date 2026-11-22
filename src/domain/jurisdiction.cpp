@@ -20,11 +20,8 @@ Jurisdiction swedishJurisdiction()
     return jurisdiction;
 }
 
-Jurisdiction customJurisdiction(Percentage safeWithdrawalRate,
-                                Percentage capitalTaxDrag,
-                                int fiMultiplierLow,
-                                int fiMultiplierDefault,
-                                int fiMultiplierHigh)
+Jurisdiction customJurisdiction(Percentage safeWithdrawalRate, Percentage capitalTaxDrag,
+                                int fiMultiplierLow, int fiMultiplierDefault, int fiMultiplierHigh)
 {
     Jurisdiction jurisdiction;
     jurisdiction.id = "custom";

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Elis
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "domain/asset.h"
+#include "domain/balance_sheet.h"
 #include "domain/bucket.h"
 #include "domain/household.h"
 #include "domain/jurisdiction.h"
@@ -8,6 +10,7 @@
 #include "domain/targets.h"
 
 #include <QTest>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -89,19 +92,20 @@ private slots:
     void bufferCoverageComparesAgainstTheTargetPoint();
     void bufferCoverageIsZeroWithoutAPositiveTargetPoint();
     void bucketShareIsEachBucketOverTotalAssets();
-    void financialAssetsIsTheFourBuckets();
+    void financialAssetsExcludeHousingAndPension();
     void yearsOfFreedomCountsYearsOfExpenses();
     void fiTargetsScaleAnnualExpensesByJurisdiction();
     void fiProgressComparesAgainstTheDefaultTarget();
     void crashImpactIsHalfTheGrowthBucketOverNetWorth();
     void crashImpactIsZeroWithoutPositiveNetWorth();
-    void pensionAndHousingShareIsEverythingOutsideTheBuckets();
+    void pensionAndHousingShareIsOutsideFinancialAssets();
     void playShareOfGrowthIsPlayOverGrowth();
     void ratioRoundsHalfAwayFromZero();
     void sharesAreZeroWithoutIncome();
     void expensesAreZeroWithoutSpending();
     void sharesAreZeroWithoutAssets();
     void playShareIsZeroWithoutGrowth();
+    void housingAndPensionDoNotCountAsFreedom();
 };
 
 void TestMetrics::expensesAreNeedsPlusWants()
@@ -158,11 +162,21 @@ void TestMetrics::bucketShareIsEachBucketOverTotalAssets()
     QCOMPARE(bucketShareOf(metrics, Bucket::Play), 250);     // 2.5 %
 }
 
-void TestMetrics::financialAssetsIsTheFourBuckets()
+void TestMetrics::financialAssetsExcludeHousingAndPension()
 {
     const Metrics metrics = computeMetrics(workedHousehold());
 
     QCOMPARE(ore(metrics.financialAssets), qint64(144000000)); // 1 440 000 kr
+
+    // Buying a 3 000 000 kr flat grows total assets but not the money the
+    // household can act on. This is the case that the old bucket-summing
+    // implementation got wrong.
+    HouseholdFacts facts = workedHousehold();
+    facts.sheet.perBucket[static_cast<std::size_t>(Bucket::Preserve)] += sek(300000000);
+    facts.sheet.totalAssets += sek(300000000);
+
+    const Metrics withHousing = computeMetrics(facts);
+    QCOMPARE(ore(withHousing.financialAssets), qint64(144000000));
 }
 
 void TestMetrics::yearsOfFreedomCountsYearsOfExpenses()
@@ -209,7 +223,7 @@ void TestMetrics::crashImpactIsZeroWithoutPositiveNetWorth()
     QCOMPARE(bps(computeMetrics(facts).crashImpact), 0);
 }
 
-void TestMetrics::pensionAndHousingShareIsEverythingOutsideTheBuckets()
+void TestMetrics::pensionAndHousingShareIsOutsideFinancialAssets()
 {
     const Metrics metrics = computeMetrics(workedHousehold());
 
@@ -283,6 +297,7 @@ void TestMetrics::sharesAreZeroWithoutAssets()
     HouseholdFacts facts = workedHousehold();
     facts.sheet.totalAssets = sek(0);
     facts.sheet.netWorth = sek(0);
+    facts.sheet.headlineAssets = sek(0);
     facts.sheet.perBucket = {};
 
     const Metrics metrics = computeMetrics(facts);
@@ -305,8 +320,49 @@ void TestMetrics::playShareIsZeroWithoutGrowth()
     const Metrics metrics = computeMetrics(facts);
 
     QCOMPARE(bps(metrics.playShareOfGrowth), 0);
-    // Buffer, preserve and play remain: 480 000 kr.
-    QCOMPARE(ore(metrics.financialAssets), qint64(48000000));
+    // Financial assets come from the balance sheet, not from the buckets, so
+    // emptying a bucket does not move them.
+    QCOMPARE(ore(metrics.financialAssets), qint64(144000000));
+}
+
+/// The integration path the hand-built fixtures cannot cover: a real balance
+/// sheet built from assets, where the house and the pension sit inside
+/// buckets. Missing this is what let financialAssets quietly equal total
+/// assets and yearsOfFreedom count a flat as freedom.
+void TestMetrics::housingAndPensionDoNotCountAsFreedom()
+{
+    const Asset bank = makeAsset("bank", "Bank", AssetKind::BankAccount);
+    const Asset fund = makeAsset("fund", "Global index fund", AssetKind::Fund);
+    const Asset house = makeAsset("house", "Flat", AssetKind::RealEstate);
+    const Asset pension = makeAsset("pension", "Income pension", AssetKind::PensionIncome);
+    const Liability mortgage = makeLiability("mortgage", "Mortgage", LiabilityKind::Mortgage,
+                                             Percentage::fromBasisPoints(350));
+
+    const std::array<Holding, 4> holdings{
+        Holding{&bank, sek(10000000)},    // 100 000 kr
+        Holding{&fund, sek(40000000)},    // 400 000 kr
+        Holding{&house, sek(300000000)},  // 3 000 000 kr
+        Holding{&pension, sek(50000000)}, // 500 000 kr
+    };
+    const std::array<Debt, 1> debts{Debt{&mortgage, sek(200000000)}}; // 2 000 000 kr
+
+    HouseholdFacts facts = workedHousehold();
+    facts.sheet = buildBalanceSheet(holdings, debts);
+
+    const Metrics metrics = computeMetrics(facts);
+
+    // 4 000 000 kr of assets, of which only 500 000 kr is money you can act on.
+    QCOMPARE(ore(metrics.financialAssets), qint64(50000000));
+
+    // The flat and the pension are 87.5 % of everything owned...
+    QCOMPARE(bps(metrics.pensionAndHousingShare), 8750);
+
+    // ...and buy no freedom at all. 500 000 / 288 000 = 1.736 years.
+    QCOMPARE(bps(metrics.yearsOfFreedom), 17361);
+
+    // The house still counts as wealth.
+    QCOMPARE(ore(facts.sheet.netWorth), qint64(200000000));
+    QCOMPARE(ore(facts.sheet.totalAssets), qint64(400000000));
 }
 
 QTEST_APPLESS_MAIN(TestMetrics)
