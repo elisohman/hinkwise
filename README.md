@@ -16,6 +16,19 @@ See `docs/model.md` for the domain rules the application is being built against.
 
 Requires Qt 6.8 or newer (`qt6-base`, `qt6-declarative`), CMake 3.21+, Ninja and a C++20 compiler.
 
+The short version, from a clean checkout:
+
+```sh
+scripts/build.sh --run     # configure, build, launch
+scripts/check.sh           # everything CI runs: build, tests, qmllint, formatting
+```
+
+`scripts/build.sh` takes `--preset dev|release`, `--run`, `--test`, `--clean` and `-j N`.
+It puts Qt's tools on `PATH` itself, so it works from fish, bash, or an editor's
+compile command without depending on your shell profile.
+
+Underneath it is plain CMake:
+
 ```sh
 cmake --preset dev
 cmake --build --preset dev
@@ -40,6 +53,7 @@ ctest --preset dev
 src/            C++ sources; domain, application, infrastructure, presentation
 qml/            QML: Main.qml, theme/, components/, and later pages/
 tests/          domain unit tests and QML tests
+scripts/        build.sh and check.sh, the local developer entry points
 docs/           model notes, architecture decision records, licensing
 ```
 
