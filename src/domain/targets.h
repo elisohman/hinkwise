@@ -9,6 +9,7 @@
 #include "range.h"
 
 #include <array>
+#include <optional>
 
 namespace hinkwise::domain {
 
@@ -17,15 +18,26 @@ enum class ExpenseBasis {
     Annual,
 };
 
+/// A ceiling on a bucket, expressed as a share of another bucket's balance.
+/// Play is capped at 10 % of Growth, excluding pension.
+struct CapRule {
+    Bucket bucket = Bucket::Growth;
+    Percentage share{};
+};
+
 /// One bucket's sizing rule, as stated by the model rather than as a number.
 ///
 /// Keeping the rule symbolic matters: "0.5-6 months of expenses" is true for
 /// every household, while "41 000 kr" is true for one. The rule is resolved
 /// into money only when expenses are known.
+///
+/// `cap` is deliberately independent of `kind`. A bucket can have no target
+/// and still carry a ceiling — that is exactly Play in the preserving phases,
+/// where the model calls it optional but the 10 % limit is still the thing
+/// that keeps it safe. Conflating the two would make the cap vanish silently.
 struct BucketTarget {
     enum class Kind {
         MultipleOfExpenses, ///< a band relative to monthly or annual expenses
-        CapOfBucket,        ///< a ceiling expressed as a share of another bucket
         AsLargeAsPossible,  ///< deliberately open-ended
         NoTarget,           ///< optional, or covered by housing and pension
     };
@@ -34,7 +46,7 @@ struct BucketTarget {
     PercentageRange multiple{};
     ExpenseBasis basis = ExpenseBasis::Monthly;
     bool includesLumpSums = false;
-    Bucket capBucket = Bucket::Growth;
+    std::optional<CapRule> cap{};
 };
 
 struct BucketTargets {
@@ -46,12 +58,21 @@ struct BucketTargets {
     }
 };
 
+/// The facts a household supplies before targets can become money.
+///
+/// There is no default constructor on purpose: every amount has to be created
+/// in the profile's currency, so a EUR household cannot accidentally inherit
+/// a SEK zero and throw on the first addition.
 struct TargetInputs {
+    explicit TargetInputs(Currency currency);
+
     Money monthlyExpenses;
     Money annualExpenses;
     Money lumpSumsNextThreeYears;
     Money growthBalance;
     /// Where in the band the household wants to sit: 0 % cautious, 100 % bold.
+    /// Clamped on resolution, so a UI slider bug cannot push the point outside
+    /// the band the model defines.
     Percentage riskTolerance{Percentage::fromBasisPoints(5000)};
 };
 
@@ -59,12 +80,13 @@ struct ResolvedTarget {
     BucketTarget::Kind kind = BucketTarget::Kind::NoTarget;
     MoneyRange band{};
     Money point{};
+    std::optional<Money> cap{};
 
-    bool hasBand() const
-    {
-        return kind == BucketTarget::Kind::MultipleOfExpenses ||
-               kind == BucketTarget::Kind::CapOfBucket;
-    }
+    /// True when the model states a band to fill.
+    bool hasTarget() const { return kind == BucketTarget::Kind::MultipleOfExpenses; }
+
+    /// True when a ceiling applies, whether or not there is also a target.
+    bool hasCap() const { return cap.has_value(); }
 };
 
 using ResolvedTargets = std::array<ResolvedTarget, 4>;

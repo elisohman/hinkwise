@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Elis
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-#pragma once
-
 #include "year_month.h"
 
 #include <cstdio>

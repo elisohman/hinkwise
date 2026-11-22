@@ -17,7 +17,10 @@ qt_standard_project_setup(REQUIRES 6.8)
 # Domain layer: plain C++20, no Qt dependency, so it stays fast to test and
 # impossible to entangle with the UI.
 add_library(hinkwise_domain STATIC
+    src/domain/asset.cpp
+    src/domain/balance_sheet.cpp
     src/domain/bucket.cpp
+    src/domain/liability.cpp
     src/domain/phase.cpp
     src/domain/targets.cpp
     src/domain/year_month.cpp

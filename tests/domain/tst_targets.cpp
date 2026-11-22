@@ -18,7 +18,7 @@ Money sek(qint64 minorUnits)
 /// 20 000 kr a month, 240 000 kr a year.
 TargetInputs typicalHousehold()
 {
-    TargetInputs inputs;
+    TargetInputs inputs{Currency::Sek};
     inputs.monthlyExpenses = sek(2000000);
     inputs.annualExpenses = sek(24000000);
     inputs.lumpSumsNextThreeYears = sek(0);
@@ -40,10 +40,16 @@ private slots:
     void resolvesBufferInBuildingPhase();
     void resolvesBufferInPreservingPhase();
     void resolvesFiveTwentyFive();
-    void capsPlayAgainstGrowth();
+    void playCapSurvivesEveryPhase_data();
+    void playCapSurvivesEveryPhase();
     void interpolatesWithinTheBand_data();
     void interpolatesWithinTheBand();
+    void clampsToleranceToTheBand_data();
+    void clampsToleranceToTheBand();
     void noTargetStaysEmpty();
+    void resolvesInNonSekCurrencies_data();
+    void resolvesInNonSekCurrencies();
+    void rejectsMixedCurrencies();
 };
 
 void TestTargets::accumulatingPhasesShareTheBuildingTable()
@@ -61,11 +67,6 @@ void TestTargets::accumulatingPhasesShareTheBuildingTable()
 
         QCOMPARE(targets[Bucket::Preserve].kind, BucketTarget::Kind::NoTarget);
         QCOMPARE(targets[Bucket::Growth].kind, BucketTarget::Kind::AsLargeAsPossible);
-
-        const auto& play = targets[Bucket::Play];
-        QCOMPARE(play.kind, BucketTarget::Kind::CapOfBucket);
-        QCOMPARE(play.capBucket, Bucket::Growth);
-        QCOMPARE(play.multiple.high.basisPoints(), 1000); // 10 % of Growth
     }
 }
 
@@ -149,17 +150,34 @@ void TestTargets::resolvesFiveTwentyFive()
     QCOMPARE(preserve.band.high.minorUnits(), qint64(840000000));
 }
 
-void TestTargets::capsPlayAgainstGrowth()
+void TestTargets::playCapSurvivesEveryPhase_data()
 {
+    QTest::addColumn<int>("phase");
+
+    QTest::newRow("getting started") << int(Phase::GettingStarted);
+    QTest::newRow("building wealth") << int(Phase::BuildingWealth);
+    QTest::newRow("preserving") << int(Phase::Preserving);
+    QTest::newRow("financially independent") << int(Phase::FinanciallyIndependent);
+}
+
+void TestTargets::playCapSurvivesEveryPhase()
+{
+    QFETCH(int, phase);
+
     TargetInputs inputs = typicalHousehold();
     inputs.growthBalance = sek(50000000); // 500 000 kr
 
-    const ResolvedTargets resolved = resolve(policyFor(Phase::BuildingWealth).targets(), inputs);
+    const ResolvedTargets resolved =
+        resolve(policyFor(static_cast<Phase>(phase)).targets(), inputs);
     const ResolvedTarget& play = resolved[static_cast<std::size_t>(Bucket::Play)];
 
-    QCOMPARE(play.band.low.minorUnits(), qint64(0));
-    QCOMPARE(play.band.high.minorUnits(), qint64(5000000)); // 10 % of 500 000
-    QCOMPARE(play.point.minorUnits(), qint64(5000000));
+    // Play is never a target...
+    QVERIFY(!play.hasTarget());
+    // ...but the 10 % ceiling applies in every phase, including the ones where
+    // Play is optional. Dropping it there would let a play bucket grow unchecked
+    // exactly when the household has stopped earning.
+    QVERIFY(play.hasCap());
+    QCOMPARE(play.cap->minorUnits(), qint64(5000000));
 }
 
 void TestTargets::interpolatesWithinTheBand_data()
@@ -184,17 +202,77 @@ void TestTargets::interpolatesWithinTheBand()
     QCOMPARE(resolved[static_cast<std::size_t>(Bucket::Buffer)].point.minorUnits(), expected);
 }
 
+void TestTargets::clampsToleranceToTheBand_data()
+{
+    QTest::addColumn<int>("toleranceBasisPoints");
+    QTest::addColumn<qint64>("expected");
+
+    // A slider bug must not push the point outside the model's band.
+    QTest::newRow("over 100 %") << 15000 << qint64(12000000);
+    QTest::newRow("negative") << -5000 << qint64(1000000);
+}
+
+void TestTargets::clampsToleranceToTheBand()
+{
+    QFETCH(int, toleranceBasisPoints);
+    QFETCH(qint64, expected);
+
+    TargetInputs inputs = typicalHousehold();
+    inputs.riskTolerance = Percentage::fromBasisPoints(toleranceBasisPoints);
+
+    const ResolvedTargets resolved = resolve(policyFor(Phase::BuildingWealth).targets(), inputs);
+    QCOMPARE(resolved[static_cast<std::size_t>(Bucket::Buffer)].point.minorUnits(), expected);
+}
+
 void TestTargets::noTargetStaysEmpty()
 {
     const TargetInputs inputs = typicalHousehold();
 
     const ResolvedTargets building = resolve(policyFor(Phase::BuildingWealth).targets(), inputs);
-    QCOMPARE(building[static_cast<std::size_t>(Bucket::Preserve)].kind,
-             BucketTarget::Kind::NoTarget);
-    QVERIFY(!building[static_cast<std::size_t>(Bucket::Preserve)].hasBand());
+    QVERIFY(!building[static_cast<std::size_t>(Bucket::Preserve)].hasTarget());
+    QVERIFY(!building[static_cast<std::size_t>(Bucket::Preserve)].hasCap());
 
     const ResolvedTargets preserving = resolve(policyFor(Phase::Preserving).targets(), inputs);
-    QVERIFY(!preserving[static_cast<std::size_t>(Bucket::Growth)].hasBand());
+    QVERIFY(!preserving[static_cast<std::size_t>(Bucket::Growth)].hasTarget());
+}
+
+void TestTargets::resolvesInNonSekCurrencies_data()
+{
+    QTest::addColumn<int>("currency");
+
+    QTest::newRow("EUR") << int(Currency::Eur);
+    QTest::newRow("USD") << int(Currency::Usd);
+}
+
+void TestTargets::resolvesInNonSekCurrencies()
+{
+    QFETCH(int, currency);
+    const auto code = static_cast<Currency>(currency);
+
+    // A household whose expenses are in EUR must not inherit SEK zeroes and
+    // throw on the first addition.
+    TargetInputs inputs{code};
+    inputs.monthlyExpenses = Money{2000000, code};
+    inputs.annualExpenses = Money{24000000, code};
+    inputs.growthBalance = Money{50000000, code};
+
+    const ResolvedTargets resolved = resolve(policyFor(Phase::BuildingWealth).targets(), inputs);
+
+    const ResolvedTarget& buffer = resolved[static_cast<std::size_t>(Bucket::Buffer)];
+    QCOMPARE(buffer.band.low.minorUnits(), qint64(1000000));
+    QCOMPARE(buffer.band.low.currency(), code);
+    QCOMPARE(buffer.point.currency(), code);
+    QCOMPARE(resolved[static_cast<std::size_t>(Bucket::Play)].cap->currency(), code);
+}
+
+void TestTargets::rejectsMixedCurrencies()
+{
+    TargetInputs inputs{Currency::Sek};
+    inputs.monthlyExpenses = sek(2000000);
+    inputs.annualExpenses = Money{24000000, Currency::Eur};
+
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
+                             resolve(policyFor(Phase::BuildingWealth).targets(), inputs));
 }
 
 QTEST_APPLESS_MAIN(TestTargets)

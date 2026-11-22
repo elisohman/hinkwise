@@ -20,6 +20,8 @@ private slots:
     void parsesValidInput();
     void rejectsInvalidInput_data();
     void rejectsInvalidInput();
+    void rejectsInvalidConstruction_data();
+    void rejectsInvalidConstruction();
 };
 
 void TestYearMonth::indexes_data()
@@ -128,6 +130,27 @@ void TestYearMonth::rejectsInvalidInput()
     QFETCH(QString, text);
 
     QVERIFY(!YearMonth::parse(text.toStdString()).has_value());
+}
+
+void TestYearMonth::rejectsInvalidConstruction_data()
+{
+    QTest::addColumn<int>("year");
+    QTest::addColumn<unsigned>("month");
+
+    QTest::newRow("month zero") << 2026 << 0u;
+    QTest::newRow("month thirteen") << 2026 << 13u;
+    QTest::newRow("year zero") << 0 << 1u;
+    QTest::newRow("year too large") << 10000 << 1u;
+}
+
+void TestYearMonth::rejectsInvalidConstruction()
+{
+    QFETCH(int, year);
+    QFETCH(unsigned, month);
+
+    // Month 13 would share an index with the next January while comparing
+    // unequal, so an invalid month must never become a value at all.
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument, (YearMonth{year, month}));
 }
 
 QTEST_APPLESS_MAIN(TestYearMonth)

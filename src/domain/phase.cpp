@@ -39,14 +39,13 @@ BucketTargets buildingTargets()
     targets.byBucket[static_cast<std::size_t>(Bucket::Growth)] =
         BucketTarget{BucketTarget::Kind::AsLargeAsPossible};
 
-    // Play: a ceiling, 10 % of Growth, excluding pension savings.
-    targets.byBucket[static_cast<std::size_t>(Bucket::Play)] = BucketTarget{
-        BucketTarget::Kind::CapOfBucket,
-        {Percentage::fromBasisPoints(0), Percentage::fromBasisPoints(1000)},
-        ExpenseBasis::Monthly,
-        false,
-        Bucket::Growth,
-    };
+    // Play: no target, but always a ceiling at 10 % of Growth, excluding
+    // pension savings. The cap is a separate field precisely so it survives
+    // the phases where Play stops being a target.
+    BucketTarget play{};
+    play.kind = BucketTarget::Kind::NoTarget;
+    play.cap = CapRule{Bucket::Growth, Percentage::fromBasisPoints(1000)};
+    targets.byBucket[static_cast<std::size_t>(Bucket::Play)] = play;
 
     return targets;
 }
@@ -72,11 +71,16 @@ BucketTargets preservingTargets()
         false,
     };
 
-    // Growth and Play become optional: "if you have won the game, stop playing".
+    // Growth and Play stop being targets: "if you have won the game, stop
+    // playing". Play keeps its 10 % ceiling because a limit is not a target,
+    // and losing the ceiling is exactly how a play bucket grows in retirement.
     targets.byBucket[static_cast<std::size_t>(Bucket::Growth)] =
         BucketTarget{BucketTarget::Kind::NoTarget};
-    targets.byBucket[static_cast<std::size_t>(Bucket::Play)] =
-        BucketTarget{BucketTarget::Kind::NoTarget};
+
+    BucketTarget play{};
+    play.kind = BucketTarget::Kind::NoTarget;
+    play.cap = CapRule{Bucket::Growth, Percentage::fromBasisPoints(1000)};
+    targets.byBucket[static_cast<std::size_t>(Bucket::Play)] = play;
 
     return targets;
 }

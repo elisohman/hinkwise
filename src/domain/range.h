@@ -35,12 +35,16 @@ using MoneyRange = Range<Money>;
 
 /// Picks a point inside the band. `tolerance` is the position within the band:
 /// 0 % is the cautious end, 100 % the aggressive end.
+///
+/// The span is computed in 64 bits: two valid basis-point values can differ by
+/// more than an int32 holds, and the subtraction would overflow before the
+/// widening.
 inline Percentage interpolate(const PercentageRange& band, Percentage tolerance)
 {
-    const std::int32_t span = band.high.basisPoints() - band.low.basisPoints();
-    const std::int32_t offset = static_cast<std::int32_t>(
-        (static_cast<std::int64_t>(span) * tolerance.basisPoints()) / 10000);
-    return Percentage::fromBasisPoints(band.low.basisPoints() + offset);
+    const std::int64_t span = static_cast<std::int64_t>(band.high.basisPoints()) -
+                              static_cast<std::int64_t>(band.low.basisPoints());
+    const std::int64_t offset = (span * tolerance.basisPoints()) / 10000;
+    return Percentage::fromBasisPoints(band.low.basisPoints() + static_cast<std::int32_t>(offset));
 }
 
 inline Money interpolate(const MoneyRange& band, Percentage tolerance)

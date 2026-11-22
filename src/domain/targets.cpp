@@ -7,6 +7,9 @@ namespace hinkwise::domain {
 
 namespace {
 
+constexpr Percentage kMinTolerance = Percentage::fromBasisPoints(0);
+constexpr Percentage kMaxTolerance = Percentage::fromBasisPoints(10000);
+
 Money amountFor(const BucketTarget& target, const TargetInputs& inputs, Percentage multiple)
 {
     const Money base =
@@ -29,9 +32,28 @@ Money balanceOf(Bucket bucket, const TargetInputs& inputs)
 
 } // namespace
 
+TargetInputs::TargetInputs(Currency currency)
+    : monthlyExpenses(Money::zero(currency))
+    , annualExpenses(Money::zero(currency))
+    , lumpSumsNextThreeYears(Money::zero(currency))
+    , growthBalance(Money::zero(currency))
+{
+}
+
 ResolvedTargets resolve(const BucketTargets& targets, const TargetInputs& inputs)
 {
-    const Money zero = Money::zero(inputs.monthlyExpenses.currency());
+    const Currency currency = inputs.monthlyExpenses.currency();
+
+    // Validate up front. Relying on the first arithmetic to notice a currency
+    // mix makes the failure depend on which buckets the phase happens to read,
+    // which is both phase-dependent and hard to explain.
+    if (inputs.annualExpenses.currency() != currency ||
+        inputs.lumpSumsNextThreeYears.currency() != currency ||
+        inputs.growthBalance.currency() != currency)
+        throw std::invalid_argument{"resolve: target inputs must share one currency"};
+
+    const Money zero = Money::zero(currency);
+    const Percentage tolerance = clamp(inputs.riskTolerance, kMinTolerance, kMaxTolerance);
     ResolvedTargets resolved{};
 
     for (const Bucket bucket : allBuckets()) {
@@ -39,29 +61,19 @@ ResolvedTargets resolve(const BucketTargets& targets, const TargetInputs& inputs
         ResolvedTarget& out = resolved[static_cast<std::size_t>(bucket)];
         out.kind = target.kind;
 
-        switch (target.kind) {
-        case BucketTarget::Kind::MultipleOfExpenses: {
+        if (target.kind == BucketTarget::Kind::MultipleOfExpenses) {
             out.band.low = amountFor(target, inputs, target.multiple.low);
             out.band.high = amountFor(target, inputs, target.multiple.high);
-            out.point = interpolate(out.band, inputs.riskTolerance);
-            break;
-        }
-        case BucketTarget::Kind::CapOfBucket: {
-            const Money ceiling =
-                balanceOf(target.capBucket, inputs).scaledBy(target.multiple.high);
-            out.band.low = zero;
-            out.band.high = ceiling < zero ? zero : ceiling;
-            // A cap is a ceiling to stay under, not a level to reach.
-            out.point = out.band.high;
-            break;
-        }
-        case BucketTarget::Kind::AsLargeAsPossible:
-        case BucketTarget::Kind::NoTarget: {
+            out.point = interpolate(out.band, tolerance);
+        } else {
             out.band.low = zero;
             out.band.high = zero;
             out.point = zero;
-            break;
         }
+
+        if (target.cap.has_value()) {
+            const Money ceiling = balanceOf(target.cap->bucket, inputs).scaledBy(target.cap->share);
+            out.cap = ceiling < zero ? zero : ceiling;
         }
     }
 

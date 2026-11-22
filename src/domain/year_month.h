@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -14,12 +15,23 @@ namespace hinkwise::domain {
 ///
 /// The four-bucket model works in monthly and annual units, never in exact
 /// dates, so this type is the domain's unit of time.
+///
+/// The month is validated at construction. Without that, YearMonth{2025, 13}
+/// would share an index with YearMonth{2026, 1} while comparing unequal, and
+/// the two would disagree in every map and ordering in the program.
 class YearMonth {
 public:
+    static constexpr int kMinYear = 1;
+    static constexpr int kMaxYear = 9999;
+
     constexpr YearMonth(int year, unsigned month)
         : m_year(year)
         , m_month(month)
     {
+        if (year < kMinYear || year > kMaxYear)
+            throw std::invalid_argument{"YearMonth: year out of range 1..9999"};
+        if (month < 1 || month > 12)
+            throw std::invalid_argument{"YearMonth: month out of range 1..12"};
     }
 
     constexpr int year() const noexcept { return m_year; }
@@ -31,7 +43,7 @@ public:
         return static_cast<std::int64_t>(m_year) * 12 + (m_month - 1);
     }
 
-    static constexpr YearMonth fromIndex(std::int64_t index) noexcept
+    static constexpr YearMonth fromIndex(std::int64_t index)
     {
         const std::int64_t year = index >= 0 ? index / 12 : (index - 11) / 12;
         const std::int64_t month = index - year * 12;
