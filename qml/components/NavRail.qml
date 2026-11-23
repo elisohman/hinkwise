@@ -23,6 +23,7 @@ Rectangle {
         qsTr("Buckets"),
         qsTr("Cashflow"),
         qsTr("Plan"),
+        qsTr("Guide"),
         qsTr("Settings")
     ]
 

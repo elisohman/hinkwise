@@ -226,7 +226,7 @@ A few notes on the seams:
   target and still carry a ceiling in every phase. The cap is 10 % of the growth
   balance supplied in `TargetInputs`; excluding pension savings is a property of the
   balance handed in, not of the rule.
-- The rule set is eleven independent `Rule` objects, each returning at most one
+- The rule set is twelve independent `Rule` objects, each returning at most one
   `Insight`, sorted most urgent first. Rules that read a band ignore buckets with no
   target, which is why preserve stays quiet in the accumulating phases.
 - The bucket facts and both sizing tables are transcribed from the model, and the

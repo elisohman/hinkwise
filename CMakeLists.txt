@@ -141,6 +141,7 @@ qt_add_qml_module(hinkwise
         qml/pages/BucketsPage.qml
         qml/pages/CashflowPage.qml
         qml/pages/DashboardPage.qml
+        qml/pages/GuidePage.qml
         qml/pages/OnboardingPage.qml
         qml/pages/PlanPage.qml
         qml/pages/SettingsPage.qml

@@ -53,7 +53,7 @@ void clearCap(HouseholdFacts& facts, Bucket bucket)
     facts.targets[static_cast<std::size_t>(bucket)].cap.reset();
 }
 
-/// Trips none of the eleven rules: expenses are recorded, the buffer sits in
+/// Trips none of the twelve rules: expenses are recorded, the buffer sits in
 /// the middle of its band, play is inside its cap and nothing is extreme.
 Scenario healthyHousehold()
 {
@@ -174,6 +174,14 @@ void phaseMaybeBuilding(Scenario& scenario)
     setBucket(scenario.facts, Bucket::Buffer, sek(12000000)); // exactly the top of the band
 }
 
+void mortgageExceedsProperty(Scenario& scenario)
+{
+    // The flat entered as 350 000 kr of equity rather than its 2 200 000 kr
+    // market value, with the 1 800 000 kr mortgage recorded separately.
+    scenario.facts.realEstateValue = sek(35000000);
+    scenario.facts.mortgageTotal = sek(180000000);
+}
+
 } // namespace fires
 
 Scenario perturbed(Perturbation perturbation)
@@ -201,7 +209,7 @@ struct FiringCase {
     const char* id;
 };
 
-std::array<FiringCase, 11> firingCases()
+std::array<FiringCase, 12> firingCases()
 {
     return {{{fires::expensesMissing, "expenses-missing"},
              {fires::bufferEmpty, "buffer-empty"},
@@ -213,7 +221,8 @@ std::array<FiringCase, 11> firingCases()
              {fires::needsShareHigh, "needs-share-high"},
              {fires::preserveThinWhenPreserving, "preserve-thin-when-preserving"},
              {fires::crashImpactHigh, "crash-impact-high"},
-             {fires::phaseMaybeBuilding, "phase-maybe-building"}}};
+             {fires::phaseMaybeBuilding, "phase-maybe-building"},
+             {fires::mortgageExceedsProperty, "mortgage-exceeds-property"}}};
 }
 
 } // namespace
@@ -257,6 +266,12 @@ private slots:
 
     void phaseMaybeBuildingFires();
     void phaseMaybeBuildingStaysQuietBelowTheBandTop();
+
+    void mortgageExceedsPropertyFires();
+    void mortgageExceedsPropertyStaysQuietAtEqualValue();
+    void mortgageExceedsPropertyStaysQuietWhenPropertyIsLarger();
+    void mortgageExceedsPropertyStaysQuietWithoutAMortgage();
+    void mortgageExceedsPropertyStaysQuietWithoutAProperty();
 
     void ordersBySeverityThenId();
     void everyInsightCarriesText();
@@ -419,6 +434,50 @@ void TestRules::phaseMaybeBuildingStaysQuietBelowTheBandTop()
     QVERIFY(!fired(evaluate(scenario), "phase-maybe-building"));
 }
 
+void TestRules::mortgageExceedsPropertyFires()
+{
+    QVERIFY(
+        fired(evaluate(perturbed(fires::mortgageExceedsProperty)), "mortgage-exceeds-property"));
+}
+
+void TestRules::mortgageExceedsPropertyStaysQuietAtEqualValue()
+{
+    Scenario scenario = healthyHousehold();
+    scenario.facts.realEstateValue = sek(180000000);
+    scenario.facts.mortgageTotal = sek(180000000);
+
+    QVERIFY(!fired(evaluate(scenario), "mortgage-exceeds-property"));
+}
+
+void TestRules::mortgageExceedsPropertyStaysQuietWhenPropertyIsLarger()
+{
+    Scenario scenario = healthyHousehold();
+    scenario.facts.realEstateValue = sek(220000000); // 2 200 000 kr market value
+    scenario.facts.mortgageTotal = sek(180000000);   // 1 800 000 kr mortgage
+
+    QVERIFY(!fired(evaluate(scenario), "mortgage-exceeds-property"));
+}
+
+void TestRules::mortgageExceedsPropertyStaysQuietWithoutAMortgage()
+{
+    Scenario scenario = healthyHousehold();
+    scenario.facts.realEstateValue = sek(35000000);
+    scenario.facts.mortgageTotal = sek(0);
+
+    QVERIFY(!fired(evaluate(scenario), "mortgage-exceeds-property"));
+}
+
+void TestRules::mortgageExceedsPropertyStaysQuietWithoutAProperty()
+{
+    // A mortgage with no property recorded may simply be a flat not entered
+    // yet; property advice would be noise.
+    Scenario scenario = healthyHousehold();
+    scenario.facts.realEstateValue = sek(0);
+    scenario.facts.mortgageTotal = sek(180000000);
+
+    QVERIFY(!fired(evaluate(scenario), "mortgage-exceeds-property"));
+}
+
 void TestRules::ordersBySeverityThenId()
 {
     const std::vector<Insight> insights = evaluate(perturbed(manyProblems));
@@ -472,13 +531,14 @@ void TestRules::everyRuleIdIsDocumented()
     std::sort(seen.begin(), seen.end());
 
     // The ids the UI keys off, in the order the sort must produce.
-    const std::array<QString, 11> documented{
+    const std::array<QString, 12> documented{
         QStringLiteral("bad-loan-while-buffer-thin"),
         QStringLiteral("buffer-empty"),
         QStringLiteral("buffer-overfull"),
         QStringLiteral("buffer-underfunded"),
         QStringLiteral("crash-impact-high"),
         QStringLiteral("expenses-missing"),
+        QStringLiteral("mortgage-exceeds-property"),
         QStringLiteral("needs-share-high"),
         QStringLiteral("phase-maybe-building"),
         QStringLiteral("play-over-cap"),

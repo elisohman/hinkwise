@@ -368,6 +368,11 @@ void TestDashboard::populatedHouseholdReportsItsMetrics()
 
     // The credit card is above the mortgage benchmark; the mortgage is not.
     QCOMPARE(ore(snapshot.facts.badLoanTotal), qint64(2000000));
+
+    // Per-kind totals the property rule compares: the flat at market value and
+    // the mortgage as a separate debt.
+    QCOMPARE(ore(snapshot.facts.realEstateValue), qint64(200000000));
+    QCOMPARE(ore(snapshot.facts.mortgageTotal), qint64(150000000));
 }
 
 void TestDashboard::populatedHouseholdShowsItsInsightsAndRebalance()

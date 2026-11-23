@@ -59,6 +59,28 @@ Money surplusOf(const domain::MonthFlow& flow)
     return surplus.isPositive() ? surplus : Money::zero(flow.income.currency());
 }
 
+/// The market value of every RealEstate holding, regardless of bucket.
+Money realEstateValueOf(std::span<const domain::Holding> holdings, domain::Currency currency)
+{
+    Money total = Money::zero(currency);
+    for (const domain::Holding& holding : holdings) {
+        if (holding.asset != nullptr && holding.asset->kind == domain::AssetKind::RealEstate)
+            total += holding.balance;
+    }
+    return total;
+}
+
+/// Every Mortgage liability added up.
+Money mortgageTotalOf(std::span<const domain::Debt> debts, domain::Currency currency)
+{
+    Money total = Money::zero(currency);
+    for (const domain::Debt& debt : debts) {
+        if (debt.liability != nullptr && debt.liability->kind == domain::LiabilityKind::Mortgage)
+            total += debt.balance;
+    }
+    return total;
+}
+
 } // namespace
 
 Money totalBadLoans(std::span<const domain::Debt> debts)
@@ -128,6 +150,8 @@ DashboardSnapshot buildDashboard(IProfileRepository& profiles, IAssetRepository&
     snapshot.facts.sheet = holdings.empty() && debts.empty()
                                ? emptyBalanceSheet(currency)
                                : domain::buildBalanceSheet(holdings, debts);
+    snapshot.facts.realEstateValue = realEstateValueOf(holdings, currency);
+    snapshot.facts.mortgageTotal = mortgageTotalOf(debts, currency);
 
     const domain::BucketTargets& targets = domain::policyFor(snapshot.profile.phase).targets();
     domain::TargetInputs targetInputs{currency};

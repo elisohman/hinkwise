@@ -221,7 +221,7 @@ Item {
                                 text: qsTr("Settings")
                                 filled: false
                                 Layout.alignment: Qt.AlignTop
-                                onClicked: page.navigateRequested(4)
+                                onClicked: page.navigateRequested(5)
                             }
                         }
 

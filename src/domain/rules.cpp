@@ -330,6 +330,34 @@ public:
     }
 };
 
+class MortgageExceedsPropertyRule final : public Rule {
+public:
+    static constexpr std::string_view idText{"mortgage-exceeds-property"};
+
+    std::string_view id() const override { return idText; }
+
+    std::optional<Insight> evaluate(const HouseholdFacts& facts, const Metrics&) const override
+    {
+        // A mortgage with no property recorded gets no property advice: the
+        // household may simply not have entered the flat yet.
+        if (!facts.realEstateValue.isPositive() || !facts.mortgageTotal.isPositive() ||
+            !(facts.realEstateValue < facts.mortgageTotal))
+            return std::nullopt;
+
+        return Insight{
+            .id = std::string{idText},
+            .severity = Severity::Warning,
+            .title = "The mortgage is larger than the property",
+            .why = "Real estate belongs in the model at its market value, with the loan as a "
+                   "separate debt; the software works out the equity. If the property was entered "
+                   "as the equity in it, the mortgage is already subtracted once, and listing it "
+                   "again subtracts it twice.",
+            .suggestion = "Check that the property is recorded at its market value, not your "
+                          "equity in it.",
+        };
+    }
+};
+
 } // namespace
 
 std::vector<Insight> evaluateRules(const HouseholdFacts& facts, const Metrics& metrics)
@@ -345,12 +373,13 @@ std::vector<Insight> evaluateRules(const HouseholdFacts& facts, const Metrics& m
     static const PreserveThinWhenPreservingRule preserveThinWhenPreserving;
     static const CrashImpactHighRule crashImpactHigh;
     static const PhaseMaybeBuildingRule phaseMaybeBuilding;
+    static const MortgageExceedsPropertyRule mortgageExceedsProperty;
 
-    const std::array<const Rule*, 11> rules{
+    const std::array<const Rule*, 12> rules{
         &expensesMissing, &bufferEmpty,        &bufferUnderfunded,
         &bufferOverfull,  &playOverCap,        &badLoanWhileBufferThin,
         &savingsRateLow,  &needsShareHigh,     &preserveThinWhenPreserving,
-        &crashImpactHigh, &phaseMaybeBuilding,
+        &crashImpactHigh, &phaseMaybeBuilding, &mortgageExceedsProperty,
     };
 
     std::vector<Insight> fired;

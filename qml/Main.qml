@@ -63,6 +63,9 @@ ApplicationWindow {
                 onNavigateRequested: (index) => rail.currentIndex = index
             }
 
+            GuidePage {
+            }
+
             SettingsPage {
             }
         }

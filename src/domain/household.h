@@ -67,6 +67,12 @@ struct HouseholdFacts {
     ResolvedTargets targets{};
     MonthFlow flow{};
     Money badLoanTotal{};
+    /// Everything held as RealEstate, at market value whatever bucket it sits
+    /// in. Kept beside the sheet because a rule compares it with the mortgage
+    /// total and the sheet only aggregates by bucket.
+    Money realEstateValue{};
+    /// Every Mortgage liability added up, for the same reason.
+    Money mortgageTotal{};
     Jurisdiction jurisdiction{};
 };
 

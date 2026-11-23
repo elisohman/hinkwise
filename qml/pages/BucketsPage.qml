@@ -601,6 +601,16 @@ Item {
                     onActivated: (index) => accountBucket.currentIndex = accounts.defaultBucketForKind(
                                      index)
                 }
+
+                Text {
+                    visible: accountKind.currentIndex === accounts.realEstateKindIndex
+                    text: qsTr("Market value, not your equity. Record the mortgage "
+                         + "separately as a debt.")
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontCaption
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
             }
 
             FormRow {
@@ -950,6 +960,16 @@ Item {
 
                     Layout.fillWidth: true
                     model: accounts.liabilityKindLabels
+                }
+
+                Text {
+                    visible: debtKind.currentIndex === accounts.mortgageKindIndex
+                    text: qsTr("The outstanding loan, alongside the property at its "
+                         + "market value.")
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontCaption
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
                 }
             }
 

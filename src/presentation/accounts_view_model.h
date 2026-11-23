@@ -149,6 +149,10 @@ class AccountsViewModel : public QObject {
     Q_PROPERTY(QStringList assetKindLabels READ assetKindLabels CONSTANT)
     Q_PROPERTY(QStringList liabilityKindLabels READ liabilityKindLabels CONSTANT)
     Q_PROPERTY(QStringList bucketLabels READ bucketLabels CONSTANT)
+    /// The positions of the two kinds the dialogs explain, so the hint keys off
+    /// the domain's enumeration rather than a number written in QML.
+    Q_PROPERTY(int realEstateKindIndex READ realEstateKindIndex CONSTANT)
+    Q_PROPERTY(int mortgageKindIndex READ mortgageKindIndex CONSTANT)
 
 public:
     explicit AccountsViewModel(QObject* parent = nullptr);
@@ -201,6 +205,9 @@ public:
     QStringList assetKindLabels() const;
     QStringList liabilityKindLabels() const;
     QStringList bucketLabels() const;
+
+    int realEstateKindIndex() const { return static_cast<int>(domain::AssetKind::RealEstate); }
+    int mortgageKindIndex() const { return static_cast<int>(domain::LiabilityKind::Mortgage); }
 
 signals:
     /// Anything the page renders changed. One signal: a write changes the rows,

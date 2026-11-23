@@ -34,7 +34,7 @@ See `docs/model.md` for the rules it implements.
   worth reflects what you own rather than only what is liquid.
 - **Years of freedom** as the headline number instead of a balance.
 - **Crash impact** - what a 50 % fall in growth would do to total net worth.
-- **Insights, not nagging** - eleven rules, each saying what it sees, why the
+- **Insights, not nagging** - twelve rules, each saying what it sees, why the
   model cares, and what to do next.
 - **Local only** - SQLite in `~/.local/share/elisohman/hinkwise/`, no network
   code, no account, no telemetry.
