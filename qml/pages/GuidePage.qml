@@ -199,6 +199,12 @@ Item {
                 }
 
                 Bullet {
+                    line: qsTr("A down payment is not entered separately: it is already inside "
+                         + "the equity, which is the market value minus the debt. Amortisation "
+                         + "is recorded monthly as part of saving.")
+                }
+
+                Bullet {
                     line: qsTr("Monthly income split into needs and wants.")
                 }
 

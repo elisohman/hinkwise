@@ -38,7 +38,7 @@ void TestAsset::defaultBucketAndLiquidity_data()
     QTest::newRow("crypto") << int(AssetKind::Crypto) << int(Bucket::Play) << true
                             << QStringLiteral("Crypto");
     QTest::newRow("real estate") << int(AssetKind::RealEstate) << int(Bucket::Preserve) << false
-                                 << QStringLiteral("Real estate");
+                                 << QStringLiteral("Real estate (market value)");
     QTest::newRow("pension income") << int(AssetKind::PensionIncome) << int(Bucket::Preserve)
                                     << false << QStringLiteral("Pension income");
     QTest::newRow("occupational pension")

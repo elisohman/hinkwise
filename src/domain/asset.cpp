@@ -23,7 +23,7 @@ constexpr std::array<AssetKindFacts, 10> kFacts{{
     {"Fund", Growth, true},
     {"Equity", Play, true},
     {"Crypto", Play, true},
-    {"Real estate", Preserve, false},
+    {"Real estate (market value)", Preserve, false},
     {"Pension income", Preserve, false},
     {"Occupational pension", Growth, false},
     {"Premium pension", Growth, false},
