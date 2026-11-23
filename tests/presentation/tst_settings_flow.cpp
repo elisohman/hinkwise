@@ -74,6 +74,8 @@ private slots:
     void exportRefusesTheDatabaseFile();
     void exportRefusesADatabaseSidecar();
     void exportNeedsAFile();
+    void bufferTargetFollowsTheBandAndSaves();
+    void draftsSurviveReloadAndDiscard();
 
 private:
     QTemporaryDir m_dataDirectory;
@@ -445,6 +447,106 @@ void TestSettingsFlow::exportNeedsAFile()
     QVERIFY(!settings.exportBackup(QUrl{}).isEmpty());
     QVERIFY(!settings.backupError().isEmpty());
     QVERIFY(settings.backupMessage().isEmpty());
+}
+
+void TestSettingsFlow::bufferTargetFollowsTheBandAndSaves()
+{
+    SettingsViewModel settings;
+    const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
+    const auto bufferIndex = static_cast<std::size_t>(domain::Bucket::Buffer);
+    const domain::ResolvedTarget& buffer = snapshot.facts.targets[bufferIndex];
+    QVERIFY(buffer.hasTarget());
+
+    QVERIFY(!settings.bufferTargetDirty());
+    QCOMPARE(settings.bufferTargetPosition(), snapshot.profile.riskTolerance.basisPoints());
+
+    // The equivalent is in months for the accumulating phases and years for the
+    // preserving ones, read from the same rule the band comes from.
+    const bool annual =
+        domain::policyFor(snapshot.profile.phase).targets()[domain::Bucket::Buffer].basis ==
+        domain::ExpenseBasis::Annual;
+    QVERIFY(settings.bufferTargetPreview().contains(annual ? QStringLiteral("years")
+                                                           : QStringLiteral("months")));
+
+    // The two ends of the slider are the two ends of this household's band.
+    settings.setBufferTargetPosition(0);
+    QVERIFY(settings.bufferTargetDirty());
+    QVERIFY(settings.bufferTargetPreview().contains(formatMoney(buffer.band.low)));
+    QCOMPARE(settings.saveBufferTarget(), QString{});
+    QVERIFY(!settings.bufferTargetDirty());
+    QCOMPARE(m_controller->profile()->riskTolerance.basisPoints(), 0);
+    QCOMPARE(m_controller->dashboardSnapshot().facts.targets[bufferIndex].point.minorUnits(),
+             buffer.band.low.minorUnits());
+
+    settings.setBufferTargetPosition(settings.bufferTargetMaximum());
+    QVERIFY(settings.bufferTargetPreview().contains(formatMoney(buffer.band.high)));
+    QCOMPARE(settings.saveBufferTarget(), QString{});
+    QCOMPARE(m_controller->profile()->riskTolerance.basisPoints(), 10000);
+    QCOMPARE(m_controller->dashboardSnapshot().facts.targets[bufferIndex].point.minorUnits(),
+             buffer.band.high.minorUnits());
+
+    // Discard restores the stored point without writing anything.
+    settings.setBufferTargetPosition(0);
+    QVERIFY(settings.bufferTargetDirty());
+    settings.discardBufferTarget();
+    QVERIFY(!settings.bufferTargetDirty());
+    QCOMPARE(settings.bufferTargetPosition(), 10000);
+
+    // Leave the fixture at the model's middle, where it started.
+    settings.setBufferTargetPosition(5000);
+    QCOMPARE(settings.saveBufferTarget(), QString{});
+    QVERIFY(!settings.bufferTargetDirty());
+}
+
+void TestSettingsFlow::draftsSurviveReloadAndDiscard()
+{
+    SettingsViewModel settings;
+
+    // A jurisdiction draft survives a write from elsewhere. The store has
+    // moved to 4.50 %, but the field the household is editing stays at 3,5.
+    settings.setSafeWithdrawalRateText(QStringLiteral("3,5"));
+    QVERIFY(settings.jurisdictionDirty());
+
+    domain::Profile updated = *m_controller->profile();
+    const domain::Jurisdiction previous = updated.jurisdiction;
+    updated.jurisdiction = domain::customJurisdiction(
+        domain::Percentage::fromBasisPoints(450), previous.capitalTaxDrag, previous.fiMultiplierLow,
+        previous.fiMultiplierDefault, previous.fiMultiplierHigh);
+    QVERIFY(m_controller->saveProfile(updated).ok());
+    QCOMPARE(settings.safeWithdrawalRateText(), QStringLiteral("3,5"));
+    QVERIFY(settings.jurisdictionDirty());
+
+    settings.discardJurisdiction();
+    QCOMPARE(settings.safeWithdrawalRateText(), QStringLiteral("4,50"));
+    QVERIFY(!settings.jurisdictionDirty());
+
+    // The same for the name: a reload cannot clobber a half-typed one.
+    settings.setDisplayNameText(QStringLiteral("Draft name"));
+    QVERIFY(settings.displayNameDirty());
+
+    updated = *m_controller->profile();
+    updated.displayName = "Stored name";
+    QVERIFY(m_controller->saveProfile(updated).ok());
+    QCOMPARE(settings.displayNameText(), QStringLiteral("Draft name"));
+    QVERIFY(settings.displayNameDirty());
+
+    settings.discardDisplayName();
+    QCOMPARE(settings.displayNameText(), QStringLiteral("Stored name"));
+    QVERIFY(!settings.displayNameDirty());
+
+    // And for the buffer point.
+    settings.setBufferTargetPosition(0);
+    QVERIFY(settings.bufferTargetDirty());
+
+    updated = *m_controller->profile();
+    updated.riskTolerance = domain::Percentage::fromBasisPoints(2500);
+    QVERIFY(m_controller->saveProfile(updated).ok());
+    QCOMPARE(settings.bufferTargetPosition(), 0);
+    QVERIFY(settings.bufferTargetDirty());
+
+    settings.discardBufferTarget();
+    QCOMPARE(settings.bufferTargetPosition(), 2500);
+    QVERIFY(!settings.bufferTargetDirty());
 }
 
 QTEST_GUILESS_MAIN(TestSettingsFlow)

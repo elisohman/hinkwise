@@ -28,6 +28,88 @@ QString percentLabel(domain::Percentage percentage, int decimals)
         locale.toString(static_cast<double>(percentage.basisPoints()) / 100.0, 'f', decimals));
 }
 
+/// Reads an optional amount field: empty is zero, and anything else has to be
+/// a readable amount in the profile's currency.
+bool readOptionalMoney(const QString& text, domain::Currency currency, domain::Money* amount)
+{
+    if (text.trimmed().isEmpty()) {
+        *amount = domain::Money::zero(currency);
+        return true;
+    }
+    const MoneyInput parsed = parseMoneyInput(text, currency);
+    if (!parsed.ok)
+        return false;
+    *amount = parsed.value;
+    return true;
+}
+
+/// What the three breakdown fields say. `any` is false when all three are
+/// empty, which is a month with no breakdown rather than a broken one. When
+/// `any` is true, `problem` is empty only when all three are present and add
+/// up to `saving`.
+struct SplitReading {
+    bool any = false;
+    bool ok = true;
+    std::optional<domain::SavingsBreakdown> split;
+    QString problem;
+};
+
+SplitReading readSavingSplit(const QString& bufferText, const QString& investingText,
+                             const QString& amortisationText, const domain::Money& saving)
+{
+    SplitReading reading;
+    reading.any = !bufferText.trimmed().isEmpty() || !investingText.trimmed().isEmpty() ||
+                  !amortisationText.trimmed().isEmpty();
+    if (!reading.any)
+        return reading;
+
+    if (bufferText.trimmed().isEmpty() || investingText.trimmed().isEmpty() ||
+        amortisationText.trimmed().isEmpty()) {
+        reading.ok = false;
+        reading.problem = CashflowViewModel::tr("Fill all three, or leave all three empty.");
+        return reading;
+    }
+
+    const auto read = [&saving](const QString& text, domain::Money* amount) -> QString {
+        const MoneyInput parsed = parseMoneyInput(text, saving.currency());
+        if (!parsed.ok)
+            return parsed.error;
+        *amount = parsed.value;
+        return {};
+    };
+
+    domain::SavingsBreakdown split;
+    split.toBuffer = domain::Money::zero(saving.currency());
+    split.toInvesting = domain::Money::zero(saving.currency());
+    split.toAmortisation = domain::Money::zero(saving.currency());
+
+    for (const auto& entry :
+         {std::pair<const QString*, domain::Money*>{&bufferText, &split.toBuffer},
+          {&investingText, &split.toInvesting},
+          {&amortisationText, &split.toAmortisation}}) {
+        const QString error = read(*entry.first, entry.second);
+        if (!error.isEmpty()) {
+            reading.ok = false;
+            reading.problem = error;
+            return reading;
+        }
+    }
+
+    const domain::Money total = split.total();
+    if (total == saving) {
+        reading.split = split;
+        return reading;
+    }
+
+    reading.ok = false;
+    if (total < saving)
+        reading.problem =
+            CashflowViewModel::tr("%1 left to place.").arg(formatMoney(saving - total));
+    else
+        reading.problem = CashflowViewModel::tr("%1 too much.").arg(formatMoney(total - saving));
+    return reading;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -125,6 +207,11 @@ QString CashflowViewModel::monthLabel(domain::YearMonth month, const QString& fo
 
 void CashflowViewModel::reload()
 {
+    reloadFromStore(dirty());
+}
+
+void CashflowViewModel::reloadFromStore(bool keepDraft)
+{
     AppController* controller = AppController::instance();
     const application::DashboardSnapshot snapshot =
         controller != nullptr ? controller->dashboardSnapshot() : application::DashboardSnapshot{};
@@ -154,10 +241,38 @@ void CashflowViewModel::reload()
     const bool hasCurrentFlow = currentRecord != records.cend();
     const domain::MonthFlow empty{};
     const domain::MonthFlow& flow = hasCurrentFlow ? currentRecord->flow : empty;
-    m_incomeText = hasCurrentFlow ? formatMoneyPlain(flow.income) : QString{};
-    m_needsText = hasCurrentFlow ? formatMoneyPlain(flow.needs) : QString{};
-    m_wantsText = hasCurrentFlow ? formatMoneyPlain(flow.wants) : QString{};
-    m_savingText = hasCurrentFlow ? formatMoneyPlain(flow.saving) : QString{};
+
+    const QString loadedIncome = hasCurrentFlow ? formatMoneyPlain(flow.income) : QString{};
+    const QString loadedNeeds = hasCurrentFlow ? formatMoneyPlain(flow.needs) : QString{};
+    const QString loadedWants = hasCurrentFlow ? formatMoneyPlain(flow.wants) : QString{};
+    const QString loadedSaving = hasCurrentFlow ? formatMoneyPlain(flow.saving) : QString{};
+    const bool hasSplit = hasCurrentFlow && flow.savingSplit.has_value();
+    const QString loadedBuffer =
+        hasSplit ? formatMoneyPlain(flow.savingSplit->toBuffer) : QString{};
+    const QString loadedInvesting =
+        hasSplit ? formatMoneyPlain(flow.savingSplit->toInvesting) : QString{};
+    const QString loadedAmortisation =
+        hasSplit ? formatMoneyPlain(flow.savingSplit->toAmortisation) : QString{};
+
+    // The baseline always follows the store, so Discard restores the newest
+    // saved values. The draft only follows it when the household is not in the
+    // middle of an edit: a reload must never throw typed text away.
+    m_storedIncomeText = loadedIncome;
+    m_storedNeedsText = loadedNeeds;
+    m_storedWantsText = loadedWants;
+    m_storedSavingText = loadedSaving;
+    m_storedBufferSplitText = loadedBuffer;
+    m_storedInvestingSplitText = loadedInvesting;
+    m_storedAmortisationSplitText = loadedAmortisation;
+    if (!keepDraft) {
+        m_incomeText = loadedIncome;
+        m_needsText = loadedNeeds;
+        m_wantsText = loadedWants;
+        m_savingText = loadedSaving;
+        m_bufferSplitText = loadedBuffer;
+        m_investingSplitText = loadedInvesting;
+        m_amortisationSplitText = loadedAmortisation;
+    }
     m_savedNote.clear();
 
     // The note under the form describes the month the form edits, not the
@@ -231,6 +346,26 @@ void CashflowViewModel::applySelection(const QVector<FlowMonth>& months)
     m_wantsLabel = amounts ? formatMoney(selectedFlow->wants) : tr("Not recorded");
     m_savingLabel = amounts ? formatMoney(selectedFlow->saving) : tr("Not recorded");
 
+    // The saving breakdown belongs to the selected month, which can be any of
+    // the twelve columns, so it is read from that month's own flow rather than
+    // from the current month's metrics.
+    m_selectedHasSavingSplit = amounts && selectedFlow->savingSplit.has_value();
+    m_bufferSavingShareLabel.clear();
+    m_investingSavingShareLabel.clear();
+    m_amortisationSavingShareLabel.clear();
+    m_bufferSavingAmountLabel.clear();
+    m_investingSavingAmountLabel.clear();
+    m_amortisationSavingAmountLabel.clear();
+    if (m_selectedHasSavingSplit) {
+        const SavingsSplitShares shares = savingsSplitSharesOf(*selectedFlow);
+        m_bufferSavingShareLabel = percentLabel(shares.buffer, 1);
+        m_investingSavingShareLabel = percentLabel(shares.investing, 1);
+        m_amortisationSavingShareLabel = percentLabel(shares.amortisation, 1);
+        m_bufferSavingAmountLabel = formatMoney(selectedFlow->savingSplit->toBuffer);
+        m_investingSavingAmountLabel = formatMoney(selectedFlow->savingSplit->toInvesting);
+        m_amortisationSavingAmountLabel = formatMoney(selectedFlow->savingSplit->toAmortisation);
+    }
+
     m_needsShareLabel = percentLabel(m_split.needs, 1);
     m_wantsShareLabel = percentLabel(m_split.wants, 1);
     m_savingShareLabel = percentLabel(m_split.saving, 1);
@@ -283,8 +418,7 @@ void CashflowViewModel::selectMonth(int index)
     reload();
 }
 
-QString CashflowViewModel::saveMonth(const QString& incomeText, const QString& needsText,
-                                     const QString& wantsText, const QString& savingText)
+QString CashflowViewModel::saveMonth()
 {
     AppController* controller = AppController::instance();
     if (controller == nullptr) {
@@ -293,7 +427,7 @@ QString CashflowViewModel::saveMonth(const QString& incomeText, const QString& n
         return m_saveError;
     }
 
-    if (incomeText.trimmed().isEmpty()) {
+    if (m_incomeText.trimmed().isEmpty()) {
         m_saveError = tr("Enter this month's income.");
         emit changed();
         return m_saveError;
@@ -319,10 +453,11 @@ QString CashflowViewModel::saveMonth(const QString& incomeText, const QString& n
     flow.wants = domain::Money::zero(m_currency);
     flow.saving = domain::Money::zero(m_currency);
 
-    for (const auto& entry : {std::pair<const QString*, domain::Money*>{&incomeText, &flow.income},
-                              {&needsText, &flow.needs},
-                              {&wantsText, &flow.wants},
-                              {&savingText, &flow.saving}}) {
+    for (const auto& entry :
+         {std::pair<const QString*, domain::Money*>{&m_incomeText, &flow.income},
+          {&m_needsText, &flow.needs},
+          {&m_wantsText, &flow.wants},
+          {&m_savingText, &flow.saving}}) {
         const QString error = read(*entry.first, entry.second);
         if (!error.isEmpty()) {
             m_saveError = error;
@@ -330,6 +465,18 @@ QString CashflowViewModel::saveMonth(const QString& incomeText, const QString& n
             return m_saveError;
         }
     }
+
+    // A breakdown is optional, but once one field is filled all three are and
+    // they have to add up to the saving total. The repository also refuses a
+    // split that does not, so this check is what lets the page explain why.
+    const SplitReading split = readSavingSplit(m_bufferSplitText, m_investingSplitText,
+                                               m_amortisationSplitText, flow.saving);
+    if (!split.ok) {
+        m_saveError = split.problem;
+        emit changed();
+        return m_saveError;
+    }
+    flow.savingSplit = split.split;
 
     // Saving is part of income, not something on top of it: a month where the
     // three outflows exceed what came in cannot be split by the model at all.
@@ -347,10 +494,163 @@ QString CashflowViewModel::saveMonth(const QString& incomeText, const QString& n
     }
 
     m_saveError.clear();
-    reload();
+    // The draft is now what is stored, in the formatters' canonical spelling.
+    reloadFromStore(false);
     m_savedNote = tr("Recorded %1.").arg(m_currentMonthLabel);
     emit changed();
     return {};
+}
+
+void CashflowViewModel::discardMonth()
+{
+    m_incomeText = m_storedIncomeText;
+    m_needsText = m_storedNeedsText;
+    m_wantsText = m_storedWantsText;
+    m_savingText = m_storedSavingText;
+    m_bufferSplitText = m_storedBufferSplitText;
+    m_investingSplitText = m_storedInvestingSplitText;
+    m_amortisationSplitText = m_storedAmortisationSplitText;
+    m_saveError.clear();
+    emit changed();
+}
+
+void CashflowViewModel::fillSavingSplitRemainder()
+{
+    if (!m_investingSplitText.trimmed().isEmpty())
+        return;
+
+    domain::Money saving{};
+    domain::Money buffer{};
+    domain::Money amortisation{};
+    if (!readOptionalMoney(m_savingText, m_currency, &saving) ||
+        !readOptionalMoney(m_bufferSplitText, m_currency, &buffer) ||
+        !readOptionalMoney(m_amortisationSplitText, m_currency, &amortisation))
+        return;
+
+    const domain::Money remainder = saving - buffer - amortisation;
+    if (remainder.isNegative())
+        return;
+
+    m_investingSplitText = formatMoneyPlain(remainder);
+    emit changed();
+}
+
+bool CashflowViewModel::dirty() const
+{
+    return m_incomeText != m_storedIncomeText || m_needsText != m_storedNeedsText ||
+           m_wantsText != m_storedWantsText || m_savingText != m_storedSavingText ||
+           m_bufferSplitText != m_storedBufferSplitText ||
+           m_investingSplitText != m_storedInvestingSplitText ||
+           m_amortisationSplitText != m_storedAmortisationSplitText;
+}
+
+bool CashflowViewModel::anySavingSplitText() const
+{
+    return !m_bufferSplitText.trimmed().isEmpty() || !m_investingSplitText.trimmed().isEmpty() ||
+           !m_amortisationSplitText.trimmed().isEmpty();
+}
+
+QString CashflowViewModel::savingSplitError() const
+{
+    if (!anySavingSplitText())
+        return {};
+
+    domain::Money saving{};
+    if (!readOptionalMoney(m_savingText, m_currency, &saving))
+        return tr("Enter a saving amount that can be read before splitting it.");
+
+    return readSavingSplit(m_bufferSplitText, m_investingSplitText, m_amortisationSplitText, saving)
+        .problem;
+}
+
+bool CashflowViewModel::savingSplitValid() const
+{
+    return savingSplitError().isEmpty();
+}
+
+bool CashflowViewModel::savingSplitCanFill() const
+{
+    // Filling the remainder is only offered once a part is known and while
+    // investments is the field nobody has filled in yet; otherwise the action
+    // would overwrite an amount the household already entered.
+    if (!m_investingSplitText.trimmed().isEmpty())
+        return false;
+    if (m_bufferSplitText.trimmed().isEmpty() && m_amortisationSplitText.trimmed().isEmpty())
+        return false;
+
+    domain::Money saving{};
+    domain::Money buffer{};
+    domain::Money amortisation{};
+    if (!readOptionalMoney(m_savingText, m_currency, &saving) ||
+        !readOptionalMoney(m_bufferSplitText, m_currency, &buffer) ||
+        !readOptionalMoney(m_amortisationSplitText, m_currency, &amortisation))
+        return false;
+
+    const domain::Money remainder = saving - buffer - amortisation;
+    return !remainder.isNegative();
+}
+
+void CashflowViewModel::setIncomeText(const QString& text)
+{
+    if (text == m_incomeText)
+        return;
+    m_incomeText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setNeedsText(const QString& text)
+{
+    if (text == m_needsText)
+        return;
+    m_needsText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setWantsText(const QString& text)
+{
+    if (text == m_wantsText)
+        return;
+    m_wantsText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setSavingText(const QString& text)
+{
+    if (text == m_savingText)
+        return;
+    m_savingText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setBufferSplitText(const QString& text)
+{
+    if (text == m_bufferSplitText)
+        return;
+    m_bufferSplitText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setInvestingSplitText(const QString& text)
+{
+    if (text == m_investingSplitText)
+        return;
+    m_investingSplitText = text;
+    m_savedNote.clear();
+    emit changed();
+}
+
+void CashflowViewModel::setAmortisationSplitText(const QString& text)
+{
+    if (text == m_amortisationSplitText)
+        return;
+    m_amortisationSplitText = text;
+    m_savedNote.clear();
+    emit changed();
 }
 
 } // namespace hinkwise::presentation

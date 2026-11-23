@@ -37,6 +37,25 @@ IncomeSplit incomeSplitOf(const domain::MonthFlow& flow)
     return split;
 }
 
+SavingsSplitShares savingsSplitSharesOf(const domain::MonthFlow& flow)
+{
+    SavingsSplitShares shares;
+    if (!flow.savingSplit)
+        return shares;
+
+    // The three shares come from the domain's metrics, exactly as the income
+    // split does above. A fallback division here would be a second definition
+    // of what a share means.
+    domain::HouseholdFacts facts;
+    facts.flow = flow;
+    const domain::Metrics metrics = domain::computeMetrics(facts);
+    shares.present = true;
+    shares.buffer = metrics.bufferShareOfSaving;
+    shares.investing = metrics.investingShareOfSaving;
+    shares.amortisation = metrics.amortisationShareOfSaving;
+    return shares;
+}
+
 QString deviationSentence(const QString& subject, bool plural, domain::Percentage actual,
                           domain::Percentage target)
 {

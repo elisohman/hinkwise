@@ -93,10 +93,19 @@ class CashflowViewModel : public QObject {
     Q_PROPERTY(QString currentMonthLabel READ currentMonthLabel NOTIFY changed)
     Q_PROPERTY(QString selectedMonthLabel READ selectedMonthLabel NOTIFY changed)
 
-    Q_PROPERTY(QString incomeText READ incomeText NOTIFY changed)
-    Q_PROPERTY(QString needsText READ needsText NOTIFY changed)
-    Q_PROPERTY(QString wantsText READ wantsText NOTIFY changed)
-    Q_PROPERTY(QString savingText READ savingText NOTIFY changed)
+    Q_PROPERTY(QString incomeText READ incomeText WRITE setIncomeText NOTIFY changed)
+    Q_PROPERTY(QString needsText READ needsText WRITE setNeedsText NOTIFY changed)
+    Q_PROPERTY(QString wantsText READ wantsText WRITE setWantsText NOTIFY changed)
+    Q_PROPERTY(QString savingText READ savingText WRITE setSavingText NOTIFY changed)
+    Q_PROPERTY(QString bufferSplitText READ bufferSplitText WRITE setBufferSplitText NOTIFY changed)
+    Q_PROPERTY(QString investingSplitText READ investingSplitText WRITE setInvestingSplitText NOTIFY
+                   changed)
+    Q_PROPERTY(QString amortisationSplitText READ amortisationSplitText WRITE
+                   setAmortisationSplitText NOTIFY changed)
+    Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
+    Q_PROPERTY(bool savingSplitValid READ savingSplitValid NOTIFY changed)
+    Q_PROPERTY(QString savingSplitError READ savingSplitError NOTIFY changed)
+    Q_PROPERTY(bool savingSplitCanFill READ savingSplitCanFill NOTIFY changed)
     Q_PROPERTY(QString saveError READ saveError NOTIFY changed)
     Q_PROPERTY(QString savedNote READ savedNote NOTIFY changed)
     Q_PROPERTY(QString savingNote READ savingNote NOTIFY changed)
@@ -119,6 +128,15 @@ class CashflowViewModel : public QObject {
     Q_PROPERTY(double savingRatio READ savingRatio NOTIFY changed)
     Q_PROPERTY(bool selectedMonthRecorded READ selectedMonthRecorded NOTIFY changed)
     Q_PROPERTY(QString selectedSavingsRateLabel READ selectedSavingsRateLabel NOTIFY changed)
+    Q_PROPERTY(bool selectedMonthHasSavingSplit READ selectedMonthHasSavingSplit NOTIFY changed)
+    Q_PROPERTY(QString bufferSavingShareLabel READ bufferSavingShareLabel NOTIFY changed)
+    Q_PROPERTY(QString investingSavingShareLabel READ investingSavingShareLabel NOTIFY changed)
+    Q_PROPERTY(
+        QString amortisationSavingShareLabel READ amortisationSavingShareLabel NOTIFY changed)
+    Q_PROPERTY(QString bufferSavingAmountLabel READ bufferSavingAmountLabel NOTIFY changed)
+    Q_PROPERTY(QString investingSavingAmountLabel READ investingSavingAmountLabel NOTIFY changed)
+    Q_PROPERTY(
+        QString amortisationSavingAmountLabel READ amortisationSavingAmountLabel NOTIFY changed)
 
     Q_PROPERTY(QVariantList savingsPoints READ savingsPoints NOTIFY changed)
     Q_PROPERTY(QVariantList savingsReferences READ savingsReferences NOTIFY changed)
@@ -139,11 +157,18 @@ public:
     /// Selects one column of the history strip, oldest first.
     Q_INVOKABLE void selectMonth(int index);
 
-    /// Records the current month from the four fields. An empty field means
-    /// zero, and the whole month is refused when income cannot cover what is
-    /// entered, rather than stored as a month that adds up to more than it has.
-    Q_INVOKABLE QString saveMonth(const QString& incomeText, const QString& needsText,
-                                  const QString& wantsText, const QString& savingText);
+    /// Records the current month from the draft the page edits. An empty field
+    /// means zero, and the whole month is refused when income cannot cover what
+    /// is entered, or when a saving breakdown is present but does not add up.
+    Q_INVOKABLE QString saveMonth();
+
+    /// Puts the saving total that is not already broken down into the
+    /// investments field. A no-op when that field is no longer empty or when
+    /// the amounts the household has entered already exceed the total.
+    Q_INVOKABLE void fillSavingSplitRemainder();
+
+    /// Restores every draft field to the last values loaded from the store.
+    Q_INVOKABLE void discardMonth();
 
     int historyMonths() const { return kHistoryMonths; }
     bool hasProfile() const { return m_hasProfile; }
@@ -154,6 +179,13 @@ public:
     QString needsText() const { return m_needsText; }
     QString wantsText() const { return m_wantsText; }
     QString savingText() const { return m_savingText; }
+    QString bufferSplitText() const { return m_bufferSplitText; }
+    QString investingSplitText() const { return m_investingSplitText; }
+    QString amortisationSplitText() const { return m_amortisationSplitText; }
+    bool dirty() const;
+    bool savingSplitValid() const;
+    QString savingSplitError() const;
+    bool savingSplitCanFill() const;
     QString saveError() const { return m_saveError; }
     QString savedNote() const { return m_savedNote; }
     QString savingNote() const { return m_savingNote; }
@@ -175,6 +207,13 @@ public:
     double savingRatio() const { return m_split.saving.asFraction(); }
     bool selectedMonthRecorded() const { return m_selectedRecorded; }
     QString selectedSavingsRateLabel() const { return m_selectedSavingsRateLabel; }
+    bool selectedMonthHasSavingSplit() const { return m_selectedHasSavingSplit; }
+    QString bufferSavingShareLabel() const { return m_bufferSavingShareLabel; }
+    QString investingSavingShareLabel() const { return m_investingSavingShareLabel; }
+    QString amortisationSavingShareLabel() const { return m_amortisationSavingShareLabel; }
+    QString bufferSavingAmountLabel() const { return m_bufferSavingAmountLabel; }
+    QString investingSavingAmountLabel() const { return m_investingSavingAmountLabel; }
+    QString amortisationSavingAmountLabel() const { return m_amortisationSavingAmountLabel; }
     QVariantList savingsPoints() const { return m_savingsPoints; }
     QVariantList savingsReferences() const { return m_savingsReferences; }
     QString savingsAxisTopLabel() const { return m_savingsAxisTopLabel; }
@@ -183,14 +222,27 @@ public:
     bool savingsEmpty() const { return m_savingsEmpty; }
     HistoryColumnsModel* history() const { return m_history; }
 
+    void setIncomeText(const QString& text);
+    void setNeedsText(const QString& text);
+    void setWantsText(const QString& text);
+    void setSavingText(const QString& text);
+    void setBufferSplitText(const QString& text);
+    void setInvestingSplitText(const QString& text);
+    void setAmortisationSplitText(const QString& text);
+
 signals:
     void changed();
 
 private:
     static constexpr int kHistoryMonths = 12;
 
+    /// Rebuilds from the controller, keeping the draft when `keepDraft` is set.
+    /// The stored baseline always moves to what is on record, so Discard
+    /// restores the newest saved values even after a reload arrived mid-edit.
+    void reloadFromStore(bool keepDraft);
     void applySelection(const QVector<FlowMonth>& months);
     QString monthLabel(domain::YearMonth month, const QString& format) const;
+    bool anySavingSplitText() const;
 
     bool m_hasProfile = false;
     domain::Currency m_currency = domain::Currency::Sek;
@@ -202,6 +254,16 @@ private:
     QString m_needsText;
     QString m_wantsText;
     QString m_savingText;
+    QString m_bufferSplitText;
+    QString m_investingSplitText;
+    QString m_amortisationSplitText;
+    QString m_storedIncomeText;
+    QString m_storedNeedsText;
+    QString m_storedWantsText;
+    QString m_storedSavingText;
+    QString m_storedBufferSplitText;
+    QString m_storedInvestingSplitText;
+    QString m_storedAmortisationSplitText;
     QString m_saveError;
     QString m_savedNote;
     QString m_savingNote;
@@ -219,10 +281,17 @@ private:
     QString m_wantsDeviationLabel;
     QString m_savingDeviationLabel;
     QString m_selectedSavingsRateLabel;
+    QString m_bufferSavingShareLabel;
+    QString m_investingSavingShareLabel;
+    QString m_amortisationSavingShareLabel;
+    QString m_bufferSavingAmountLabel;
+    QString m_investingSavingAmountLabel;
+    QString m_amortisationSavingAmountLabel;
     QString m_savingsAxisTopLabel;
     QString m_savingsFirstLabel;
     QString m_savingsLastLabel;
     bool m_selectedRecorded = false;
+    bool m_selectedHasSavingSplit = false;
     bool m_savingsEmpty = true;
     IncomeSplit m_split;
     QVariantList m_savingsPoints;

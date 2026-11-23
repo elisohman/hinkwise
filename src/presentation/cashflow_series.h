@@ -50,6 +50,19 @@ IncomeSplit incomeSplitOf(const domain::MonthFlow& flow);
 QString deviationSentence(const QString& subject, bool plural, domain::Percentage actual,
                           domain::Percentage target);
 
+/// Where one month's saving went, as shares of that saving. `present` is false
+/// for a month recorded without a breakdown; the three shares are then zero.
+struct SavingsSplitShares {
+    bool present = false;
+    domain::Percentage buffer{};
+    domain::Percentage investing{};
+    domain::Percentage amortisation{};
+};
+
+/// The saving breakdown as the domain computes it. Shares are read through
+/// computeMetrics(), so the page and the rules cannot disagree about them.
+SavingsSplitShares savingsSplitSharesOf(const domain::MonthFlow& flow);
+
 /// One column of the twelve-month history strip.
 ///
 /// `recorded` is what makes a missing month visible: a month with no flow is a

@@ -57,10 +57,17 @@ QString horizonLabel(domain::Bucket bucket)
     return DashboardViewModel::tr("%1–%2 years").arg(horizon.minYears).arg(*horizon.maxYears);
 }
 
-/// The band, cap or absence of one, in the words the model uses.
-QString targetLabel(const domain::ResolvedTarget& target)
+/// The band, cap or absence of one, in the words the model uses. The buffer's
+/// band is wide enough that a bare range gives the household nothing to aim
+/// at, so its label leads with the chosen point and keeps the band beside it.
+QString targetLabel(domain::Bucket bucket, const domain::ResolvedTarget& target)
 {
     if (target.hasTarget()) {
+        if (bucket == domain::Bucket::Buffer) {
+            return DashboardViewModel::tr("Target %1 (band %2 – %3)")
+                .arg(formatMoney(target.point), formatMoney(target.band.low),
+                     formatMoney(target.band.high));
+        }
         return DashboardViewModel::tr("Target: %1 – %2")
             .arg(formatMoney(target.band.low), formatMoney(target.band.high));
     }
@@ -229,7 +236,7 @@ QVector<BucketRow> bucketRowsOf(const application::DashboardSnapshot& snapshot)
             QString::fromUtf8(domain::labelOf(bucket)),
             horizonLabel(bucket),
             formatMoney(balance),
-            targetLabel(target),
+            targetLabel(bucket, target),
             catalog::bucketColourKey(bucket),
             target.hasTarget() ? trackPosition(target.band.low, axis) : 0.0,
             target.hasTarget() ? trackPosition(target.band.high, axis) : 0.0,

@@ -269,21 +269,29 @@ void SettingsViewModel::apply(const application::DashboardSnapshot& snapshot)
     // decides whether the fields need refilling.
     const domain::Jurisdiction previousJurisdiction = jurisdiction();
     const std::string previousName = m_profile.displayName;
+    const bool nameWasDirty = displayNameDirty();
+    const bool jurisdictionWasDirty = jurisdictionDirty();
+    const bool bufferWasDirty = bufferTargetDirty();
 
     m_hasProfile = snapshot.hasProfile;
     m_snapshot = snapshot;
     m_profile = snapshot.profile;
     m_phaseIndex = phaseIndexOf(m_profile.phase);
 
-    // A field keeps what was typed until the stored value behind it changes,
-    // so a write from another page cannot wipe half-typed text.
-    if (previousName != m_profile.displayName)
+    // A field keeps what was typed until the household saves or discards it.
+    // A reload that arrives mid-edit must never throw a draft away.
+    if (!nameWasDirty && previousName != m_profile.displayName)
         m_displayNameText = QString::fromStdString(m_profile.displayName);
 
-    if (!m_jurisdictionFilled || !sameJurisdiction(previousJurisdiction, jurisdiction())) {
+    if (!m_jurisdictionFilled) {
         fillJurisdictionTexts();
         m_jurisdictionFilled = true;
+    } else if (!jurisdictionWasDirty && !sameJurisdiction(previousJurisdiction, jurisdiction())) {
+        fillJurisdictionTexts();
     }
+
+    if (!bufferWasDirty)
+        m_bufferTargetPosition = m_profile.riskTolerance.basisPoints();
 
     m_phaseHistory = phaseHistoryRows();
     emit changed();
@@ -393,6 +401,58 @@ void SettingsViewModel::cancelPhaseChange()
 bool SettingsViewModel::displayNameDirty() const
 {
     return m_displayNameText.trimmed() != QString::fromStdString(m_profile.displayName);
+}
+
+bool SettingsViewModel::bufferTargetDirty() const
+{
+    return m_bufferTargetPosition != m_profile.riskTolerance.basisPoints();
+}
+
+QString SettingsViewModel::bufferTargetPreview() const
+{
+    if (!m_hasProfile)
+        return {};
+
+    // The point is resolved with the same inputs the dashboard uses, so the
+    // number here is the number the buckets will show once it is saved.
+    const domain::Money monthlyExpenses = m_snapshot.facts.flow.needs + m_snapshot.facts.flow.wants;
+    if (!monthlyExpenses.isPositive())
+        return tr("Record a month to see this point in money.");
+
+    const domain::Money annualExpenses =
+        monthlyExpenses.scaledBy(domain::Percentage::fromBasisPoints(120000));
+    domain::TargetInputs inputs{m_profile.baseCurrency};
+    inputs.monthlyExpenses = monthlyExpenses;
+    inputs.annualExpenses = annualExpenses;
+    inputs.growthBalance =
+        m_snapshot.facts.sheet.perBucket[static_cast<std::size_t>(domain::Bucket::Growth)];
+    inputs.riskTolerance = domain::Percentage::fromBasisPoints(m_bufferTargetPosition);
+
+    const domain::BucketTargets& rules = domain::policyFor(m_profile.phase).targets();
+    const domain::ResolvedTargets resolved = domain::resolve(rules, inputs);
+    const domain::ResolvedTarget& buffer =
+        resolved[static_cast<std::size_t>(domain::Bucket::Buffer)];
+    if (!buffer.hasTarget())
+        return tr("This phase gives the buffer no target.");
+
+    const QLocale locale;
+    const bool annual = rules[domain::Bucket::Buffer].basis == domain::ExpenseBasis::Annual;
+    const domain::Money unit = annual ? annualExpenses : monthlyExpenses;
+    const double count =
+        static_cast<double>(buffer.point.minorUnits()) / static_cast<double>(unit.minorUnits());
+    const QString equivalent = annual ? tr("%1 years").arg(locale.toString(count, 'f', 1))
+                                      : tr("%1 months").arg(locale.toString(count, 'f', 1));
+    return tr("%1 · %2").arg(formatMoney(buffer.point), equivalent);
+}
+
+void SettingsViewModel::setBufferTargetPosition(int position)
+{
+    const int clamped = std::clamp(position, 0, bufferTargetMaximum());
+    if (clamped == m_bufferTargetPosition)
+        return;
+    m_bufferTargetPosition = clamped;
+    m_bufferTargetError.clear();
+    emit changed();
 }
 
 QString SettingsViewModel::currencyCode() const
@@ -511,9 +571,19 @@ QString SettingsViewModel::saveDisplayName()
         return m_displayNameError;
     }
 
+    // The stored name is what the field shows after a save, trimmed: the
+    // draft may have carried spaces that were not part of the name.
+    m_displayNameText = QString::fromStdString(m_profile.displayName);
     m_displayNameError.clear();
     emit changed();
     return {};
+}
+
+void SettingsViewModel::discardDisplayName()
+{
+    m_displayNameText = QString::fromStdString(m_profile.displayName);
+    m_displayNameError.clear();
+    emit changed();
 }
 
 QString SettingsViewModel::saveJurisdiction()
@@ -574,8 +644,51 @@ QString SettingsViewModel::saveJurisdiction()
         return m_multiplierError;
     }
 
+    // Show the stored values in their canonical spelling, not whatever the
+    // household happened to type. The reload that saveProfile() announced has
+    // already run and deliberately kept the draft because it looked dirty.
+    fillJurisdictionTexts();
     emit changed();
     return {};
+}
+
+void SettingsViewModel::discardJurisdiction()
+{
+    fillJurisdictionTexts();
+    emit changed();
+}
+
+QString SettingsViewModel::saveBufferTarget()
+{
+    m_bufferTargetError.clear();
+
+    AppController* controller = AppController::instance();
+    if (controller == nullptr) {
+        m_bufferTargetError = tr("The database is not open.");
+        emit changed();
+        return m_bufferTargetError;
+    }
+
+    domain::Profile updated = m_profile;
+    updated.riskTolerance = domain::Percentage::fromBasisPoints(m_bufferTargetPosition);
+    const application::Status saved = controller->saveProfile(updated);
+    if (!saved.ok()) {
+        m_bufferTargetError = QString::fromStdString(saved.error());
+        emit changed();
+        return m_bufferTargetError;
+    }
+
+    m_bufferTargetError.clear();
+    m_bufferTargetPosition = updated.riskTolerance.basisPoints();
+    emit changed();
+    return {};
+}
+
+void SettingsViewModel::discardBufferTarget()
+{
+    m_bufferTargetPosition = m_profile.riskTolerance.basisPoints();
+    m_bufferTargetError.clear();
+    emit changed();
 }
 
 void SettingsViewModel::resetJurisdictionToSwedishDefaults()

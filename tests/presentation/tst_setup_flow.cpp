@@ -45,6 +45,9 @@ private slots:
     void bucketsPageAddsAndRemovesADebt();
     void rejectsWhatTheUseCasesReject();
     void cashflowPageRecordsAndChecksTheMonth();
+    void cashflowDraftSurvivesReloadAndDiscard();
+    void cashflowSavingSplitValidatesAndSaves();
+    void dashboardLeadsWithTheBufferPoint();
     void planPageProjectsTheHousehold();
     void planDoesNotCountTheHouseAsSpendable();
     void reviewPageAddsAGoalAndProposesNothingAutomatic();
@@ -404,19 +407,24 @@ void TestSetupFlow::cashflowPageRecordsAndChecksTheMonth()
 
     // Outflows that add up to more than income are refused before they reach
     // the use case: saving is part of income, not something on top of it.
-    QVERIFY(!cashflow
-                 .saveMonth(QStringLiteral("30000"), QStringLiteral("20000"),
-                            QStringLiteral("9000"), QStringLiteral("6000"))
-                 .isEmpty());
-    QVERIFY(!cashflow
-                 .saveMonth(QString{}, QStringLiteral("15000"), QStringLiteral("9000"),
-                            QStringLiteral("6000"))
-                 .isEmpty());
+    cashflow.setIncomeText(QStringLiteral("30000"));
+    cashflow.setNeedsText(QStringLiteral("20000"));
+    cashflow.setWantsText(QStringLiteral("9000"));
+    cashflow.setSavingText(QStringLiteral("6000"));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
+
+    cashflow.setIncomeText(QString{});
+    cashflow.setNeedsText(QStringLiteral("15000"));
+    cashflow.setWantsText(QStringLiteral("9000"));
+    cashflow.setSavingText(QStringLiteral("6000"));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
 
     // A month that adds up is recorded, and the figures follow it.
-    QCOMPARE(cashflow.saveMonth(QStringLiteral("30000"), QStringLiteral("18000"),
-                                QStringLiteral("9000"), QStringLiteral("3000")),
-             QString{});
+    cashflow.setIncomeText(QStringLiteral("30000"));
+    cashflow.setNeedsText(QStringLiteral("18000"));
+    cashflow.setWantsText(QStringLiteral("9000"));
+    cashflow.setSavingText(QStringLiteral("3000"));
+    QCOMPARE(cashflow.saveMonth(), QString{});
     QVERIFY(qAbs(cashflow.needsRatio() - 0.6) < 1e-9);
     QVERIFY(qAbs(cashflow.savingRatio() - 0.1) < 1e-9);
     QVERIFY(cashflow.savingsPoints().size() >= 1);
@@ -424,6 +432,109 @@ void TestSetupFlow::cashflowPageRecordsAndChecksTheMonth()
     const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
     QCOMPARE(snapshot.facts.flow.needs.minorUnits(), std::int64_t{1800000});
     QCOMPARE(snapshot.facts.flow.saving.minorUnits(), std::int64_t{300000});
+}
+
+void TestSetupFlow::cashflowDraftSurvivesReloadAndDiscard()
+{
+    CashflowViewModel cashflow;
+    const QString storedIncome = cashflow.incomeText();
+    QVERIFY(!storedIncome.isEmpty());
+    QVERIFY(!cashflow.dirty());
+
+    // Typing moves the draft into the view model. A reload - which is what a
+    // write from any page triggers - must not throw it away.
+    cashflow.setIncomeText(QStringLiteral("31000"));
+    QVERIFY(cashflow.dirty());
+    cashflow.reload();
+    QCOMPARE(cashflow.incomeText(), QStringLiteral("31000"));
+    QVERIFY(cashflow.dirty());
+
+    // Discard is the explicit way out, and it restores the saved month.
+    cashflow.discardMonth();
+    QCOMPARE(cashflow.incomeText(), storedIncome);
+    QVERIFY(!cashflow.dirty());
+}
+
+void TestSetupFlow::cashflowSavingSplitValidatesAndSaves()
+{
+    CashflowViewModel cashflow;
+    QCOMPARE(cashflow.savingText(), formatMoneyPlain(domain::Money{300000, domain::Currency::Eur}));
+    QVERIFY(cashflow.savingSplitValid());
+
+    // One part alone is not a split: the three are all present or all absent.
+    cashflow.setBufferSplitText(QStringLiteral("1000"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("Fill all three")));
+
+    // The total is 3 000, so three parts that add to 2 500 leave 500 to place
+    // and block the save.
+    cashflow.setInvestingSplitText(QStringLiteral("1000"));
+    cashflow.setAmortisationSplitText(QStringLiteral("500"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("left to place")));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
+
+    cashflow.setAmortisationSplitText(QStringLiteral("1000"));
+    QVERIFY(cashflow.savingSplitValid());
+    QCOMPARE(cashflow.saveMonth(), QString{});
+    QVERIFY(!cashflow.dirty());
+
+    const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
+    QVERIFY(snapshot.facts.flow.savingSplit.has_value());
+    QCOMPARE(snapshot.facts.flow.savingSplit->toBuffer.minorUnits(), std::int64_t{100000});
+    QCOMPARE(snapshot.facts.flow.savingSplit->toInvesting.minorUnits(), std::int64_t{100000});
+    QCOMPARE(snapshot.facts.flow.savingSplit->toAmortisation.minorUnits(), std::int64_t{100000});
+
+    // The shares the page shows are the domain's shares of that saving.
+    QVERIFY(cashflow.selectedMonthHasSavingSplit());
+    QVERIFY(cashflow.bufferSavingShareLabel().startsWith(QStringLiteral("33,3")));
+    QCOMPARE(cashflow.bufferSavingAmountLabel(),
+             formatMoney(domain::Money{100000, domain::Currency::Eur}));
+
+    // The helper puts the unallocated rest into investments, which is where a
+    // household that knows only its buffer and amortisation leaves it.
+    cashflow.setBufferSplitText(QStringLiteral("1000"));
+    cashflow.setInvestingSplitText(QString{});
+    cashflow.setAmortisationSplitText(QStringLiteral("500"));
+    QVERIFY(cashflow.savingSplitCanFill());
+    cashflow.fillSavingSplitRemainder();
+    QCOMPARE(cashflow.investingSplitText(),
+             formatMoneyPlain(domain::Money{150000, domain::Currency::Eur}));
+    QVERIFY(cashflow.savingSplitValid());
+
+    // More than the saving total is an excess, named in the same words.
+    cashflow.setBufferSplitText(QStringLiteral("2000"));
+    cashflow.setInvestingSplitText(QStringLiteral("1000"));
+    cashflow.setAmortisationSplitText(QStringLiteral("1000"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("too much")));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
+
+    // Discard restores the stored breakdown that was saved above.
+    cashflow.discardMonth();
+    QVERIFY(!cashflow.dirty());
+    QVERIFY(cashflow.savingSplitValid());
+    QCOMPARE(cashflow.bufferSplitText(),
+             formatMoneyPlain(domain::Money{100000, domain::Currency::Eur}));
+}
+
+void TestSetupFlow::dashboardLeadsWithTheBufferPoint()
+{
+    const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
+    const QVector<BucketRow> rows = bucketRowsOf(snapshot);
+    QCOMPARE(rows.size(), 4);
+
+    const auto& target = snapshot.facts.targets[static_cast<std::size_t>(domain::Bucket::Buffer)];
+    QVERIFY(target.hasTarget());
+
+    // The buffer's label leads with the chosen point and keeps the band beside
+    // it, so a household has something to aim at instead of only a range.
+    const QString label = rows.front().targetLabel;
+    QVERIFY(label.startsWith(QStringLiteral("Target ")));
+    QVERIFY(label.contains(QStringLiteral("(band")));
+    QVERIFY(label.contains(formatMoney(target.point)));
+    QVERIFY(label.contains(formatMoney(target.band.low)));
+    QVERIFY(label.contains(formatMoney(target.band.high)));
 }
 
 void TestSetupFlow::planPageProjectsTheHousehold()

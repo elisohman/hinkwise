@@ -68,6 +68,8 @@ Item {
             highField.text = settings.fiMultiplierHighText;
         if (nameField.text !== settings.displayNameText)
             nameField.text = settings.displayNameText;
+        if (bufferSlider.value !== settings.bufferTargetPosition)
+            bufferSlider.value = settings.bufferTargetPosition;
     }
 
     SettingsViewModel {
@@ -200,6 +202,161 @@ Item {
                         Text {
                             visible: settings.phaseError.length > 0
                             text: settings.phaseError
+                            color: Theme.danger
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                // -----------------------------------------------------------
+                // Buffer target
+                // -----------------------------------------------------------
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: bufferCard.implicitHeight + 2 * Theme.spaceLg
+                    radius: Theme.radius
+                    color: Theme.surface
+                    border.color: Theme.border
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: bufferCard
+
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceLg
+                        spacing: Theme.spaceSm
+
+                        SectionHeader {
+                            Layout.fillWidth: true
+                            title: qsTr("Buffer target")
+                            note: qsTr("Where in the band this household wants to sit")
+                        }
+
+                        Text {
+                            text: qsTr("The model gives the buffer a band and leaves the point "
+                                 + "inside it to the household. Cautious sits at the band's low "
+                                 + "end, bold at its high end.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontBody
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceMd
+
+                            Text {
+                                text: qsTr("Cautious")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
+                            }
+
+                            Slider {
+                                id: bufferSlider
+
+                                Layout.fillWidth: true
+                                from: 0
+                                to: settings.bufferTargetMaximum
+                                stepSize: 100
+                                snapMode: Slider.SnapAlways
+                                value: settings.bufferTargetPosition
+                                onMoved: settings.bufferTargetPosition = value
+
+                                background: Rectangle {
+                                    x: bufferSlider.leftPadding
+                                    y: bufferSlider.topPadding + bufferSlider.availableHeight / 2
+                                       - height / 2
+                                    implicitHeight: 4
+                                    width: bufferSlider.availableWidth
+                                    height: implicitHeight
+                                    radius: 2
+                                    color: Theme.surfaceRaised
+
+                                    Rectangle {
+                                        width: bufferSlider.visualPosition * parent.width
+                                        height: parent.height
+                                        radius: 2
+                                        color: Theme.buffer
+                                    }
+                                }
+
+                                handle: Rectangle {
+                                    x: bufferSlider.leftPadding + bufferSlider.visualPosition
+                                       * (bufferSlider.availableWidth - width)
+                                    y: bufferSlider.topPadding + bufferSlider.availableHeight / 2
+                                       - height / 2
+                                    implicitWidth: 16
+                                    implicitHeight: 16
+                                    radius: 8
+                                    color: bufferSlider.pressed ? Theme.textPrimary
+                                                                : Theme.buffer
+                                    border.color: Theme.background
+                                    border.width: 2
+                                }
+                            }
+
+                            Text {
+                                text: qsTr("Bold")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
+                            }
+                        }
+
+                        Text {
+                            text: settings.bufferTargetPreview
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontTitle
+                            font.weight: Font.Light
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: qsTr("A bigger buffer is safer but earns roughly nothing, so "
+                                 + "it should be as small as the household's situation allows.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceSm
+
+                            PrimaryButton {
+                                text: qsTr("Save")
+                                enabled: settings.bufferTargetDirty
+                                onClicked: settings.saveBufferTarget()
+                            }
+
+                            PrimaryButton {
+                                text: qsTr("Discard")
+                                filled: false
+                                visible: settings.bufferTargetDirty
+                                onClicked: settings.discardBufferTarget()
+                            }
+
+                            Text {
+                                visible: settings.bufferTargetDirty
+                                text: qsTr("Unsaved changes")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Text {
+                            visible: settings.bufferTargetError.length > 0
+                            text: settings.bufferTargetError
                             color: Theme.danger
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true
@@ -350,13 +507,27 @@ Item {
                             }
 
                             PrimaryButton {
-                                text: qsTr("Reset to Swedish defaults")
+                                text: qsTr("Discard")
                                 filled: false
-                                onClicked: settings.resetJurisdictionToSwedishDefaults()
+                                visible: settings.jurisdictionDirty
+                                onClicked: settings.discardJurisdiction()
+                            }
+
+                            Text {
+                                visible: settings.jurisdictionDirty
+                                text: qsTr("Unsaved changes")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
                             }
 
                             Item {
                                 Layout.fillWidth: true
+                            }
+
+                            PrimaryButton {
+                                text: qsTr("Reset to Swedish defaults")
+                                filled: false
+                                onClicked: settings.resetJurisdictionToSwedishDefaults()
                             }
                         }
 
@@ -431,6 +602,23 @@ Item {
                                 text: qsTr("Save")
                                 enabled: settings.displayNameDirty
                                 onClicked: settings.saveDisplayName()
+                            }
+
+                            PrimaryButton {
+                                Layout.alignment: Qt.AlignBottom
+                                text: qsTr("Discard")
+                                filled: false
+                                visible: settings.displayNameDirty
+                                onClicked: settings.discardDisplayName()
+                            }
+
+                            Text {
+                                Layout.alignment: Qt.AlignBottom
+                                Layout.bottomMargin: Theme.spaceSm
+                                visible: settings.displayNameDirty
+                                text: qsTr("Unsaved changes")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
                             }
                         }
 

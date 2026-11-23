@@ -69,6 +69,16 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(QString currencyCode READ currencyCode NOTIFY changed)
     Q_PROPERTY(QString currencyName READ currencyName NOTIFY changed)
 
+    /// Where the household wants to sit inside the buffer band, in basis
+    /// points: 0 is the cautious end, 10000 the bold end. The band itself is
+    /// the phase's; this is the point inside it.
+    Q_PROPERTY(int bufferTargetPosition READ bufferTargetPosition WRITE setBufferTargetPosition
+                   NOTIFY changed)
+    Q_PROPERTY(int bufferTargetMaximum READ bufferTargetMaximum CONSTANT)
+    Q_PROPERTY(bool bufferTargetDirty READ bufferTargetDirty NOTIFY changed)
+    Q_PROPERTY(QString bufferTargetPreview READ bufferTargetPreview NOTIFY changed)
+    Q_PROPERTY(QString bufferTargetError READ bufferTargetError NOTIFY changed)
+
     Q_PROPERTY(QString safeWithdrawalRateText READ safeWithdrawalRateText WRITE
                    setSafeWithdrawalRateText NOTIFY changed)
     Q_PROPERTY(QString capitalTaxDragText READ capitalTaxDragText WRITE setCapitalTaxDragText NOTIFY
@@ -116,10 +126,24 @@ public:
     /// Saves the name the page collected. Returns the reason it could not.
     Q_INVOKABLE QString saveDisplayName();
 
+    /// Restores the name field to the stored name.
+    Q_INVOKABLE void discardDisplayName();
+
     /// Saves the jurisdiction the page collected and recomputes every figure,
     /// which AppController does by announcing the write. Returns the reason it
     /// could not.
     Q_INVOKABLE QString saveJurisdiction();
+
+    /// Restores the jurisdiction fields to the stored assumptions.
+    Q_INVOKABLE void discardJurisdiction();
+
+    /// Saves the chosen buffer point through the same profile-save path as the
+    /// other settings, which recomputes every target. Returns the reason it
+    /// could not.
+    Q_INVOKABLE QString saveBufferTarget();
+
+    /// Restores the buffer point to the stored one.
+    Q_INVOKABLE void discardBufferTarget();
 
     /// Fills the jurisdiction fields with the Swedish constants. Nothing is
     /// written until saveJurisdiction() is called, so a household that resets
@@ -148,6 +172,12 @@ public:
     QString currencyCode() const;
     QString currencyName() const;
 
+    int bufferTargetPosition() const { return m_bufferTargetPosition; }
+    int bufferTargetMaximum() const { return 10000; }
+    bool bufferTargetDirty() const;
+    QString bufferTargetPreview() const;
+    QString bufferTargetError() const { return m_bufferTargetError; }
+
     QString safeWithdrawalRateText() const { return m_safeWithdrawalRateText; }
     QString capitalTaxDragText() const { return m_capitalTaxDragText; }
     QString fiMultiplierLowText() const { return m_fiMultiplierLowText; }
@@ -169,6 +199,7 @@ public:
     QString qtVersion() const;
 
     void setDisplayNameText(const QString& text);
+    void setBufferTargetPosition(int position);
     void setSafeWithdrawalRateText(const QString& text);
     void setCapitalTaxDragText(const QString& text);
     void setFiMultiplierLowText(const QString& text);
@@ -202,6 +233,9 @@ private:
 
     QString m_displayNameText;
     QString m_displayNameError;
+
+    int m_bufferTargetPosition = 5000;
+    QString m_bufferTargetError;
 
     /// False until the jurisdiction fields have been shown once, so the first
     /// reload fills them even when the stored values are the Swedish defaults.
