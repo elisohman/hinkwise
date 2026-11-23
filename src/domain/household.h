@@ -8,9 +8,24 @@
 #include "money.h"
 #include "phase.h"
 
+#include <optional>
 #include <string>
 
 namespace hinkwise::domain {
+
+/// How a month's saving was divided between the three places the model sends
+/// it. This is a breakdown, never a second total: the month's `saving` stays
+/// the authoritative figure and the parts have to add up to it.
+struct SavingsBreakdown {
+    Money toBuffer;
+    Money toInvesting;
+    Money toAmortisation;
+
+    /// The three parts added up. Throws when a part is in another currency,
+    /// like every other Money addition: that is a programming error, and a
+    /// breakdown of one amount is one currency by definition.
+    Money total() const;
+};
 
 /// One month of income and spending, as the household records it.
 ///
@@ -22,7 +37,24 @@ struct MonthFlow {
     Money needs;
     Money wants;
     Money saving;
+
+    /// Where `saving` went, when the household recorded that. Optional because
+    /// months written before the breakdown existed carry only the total, and
+    /// because a household that knows only the total has said nothing about the
+    /// division: inventing one would be a lie.
+    ///
+    /// Defaulted rather than left to zero-initialisation so a flow built from
+    /// the four amounts alone is still a complete, consistent value.
+    std::optional<SavingsBreakdown> savingSplit = std::nullopt;
 };
+
+/// True when the flow agrees with itself: either it carries no breakdown, or
+/// the three parts add up to its saving in the same currency.
+///
+/// The boundaries that read a flow from outside - the repository and the JSON
+/// backup - refuse a flow where this is false rather than passing on a
+/// breakdown that contradicts its own total.
+bool savingSplitMatchesTotal(const MonthFlow& flow);
 
 /// Everything the calculations and the rules need, and nothing else.
 ///

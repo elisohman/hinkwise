@@ -130,6 +130,15 @@ QJsonArray pointsToJson(const std::vector<MoneyPoint>& points)
     return array;
 }
 
+QJsonObject savingsBreakdownToJson(const domain::SavingsBreakdown& split)
+{
+    QJsonObject object;
+    put(object, "buffer", moneyToJson(split.toBuffer));
+    put(object, "investing", moneyToJson(split.toInvesting));
+    put(object, "amortisation", moneyToJson(split.toAmortisation));
+    return object;
+}
+
 QJsonObject monthFlowToJson(const application::MonthFlowRecord& record)
 {
     QJsonObject object;
@@ -138,6 +147,10 @@ QJsonObject monthFlowToJson(const application::MonthFlowRecord& record)
     put(object, "needs", moneyToJson(record.flow.needs));
     put(object, "wants", moneyToJson(record.flow.wants));
     put(object, "saving", moneyToJson(record.flow.saving));
+    // A month with no recorded breakdown has no key at all, which is how an
+    // older file reads too: absence says "the total is all we know".
+    if (record.flow.savingSplit)
+        put(object, "savingSplit", savingsBreakdownToJson(*record.flow.savingSplit));
     return object;
 }
 
@@ -539,6 +552,43 @@ application::Result<application::MonthFlowRecord> monthFlowFromJson(const QJsonV
     if (!saving.ok())
         return Outcome::err(saving.error());
     flow.saving = saving.value();
+
+    // The breakdown is optional: a file written before it existed, or a month
+    // the household only knows the total of, has no 'savingSplit' key.
+    const QJsonValue split = object.value().value(key("savingSplit"));
+    if (!split.isUndefined()) {
+        const std::string where = "backup: month flow " + month.value().toString();
+        const application::Result<QJsonObject> splitObject =
+            asObject(split, where + ": 'savingSplit'");
+        if (!splitObject.ok())
+            return Outcome::err(splitObject.error());
+
+        const application::Result<domain::Money> buffer =
+            requireMoney(splitObject.value(), "buffer", where + ": 'savingSplit'");
+        if (!buffer.ok())
+            return Outcome::err(buffer.error());
+
+        const application::Result<domain::Money> investing =
+            requireMoney(splitObject.value(), "investing", where + ": 'savingSplit'");
+        if (!investing.ok())
+            return Outcome::err(investing.error());
+
+        const application::Result<domain::Money> amortisation =
+            requireMoney(splitObject.value(), "amortisation", where + ": 'savingSplit'");
+        if (!amortisation.ok())
+            return Outcome::err(amortisation.error());
+
+        flow.savingSplit =
+            domain::SavingsBreakdown{buffer.value(), investing.value(), amortisation.value()};
+
+        // A breakdown that disagrees with its own total is a corrupt file: the
+        // parts were edited, or the total was, and guessing which one is right
+        // would invent a figure the household never wrote.
+        if (!domain::savingSplitMatchesTotal(flow))
+            return Outcome::err(where + ": the saving breakdown does not add up to its total " +
+                                flow.saving.toString() + " (all three parts must be in " +
+                                domain::storageKey(flow.saving.currency()) + ")");
+    }
 
     return Outcome::ok(application::MonthFlowRecord{month.value(), flow});
 }

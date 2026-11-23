@@ -109,6 +109,30 @@ application::Status createInitialSchema(QSqlDatabase& database)
     return application::Status::success();
 }
 
+/// The schema of version 2: the optional saving breakdown.
+///
+/// The three columns are nullable and stay NULL for a month recorded before the
+/// breakdown existed, which is the repository's "not broken down". A zero would
+/// claim the household put nothing in that place, which is a different and
+/// possibly false statement. Version 1 is left exactly as it was written: a file
+/// that has already run it must not run it again, and the version gate in
+/// applyMigrations() is what keeps that true.
+application::Status addSavingBreakdown(QSqlDatabase& database)
+{
+    static constexpr const char* kStatements[] = {
+        "ALTER TABLE month_flow ADD COLUMN saving_buffer_minor INTEGER",
+        "ALTER TABLE month_flow ADD COLUMN saving_invest_minor INTEGER",
+        "ALTER TABLE month_flow ADD COLUMN saving_amort_minor INTEGER",
+    };
+
+    for (const char* statement : kStatements) {
+        const application::Status status = execute(database, statement);
+        if (!status.ok())
+            return status;
+    }
+    return application::Status::success();
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -126,7 +150,7 @@ std::string contextMessage(const QString& context, const QSqlError& error)
 
 MigrationList schemaMigrations()
 {
-    return MigrationList{{1, &createInitialSchema}};
+    return MigrationList{{1, &createInitialSchema}, {2, &addSavingBreakdown}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

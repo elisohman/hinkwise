@@ -74,6 +74,8 @@ private slots:
     void deletingAnAssetCascadesItsValuations();
     void debtBalanceRoundTrip();
     void monthFlowRoundTrip();
+    void monthFlowWithAPartlyStoredBreakdownIsAnError();
+    void monthFlowBreakdownThatDoesNotAddUpIsAnError();
     void monthFlowCurrencyMismatchIsAnError();
     void unknownStoredTextIsAnError();
     void databaseFileIsOwnerOnly();
@@ -433,7 +435,10 @@ void TestRepositories::monthFlowRoundTrip()
 {
     sqlite::SqliteMonthFlowRepository flows{connection()};
 
-    const domain::MonthFlow january = flowOf(3000000, 1500000, 500000, 1000000);
+    // January records where its 10 000 kr of saving went; February records only
+    // the total, which is what a month written before the breakdown has.
+    domain::MonthFlow january = flowOf(3000000, 1500000, 500000, 1000000);
+    january.savingSplit = domain::SavingsBreakdown{sek(400000), sek(400000), sek(200000)};
     const domain::MonthFlow february = flowOf(3100000, 1400000, 600000, 1100000);
     QVERIFY(flows.upsert(domain::YearMonth{2026, 1}, january).ok());
     QVERIFY(flows.upsert(domain::YearMonth{2026, 2}, february).ok());
@@ -446,6 +451,29 @@ void TestRepositories::monthFlowRoundTrip()
     QCOMPARE(at.value()->needs.minorUnits(), qint64(1500000));
     QCOMPARE(at.value()->wants.minorUnits(), qint64(500000));
     QCOMPARE(at.value()->saving.minorUnits(), qint64(1000000));
+    QVERIFY(at.value()->savingSplit.has_value());
+    QCOMPARE(at.value()->savingSplit->toBuffer.minorUnits(), qint64(400000));
+    QCOMPARE(at.value()->savingSplit->toInvesting.minorUnits(), qint64(400000));
+    QCOMPARE(at.value()->savingSplit->toAmortisation.minorUnits(), qint64(200000));
+    QCOMPARE(static_cast<int>(at.value()->savingSplit->toBuffer.currency()),
+             static_cast<int>(domain::Currency::Sek));
+
+    // A month with no breakdown comes back with none, not with three zeroes.
+    const application::Result<std::optional<domain::MonthFlow>> withoutSplit =
+        flows.at(domain::YearMonth{2026, 2});
+    QVERIFY2(withoutSplit.ok(), withoutSplit.error().c_str());
+    QVERIFY(withoutSplit.value().has_value());
+    QVERIFY(!withoutSplit.value()->savingSplit.has_value());
+
+    // The columns are NULL for that row, which is what "not broken down" looks
+    // like on disk and what an older release left behind.
+    QSqlQuery nulls{connection()};
+    QVERIFY(nulls.exec(QStringLiteral("SELECT saving_buffer_minor, saving_invest_minor, "
+                                      "saving_amort_minor FROM month_flow "
+                                      "WHERE month = '2026-02'")));
+    QVERIFY(nulls.next());
+    for (int column = 0; column < 3; ++column)
+        QVERIFY(nulls.value(column).isNull());
 
     const application::Result<std::optional<domain::MonthFlow>> missing =
         flows.at(domain::YearMonth{2025, 12});
@@ -459,7 +487,10 @@ void TestRepositories::monthFlowRoundTrip()
     QCOMPARE(recent.value().size(), expectedCount);
     QCOMPARE(QString::fromStdString(recent.value()[0].month.toString()), QStringLiteral("2026-02"));
     QCOMPARE(recent.value()[0].flow.income.minorUnits(), qint64(3100000));
+    QVERIFY(!recent.value()[0].flow.savingSplit.has_value());
     QCOMPARE(QString::fromStdString(recent.value()[1].month.toString()), QStringLiteral("2026-01"));
+    QVERIFY(recent.value()[1].flow.savingSplit.has_value());
+    QCOMPARE(recent.value()[1].flow.savingSplit->toAmortisation.minorUnits(), qint64(200000));
 
     const application::Result<std::vector<application::MonthFlowRecord>> onlyOne = flows.recent(1);
     QVERIFY2(onlyOne.ok(), onlyOne.error().c_str());
@@ -467,18 +498,82 @@ void TestRepositories::monthFlowRoundTrip()
     QCOMPARE(QString::fromStdString(onlyOne.value()[0].month.toString()),
              QStringLiteral("2026-02"));
 
-    // Correcting a month replaces the row.
-    const domain::MonthFlow correctedJanuary = flowOf(3200000, 1500000, 500000, 1200000);
+    // Correcting a month replaces the row, breakdown included.
+    domain::MonthFlow correctedJanuary = flowOf(3200000, 1500000, 500000, 1200000);
+    correctedJanuary.savingSplit = domain::SavingsBreakdown{sek(600000), sek(400000), sek(200000)};
     QVERIFY(flows.upsert(domain::YearMonth{2026, 1}, correctedJanuary).ok());
 
     const application::Result<std::optional<domain::MonthFlow>> recorrected =
         flows.at(domain::YearMonth{2026, 1});
     QVERIFY2(recorrected.ok(), recorrected.error().c_str());
     QCOMPARE(recorrected.value()->income.minorUnits(), qint64(3200000));
+    QCOMPARE(recorrected.value()->savingSplit->toBuffer.minorUnits(), qint64(600000));
+
+    // Re-saving a month without a breakdown clears the three columns, so a
+    // corrected month cannot keep a breakdown nobody stands behind.
+    const domain::MonthFlow noBreakdown = flowOf(3200000, 1500000, 500000, 1200000);
+    QVERIFY(flows.upsert(domain::YearMonth{2026, 1}, noBreakdown).ok());
+    const application::Result<std::optional<domain::MonthFlow>> cleared =
+        flows.at(domain::YearMonth{2026, 1});
+    QVERIFY2(cleared.ok(), cleared.error().c_str());
+    QVERIFY(!cleared.value()->savingSplit.has_value());
 
     const application::Result<std::vector<application::MonthFlowRecord>> stillTwo = flows.recent(5);
     QVERIFY2(stillTwo.ok(), stillTwo.error().c_str());
     QCOMPARE(stillTwo.value().size(), expectedCount);
+}
+
+/// A row where only some of the three columns are filled in is not something
+/// any writer produces. It is reported rather than read as "no breakdown",
+/// because that would drop the parts that are there.
+void TestRepositories::monthFlowWithAPartlyStoredBreakdownIsAnError()
+{
+    QSqlQuery insert{connection()};
+    QVERIFY(insert.exec(
+        QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, "
+                       "saving_minor, currency, saving_buffer_minor) VALUES "
+                       "('2026-03', 3000000, 1500000, 500000, 1000000, 'SEK', 400000)")));
+
+    sqlite::SqliteMonthFlowRepository flows{connection()};
+
+    const application::Result<std::optional<domain::MonthFlow>> at =
+        flows.at(domain::YearMonth{2026, 3});
+    QVERIFY(!at.ok());
+    QVERIFY(at.error().find("2026-03") != std::string::npos);
+    QVERIFY(at.error().find("breakdown") != std::string::npos);
+
+    const application::Result<std::vector<application::MonthFlowRecord>> recent = flows.recent(5);
+    QVERIFY(!recent.ok());
+    QVERIFY(recent.error().find("2026-03") != std::string::npos);
+}
+
+/// The breakdown is a breakdown of the total: a stored one that does not add up
+/// is corrupt data, and reading it back as if it were true would show the
+/// household a split that contradicts its own saving.
+void TestRepositories::monthFlowBreakdownThatDoesNotAddUpIsAnError()
+{
+    QSqlQuery insert{connection()};
+    QVERIFY(insert.exec(
+        QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, "
+                       "saving_minor, currency, saving_buffer_minor, saving_invest_minor, "
+                       "saving_amort_minor) VALUES "
+                       "('2026-04', 3000000, 1500000, 500000, 1000000, 'SEK', 400000, "
+                       "400000, 100000)")));
+
+    sqlite::SqliteMonthFlowRepository flows{connection()};
+
+    const application::Result<std::optional<domain::MonthFlow>> at =
+        flows.at(domain::YearMonth{2026, 4});
+    QVERIFY(!at.ok());
+    QVERIFY(at.error().find("2026-04") != std::string::npos);
+
+    // The write side refuses it too, so the application cannot store the lie in
+    // the first place.
+    domain::MonthFlow broken = flowOf(3000000, 1500000, 500000, 1000000);
+    broken.savingSplit = domain::SavingsBreakdown{sek(400000), sek(400000), sek(100000)};
+    const application::Status saved = flows.upsert(domain::YearMonth{2026, 5}, broken);
+    QVERIFY(!saved.ok());
+    QVERIFY(saved.error().find("breakdown") != std::string::npos);
 }
 
 void TestRepositories::monthFlowCurrencyMismatchIsAnError()

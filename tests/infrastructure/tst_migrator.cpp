@@ -11,6 +11,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <array>
+#include <cstddef>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 1;
+constexpr int kExpectedVersion = 2;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -39,6 +41,25 @@ int tableCount(QSqlDatabase& connection, const char* name)
         return -1;
     return query.value(0).toInt();
 }
+
+bool hasColumn(QSqlDatabase& connection, const char* table, const char* column)
+{
+    QSqlQuery query{connection};
+    if (!query.exec(QStringLiteral("PRAGMA table_info(%1)").arg(QString::fromUtf8(table))))
+        return false;
+    while (query.next()) {
+        if (query.value(1).toString() == QString::fromUtf8(column))
+            return true;
+    }
+    return false;
+}
+
+/// The three columns migration 2 adds, in table order.
+constexpr std::array<const char*, 3> kSavingBreakdownColumns{
+    "saving_buffer_minor",
+    "saving_invest_minor",
+    "saving_amort_minor",
+};
 
 /// A migration that is allowed to run.
 application::Status createProbeTable(QSqlDatabase& database)
@@ -66,6 +87,7 @@ class TestMigrator : public QObject {
 
 private slots:
     void freshFileMigratesToTheExpectedVersion();
+    void versionOneUpgradesAndKeepsItsRows();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
@@ -93,6 +115,74 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
 
     for (const char* table : kTables)
         QCOMPARE(tableCount(connection, table), 1);
+
+    // The saving breakdown arrived in version 2 and is part of a fresh file.
+    for (const char* column : kSavingBreakdownColumns)
+        QVERIFY(hasColumn(connection, "month_flow", column));
+}
+
+/// A file written by the release that only knew schema version 1 has months in
+/// it. Upgrading must add the breakdown columns and leave those rows exactly as
+/// they were, with NULL where the breakdown would go.
+void TestMigrator::versionOneUpgradesAndKeepsItsRows()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{2});
+    const std::span<const sqlite::Migration> versionOneOnly{migrations.data(), 1};
+
+    const application::Result<int> atOne = sqlite::applyMigrations(connection, versionOneOnly);
+    QVERIFY2(atOne.ok(), atOne.error().c_str());
+    QCOMPARE(atOne.value(), 1);
+
+    // Schemas before version 2 have no breakdown columns at all.
+    for (const char* column : kSavingBreakdownColumns)
+        QVERIFY(!hasColumn(connection, "month_flow", column));
+
+    QSqlQuery insert{connection};
+    QVERIFY(insert.exec(QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, "
+                                       "wants_minor, saving_minor, currency) VALUES "
+                                       "('2026-01', 3000000, 1500000, 500000, 1000000, 'SEK')")));
+
+    const application::Result<int> atTwo = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atTwo.ok(), atTwo.error().c_str());
+    QCOMPARE(atTwo.value(), kExpectedVersion);
+
+    const application::Result<int> stored = sqlite::schemaVersion(connection);
+    QVERIFY2(stored.ok(), stored.error().c_str());
+    QCOMPARE(stored.value(), kExpectedVersion);
+
+    for (const char* column : kSavingBreakdownColumns)
+        QVERIFY(hasColumn(connection, "month_flow", column));
+
+    // The month survived the upgrade, and its breakdown is absent rather than
+    // zero: the household never recorded one.
+    QSqlQuery select{connection};
+    QVERIFY(select.exec(QStringLiteral("SELECT income_minor, needs_minor, wants_minor, "
+                                       "saving_minor, currency, saving_buffer_minor, "
+                                       "saving_invest_minor, saving_amort_minor "
+                                       "FROM month_flow WHERE month = '2026-01'")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toLongLong(), qint64(3000000));
+    QCOMPARE(select.value(1).toLongLong(), qint64(1500000));
+    QCOMPARE(select.value(2).toLongLong(), qint64(500000));
+    QCOMPARE(select.value(3).toLongLong(), qint64(1000000));
+    QCOMPARE(select.value(4).toString(), QStringLiteral("SEK"));
+    for (int column = 5; column < 8; ++column)
+        QVERIFY(select.value(column).isNull());
+
+    // And running the migrator again is still a no-op on the upgraded file.
+    const application::Result<int> again = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(again.ok(), again.error().c_str());
+    QCOMPARE(again.value(), kExpectedVersion);
+    QVERIFY(hasColumn(connection, "month_flow", "saving_buffer_minor"));
 }
 
 void TestMigrator::migratingTwiceChangesNothing()
@@ -142,8 +232,8 @@ void TestMigrator::newerSchemaIsRefused()
 
     const application::Status migrated = database.migrate();
     QVERIFY(!migrated.ok());
+    QVERIFY(migrated.error().find("version 3") != std::string::npos);
     QVERIFY(migrated.error().find("version 2") != std::string::npos);
-    QVERIFY(migrated.error().find("version 1") != std::string::npos);
     QVERIFY(migrated.error().find("newer hinkwise") != std::string::npos);
 
     // Refusing is not the same as downgrading: the file is left exactly as the

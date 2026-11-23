@@ -88,6 +88,8 @@ class TestMetrics : public QObject {
 private slots:
     void expensesAreNeedsPlusWants();
     void incomeSplitsIntoNeedsWantsAndSaving();
+    void savingSplitIsBrokenDownAsSharesOfSaving();
+    void savingSharesAreZeroWithoutABreakdown();
     void bufferMonthsCountsMonthsOfExpenses();
     void bufferCoverageComparesAgainstTheTargetPoint();
     void bufferCoverageIsZeroWithoutAPositiveTargetPoint();
@@ -124,6 +126,49 @@ void TestMetrics::incomeSplitsIntoNeedsWantsAndSaving()
     QCOMPARE(bps(metrics.wantsShare), 3000);
     QCOMPARE(bps(metrics.savingShare), 2000);
     QCOMPARE(bps(metrics.savingsRate), 2000);
+}
+
+void TestMetrics::savingSplitIsBrokenDownAsSharesOfSaving()
+{
+    HouseholdFacts facts = workedHousehold();
+    // 6 000 kr of saving: 2 400 to the buffer, 2 400 to investing and 1 200 to
+    // amortisation.
+    facts.flow.savingSplit = SavingsBreakdown{sek(240000), sek(240000), sek(120000)};
+
+    const Metrics metrics = computeMetrics(facts);
+
+    QCOMPARE(bps(metrics.bufferShareOfSaving), 4000);
+    QCOMPARE(bps(metrics.investingShareOfSaving), 4000);
+    QCOMPARE(bps(metrics.amortisationShareOfSaving), 2000);
+
+    // The total stays authoritative: the savings rate is still saving over
+    // income with amortisation included, and breaking it down does not move it.
+    QCOMPARE(bps(metrics.savingsRate), 2000);
+    QCOMPARE(bps(metrics.savingShare), 2000);
+}
+
+void TestMetrics::savingSharesAreZeroWithoutABreakdown()
+{
+    // A month that recorded only its total says nothing about where the money
+    // went, so none of the three shares is guessed.
+    const Metrics metrics = computeMetrics(workedHousehold());
+
+    QCOMPARE(bps(metrics.bufferShareOfSaving), 0);
+    QCOMPARE(bps(metrics.investingShareOfSaving), 0);
+    QCOMPARE(bps(metrics.amortisationShareOfSaving), 0);
+    // The figures that only need the total are unaffected.
+    QCOMPARE(bps(metrics.savingsRate), 2000);
+
+    // A breakdown of nothing has no denominator either.
+    HouseholdFacts facts = workedHousehold();
+    facts.flow.saving = sek(0);
+    facts.flow.savingSplit = SavingsBreakdown{sek(0), sek(0), sek(0)};
+
+    const Metrics noSaving = computeMetrics(facts);
+    QCOMPARE(bps(noSaving.bufferShareOfSaving), 0);
+    QCOMPARE(bps(noSaving.investingShareOfSaving), 0);
+    QCOMPARE(bps(noSaving.amortisationShareOfSaving), 0);
+    QCOMPARE(bps(noSaving.savingsRate), 0);
 }
 
 void TestMetrics::bufferMonthsCountsMonthsOfExpenses()

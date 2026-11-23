@@ -14,6 +14,7 @@
 #include "infrastructure/json/backup.h"
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -77,7 +78,16 @@ json::BackupData fullyPopulated()
     flow.needs = sek(1500000);
     flow.wants = sek(500000);
     flow.saving = sek(1000000);
-    data.monthFlows = {application::MonthFlowRecord{domain::YearMonth{2026, 1}, flow}};
+    // January records where the saving went; February records only its total,
+    // which is what a month written before the breakdown looks like.
+    flow.savingSplit = domain::SavingsBreakdown{sek(400000), sek(400000), sek(200000)};
+    domain::MonthFlow totalOnly;
+    totalOnly.income = sek(3100000);
+    totalOnly.needs = sek(1400000);
+    totalOnly.wants = sek(600000);
+    totalOnly.saving = sek(1100000);
+    data.monthFlows = {application::MonthFlowRecord{domain::YearMonth{2026, 1}, flow},
+                       application::MonthFlowRecord{domain::YearMonth{2026, 2}, totalOnly}};
 
     data.phaseHistory = {
         application::PhaseChange{"2026-01-31T12:00:00Z", domain::Phase::GettingStarted},
@@ -111,6 +121,8 @@ private slots:
     void rejectsMissingField();
     void rejectsUnknownEnumText();
     void rejectsWronglyTypedField();
+    void acceptsAFlowWrittenBeforeTheBreakdownExisted();
+    void rejectsABreakdownThatDoesNotAddUp();
 };
 
 void TestBackup::roundTripIsLossless()
@@ -163,9 +175,20 @@ void TestBackup::roundTripIsLossless()
     QCOMPARE(data.liabilityBalances.size(), std::size_t(1));
     QCOMPARE(data.liabilityBalances[0].points[0].amount.minorUnits(), qint64(250000000));
 
-    QCOMPARE(data.monthFlows.size(), std::size_t(1));
+    QCOMPARE(data.monthFlows.size(), std::size_t(2));
     QCOMPARE(data.monthFlows[0].flow.income.minorUnits(), qint64(3000000));
     QCOMPARE(data.monthFlows[0].flow.saving.minorUnits(), qint64(1000000));
+    QVERIFY(data.monthFlows[0].flow.savingSplit.has_value());
+    QCOMPARE(data.monthFlows[0].flow.savingSplit->toBuffer.minorUnits(), qint64(400000));
+    QCOMPARE(data.monthFlows[0].flow.savingSplit->toInvesting.minorUnits(), qint64(400000));
+    QCOMPARE(data.monthFlows[0].flow.savingSplit->toAmortisation.minorUnits(), qint64(200000));
+    QCOMPARE(static_cast<int>(data.monthFlows[0].flow.savingSplit->toBuffer.currency()),
+             static_cast<int>(domain::Currency::Sek));
+
+    // The month that recorded only its total comes back with no breakdown, and
+    // writing it again leaves the document without the key.
+    QVERIFY(!data.monthFlows[1].flow.savingSplit.has_value());
+    QCOMPARE(data.monthFlows[1].flow.saving.minorUnits(), qint64(1100000));
 
     QCOMPARE(data.phaseHistory.size(), std::size_t(2));
     QCOMPARE(QString::fromStdString(data.phaseHistory[1].changedAt),
@@ -264,6 +287,47 @@ void TestBackup::rejectsWronglyTypedField()
     const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("riskToleranceBp") != std::string::npos);
+}
+
+void TestBackup::acceptsAFlowWrittenBeforeTheBreakdownExisted()
+{
+    // A backup from the release before the breakdown has no 'savingSplit' key.
+    // The month is still a month: absence means the total is all that was
+    // recorded, not that the file is broken.
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray flows = root.value(QStringLiteral("monthFlows")).toArray();
+    QJsonObject january = flows.at(0).toObject();
+    january.remove(QStringLiteral("savingSplit"));
+    flows.replace(0, january);
+    root.insert(QStringLiteral("monthFlows"), flows);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(parsed.value().monthFlows.size(), std::size_t(2));
+    QCOMPARE(parsed.value().monthFlows[0].flow.saving.minorUnits(), qint64(1000000));
+    QVERIFY(!parsed.value().monthFlows[0].flow.savingSplit.has_value());
+}
+
+void TestBackup::rejectsABreakdownThatDoesNotAddUp()
+{
+    // 4 000 + 4 000 + 1 000 kr is not the 10 000 kr saved in January. The file
+    // was edited, and guessing which figure to trust would invent one.
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray flows = root.value(QStringLiteral("monthFlows")).toArray();
+    QJsonObject january = flows.at(0).toObject();
+    QJsonObject split = january.value(QStringLiteral("savingSplit")).toObject();
+    QJsonObject amortisation = split.value(QStringLiteral("amortisation")).toObject();
+    amortisation.insert(QStringLiteral("minor"), 100000);
+    split.insert(QStringLiteral("amortisation"), amortisation);
+    january.insert(QStringLiteral("savingSplit"), split);
+    flows.replace(0, january);
+    root.insert(QStringLiteral("monthFlows"), flows);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY(!parsed.ok());
+    // The message has to say which month is wrong.
+    QVERIFY(parsed.error().find("2026-01") != std::string::npos);
+    QVERIFY(parsed.error().find("breakdown") != std::string::npos);
 }
 
 QTEST_APPLESS_MAIN(TestBackup)

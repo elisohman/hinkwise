@@ -61,6 +61,15 @@ Metrics computeMetrics(const HouseholdFacts& facts)
     metrics.savingShare = ratioOf(flow.saving, flow.income);
     metrics.savingsRate = ratioOf(flow.saving, flow.income);
 
+    // The same saving figure, broken down. A month with no breakdown says
+    // nothing about where the money went, so the three shares stay zero rather
+    // than pretending the whole saving went to one place.
+    if (flow.savingSplit) {
+        metrics.bufferShareOfSaving = ratioOf(flow.savingSplit->toBuffer, flow.saving);
+        metrics.investingShareOfSaving = ratioOf(flow.savingSplit->toInvesting, flow.saving);
+        metrics.amortisationShareOfSaving = ratioOf(flow.savingSplit->toAmortisation, flow.saving);
+    }
+
     metrics.bufferMonths = ratioOf(balanceOf(sheet, Bucket::Buffer), metrics.monthlyExpenses);
 
     // Only a bucket the model actually sizes has a point to cover; an optional

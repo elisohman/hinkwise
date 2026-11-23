@@ -32,6 +32,14 @@ struct Metrics {
     Percentage savingShare{};
     Percentage savingsRate{};
 
+    /// Where the month's saving went, each as a share of that saving. All three
+    /// are zero when the month records no breakdown, and when saving is zero
+    /// there is no share to compute. savingsRate keeps its own meaning: total
+    /// saving over income, amortisation included.
+    Percentage bufferShareOfSaving{};
+    Percentage investingShareOfSaving{};
+    Percentage amortisationShareOfSaving{};
+
     Percentage bufferMonths{};
     /// Buffer balance divided by the buffer target's chosen point.
     Percentage bufferCoverage{};

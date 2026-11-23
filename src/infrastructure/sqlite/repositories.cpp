@@ -11,6 +11,8 @@
 #include <QString>
 #include <QVariant>
 #include <QVariantList>
+#include <array>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -174,27 +176,36 @@ constexpr const char* kUpsertDebtBalance = R"(
 )";
 
 constexpr const char* kSelectMonthFlow = R"(
-    SELECT income_minor, needs_minor, wants_minor, saving_minor, currency
+    SELECT income_minor, needs_minor, wants_minor, saving_minor, currency,
+           saving_buffer_minor, saving_invest_minor, saving_amort_minor
     FROM month_flow
     WHERE month = ?
 )";
 
 constexpr const char* kSelectRecentMonthFlows = R"(
-    SELECT month, income_minor, needs_minor, wants_minor, saving_minor, currency
+    SELECT month, income_minor, needs_minor, wants_minor, saving_minor, currency,
+           saving_buffer_minor, saving_invest_minor, saving_amort_minor
     FROM month_flow
     ORDER BY month DESC
     LIMIT ?
 )";
 
+// The saving breakdown is three nullable columns: all NULL is a month with no
+// recorded breakdown, and the repository refuses a row where only some are
+// NULL. An absent breakdown is written back as NULL rather than as zeroes.
 constexpr const char* kUpsertMonthFlow = R"(
-    INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, saving_minor, currency)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, saving_minor, currency,
+                            saving_buffer_minor, saving_invest_minor, saving_amort_minor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (month) DO UPDATE SET
         income_minor = excluded.income_minor,
         needs_minor = excluded.needs_minor,
         wants_minor = excluded.wants_minor,
         saving_minor = excluded.saving_minor,
-        currency = excluded.currency
+        currency = excluded.currency,
+        saving_buffer_minor = excluded.saving_buffer_minor,
+        saving_invest_minor = excluded.saving_invest_minor,
+        saving_amort_minor = excluded.saving_amort_minor
 )";
 
 constexpr const char* kSelectPhaseHistory = R"(
@@ -332,6 +343,32 @@ application::Result<domain::MonthFlow> decodeFlow(const Statement& row, int firs
     flow.needs = domain::Money{row.value(firstColumn + 1).toLongLong(), currency.value()};
     flow.wants = domain::Money{row.value(firstColumn + 2).toLongLong(), currency.value()};
     flow.saving = domain::Money{row.value(firstColumn + 3).toLongLong(), currency.value()};
+
+    const QVariant bufferColumn = row.value(firstColumn + 5);
+    const QVariant investColumn = row.value(firstColumn + 6);
+    const QVariant amortColumn = row.value(firstColumn + 7);
+    const int storedParts = (bufferColumn.isNull() ? 0 : 1) + (investColumn.isNull() ? 0 : 1) +
+                            (amortColumn.isNull() ? 0 : 1);
+
+    if (storedParts == 3) {
+        flow.savingSplit = domain::SavingsBreakdown{
+            domain::Money{bufferColumn.toLongLong(), currency.value()},
+            domain::Money{investColumn.toLongLong(), currency.value()},
+            domain::Money{amortColumn.toLongLong(), currency.value()},
+        };
+        if (!domain::savingSplitMatchesTotal(flow))
+            return application::Result<domain::MonthFlow>::err(
+                context + ": the saving breakdown adds up to " +
+                flow.savingSplit->total().toString() + " but saving is " + flow.saving.toString());
+    } else if (storedParts != 0) {
+        // Some of the three columns are filled in and some are not: no writer
+        // produces this, so the row was hand-edited or half written. Reading it
+        // as "no breakdown" would throw away the parts that are there.
+        return application::Result<domain::MonthFlow>::err(
+            context + ": saving breakdown is stored for only some of its parts; buffer, "
+                      "investing and amortisation are either all recorded or all absent");
+    }
+
     return application::Result<domain::MonthFlow>::ok(flow);
 }
 
@@ -836,13 +873,40 @@ SqliteMonthFlowRepository::recent(int count) const
 application::Status SqliteMonthFlowRepository::upsert(domain::YearMonth month,
                                                       const domain::MonthFlow& flow)
 {
+    const std::string context = "save month flow " + month.toString();
     const domain::Currency currency = flow.income.currency();
-    for (const domain::Money* amount : {&flow.needs, &flow.wants, &flow.saving}) {
-        if (amount->currency() != currency)
-            return application::Status::err("save month flow " + month.toString() +
-                                            ": income is in " + domain::storageKey(currency) +
-                                            " but another amount is in " +
-                                            domain::storageKey(amount->currency()));
+
+    std::array<const domain::Money*, 6> amounts{&flow.needs, &flow.wants, &flow.saving};
+    std::size_t amountCount = 3;
+    if (flow.savingSplit) {
+        amounts[3] = &flow.savingSplit->toBuffer;
+        amounts[4] = &flow.savingSplit->toInvesting;
+        amounts[5] = &flow.savingSplit->toAmortisation;
+        amountCount = amounts.size();
+    }
+
+    for (std::size_t i = 0; i < amountCount; ++i) {
+        const domain::Money& amount = *amounts[i];
+        if (amount.currency() != currency)
+            return application::Status::err(
+                context + ": income is in " + domain::storageKey(currency) +
+                " but another amount is in " + domain::storageKey(amount.currency()));
+    }
+
+    // The split is a breakdown of `saving`, so a split that does not add up to
+    // it is refused here rather than stored and refused on the next read.
+    if (!domain::savingSplitMatchesTotal(flow))
+        return application::Status::err(context + ": the saving breakdown adds up to " +
+                                        flow.savingSplit->total().toString() + " but saving is " +
+                                        flow.saving.toString());
+
+    QVariant buffer;
+    QVariant investing;
+    QVariant amortisation;
+    if (flow.savingSplit) {
+        buffer = static_cast<qint64>(flow.savingSplit->toBuffer.minorUnits());
+        investing = static_cast<qint64>(flow.savingSplit->toInvesting.minorUnits());
+        amortisation = static_cast<qint64>(flow.savingSplit->toAmortisation.minorUnits());
     }
 
     return Statement{m_connection, kUpsertMonthFlow, "save month flow"}.exec({
@@ -852,6 +916,9 @@ application::Status SqliteMonthFlowRepository::upsert(domain::YearMonth month,
         static_cast<qint64>(flow.wants.minorUnits()),
         static_cast<qint64>(flow.saving.minorUnits()),
         QString::fromUtf8(domain::storageKey(currency)),
+        buffer,
+        investing,
+        amortisation,
     });
 }
 
