@@ -17,6 +17,7 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 
 namespace hinkwise::presentation {
 
@@ -113,6 +114,21 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_baseInput.annualExpenses = snapshot.metrics.annualExpenses;
     m_baseInput.fiTarget = snapshot.metrics.fiTargetDefault;
     m_baseInput.years = kHorizonYears;
+
+    // Debt starts at everything the balance sheet says is owed and falls by
+    // what the household records paying off each month, annualised. The
+    // property's value is not in the buckets, so its market value never moves
+    // here: the loan is the only part of the equity that does. With no split
+    // the household has not said how much goes to the loan, and the plan says
+    // that instead of drawing a mortgage that never falls.
+    m_baseInput.startingDebt = snapshot.facts.sheet.totalLiabilities.currency() == m_currency
+                                   ? snapshot.facts.sheet.totalLiabilities
+                                   : domain::Money::zero(m_currency);
+    const std::optional<domain::SavingsBreakdown>& split = snapshot.facts.flow.savingSplit;
+    m_baseInput.annualAmortisation =
+        split.has_value() && split->toAmortisation.currency() == m_currency
+            ? split->toAmortisation.scaledBy(domain::Percentage::fromBasisPoints(kMonthsPerYear))
+            : domain::Money::zero(m_currency);
     for (const domain::Bucket bucket : domain::allBuckets()) {
         const std::size_t index = static_cast<std::size_t>(bucket);
         m_baseInput.expectedRealReturn[index] = returnUsedFor(bucket);
@@ -200,6 +216,18 @@ void PlanViewModel::recompute()
                         {QStringLiteral("label"), QString::number(currentYear + offset)}});
     }
 
+    m_debtSeries.clear();
+    for (const ProjectionPoint& point : shown.debt) {
+        m_debtSeries.append(QVariantMap{{QStringLiteral("x"), point.yearRatio},
+                                        {QStringLiteral("y"), point.ratio}});
+    }
+    m_netWorthSeries.clear();
+    for (const ProjectionPoint& point : shown.netWorth) {
+        m_netWorthSeries.append(QVariantMap{{QStringLiteral("x"), point.yearRatio},
+                                            {QStringLiteral("y"), point.ratio}});
+    }
+    m_zeroLineRatio = shown.zeroRatio;
+
     m_hasTargetLine = shown.valid && shown.hasTarget;
     m_targetLineRatio = shown.targetRatio;
     m_hasFiMarker = shown.valid && shown.yearsToTarget >= 0;
@@ -222,6 +250,26 @@ void PlanViewModel::recompute()
     m_baseYearLabel = yearLabel(baseSeries.yearsToTarget);
     m_extraYearsLabel = extraSavingActive() ? yearsLabel(askedSeries.yearsToTarget) : QString{};
     m_extraYearLabel = extraSavingActive() ? yearLabel(askedSeries.yearsToTarget) : QString{};
+
+    m_hasDebt = shown.hasDebt;
+    m_debtWithoutAmortisation = m_hasDebt && !m_baseInput.annualAmortisation.isPositive();
+    m_debtTodayLabel = shown.debt.isEmpty() ? QString{} : formatMoney(shown.debt.front().value);
+    m_debtFreeLabel.clear();
+    if (m_hasDebt && !m_debtWithoutAmortisation) {
+        if (baseSeries.yearsToDebtFree < 0)
+            m_debtFreeLabel = tr("Not within %1 years").arg(kHorizonYears);
+        else if (baseSeries.yearsToDebtFree == 0)
+            m_debtFreeLabel = tr("Today");
+        else
+            m_debtFreeLabel = QString::number(currentYear + baseSeries.yearsToDebtFree);
+    }
+    m_netWorthEndLabel =
+        shown.netWorth.isEmpty() ? QString{} : formatMoney(shown.netWorth.back().value);
+    m_amortisationNote =
+        m_debtWithoutAmortisation
+            ? tr("No amortisation is recorded, so the debt does not fall in this projection. "
+                 "Record what you pay off the loan on the cashflow page.")
+            : QString{};
 
     m_fiDeltaLabel.clear();
     if (extraSavingActive() && m_fiTargetKnown) {

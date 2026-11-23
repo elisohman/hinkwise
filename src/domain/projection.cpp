@@ -41,12 +41,28 @@ Money sumOf(const std::array<Money, 4>& balances)
     return total;
 }
 
-/// Fills the derived figures of a row: the total and the two ratios the model
-/// headlines. Called for every row, so today is measured the same way as any
-/// projected year.
+/// One year of repayment. A zero or negative amortisation is what a household
+/// that has recorded none looks like to the model, so it leaves the debt flat
+/// rather than growing it. The debt never falls below zero: the last payment
+/// clears the loan, it does not turn the household into a lender.
+Money afterOneYearsAmortisation(const Money& debt, const Money& annualAmortisation)
+{
+    if (!annualAmortisation.isPositive() || !debt.isPositive())
+        return debt;
+    if (debt <= annualAmortisation)
+        return Money::zero(debt.currency());
+    return debt - annualAmortisation;
+}
+
+/// Fills the derived figures of a row: the total, the debt and the two ratios
+/// the model headlines. Called for every row, so today is measured the same way
+/// as any projected year. Net worth is the total minus the debt; the ratios
+/// deliberately still read the total alone, because a mortgage does not make
+/// investable capital last longer.
 void fillDerived(ProjectionYear& year, const ProjectionInput& input)
 {
     year.total = sumOf(year.perBucket);
+    year.netWorth = year.total - year.debt;
     year.yearsOfFreedom = ratioOf(year.total, input.annualExpenses);
     year.fiProgress = ratioOf(year.total, input.fiTarget);
 }
@@ -66,6 +82,10 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     ProjectionYear today;
     today.year = 0;
     today.perBucket = input.startingBalances;
+    // A negative balance is not a debt the model can reason about, so today is
+    // floored the same way every later year is.
+    today.debt = input.startingDebt.isNegative() ? Money::zero(input.startingDebt.currency())
+                                                 : input.startingDebt;
     fillDerived(today, input);
     years.push_back(today);
 
@@ -80,6 +100,7 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
             year.perBucket[index] = previous + growth + input.annualContributions[index];
         }
 
+        year.debt = afterOneYearsAmortisation(years.back().debt, input.annualAmortisation);
         fillDerived(year, input);
         years.push_back(year);
     }

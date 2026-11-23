@@ -33,6 +33,10 @@ Item {
         property var bands: []
         property var yLabels: []
         property var xLabels: []
+        property var debtSeries: []
+        property var netWorthSeries: []
+        property bool hasDebt: false
+        property real zeroRatio: 0
         property bool hasTarget: false
         property real targetRatio: 0
         property bool hasMarker: false
@@ -40,6 +44,15 @@ Item {
         property string markerLabel: ""
 
         implicitHeight: 240
+
+        function seriesLine(points) {
+            var result = [];
+            for (var index = 0; index < points.length; ++index) {
+                result.push(Qt.point(points[index].x * plot.width,
+                                     (1 - points[index].y) * plot.height));
+            }
+            return result;
+        }
 
         function topLine(key) {
             var result = [];
@@ -57,7 +70,10 @@ Item {
                                      (1 - chart.bands[index][topKey]) * plot.height));
             }
             for (var back = chart.bands.length - 1; back >= 0; --back) {
-                var floor = bottomKey.length === 0 ? 0 : chart.bands[back][bottomKey];
+                // The lowest band sits on zero, not on the rim: when the axis
+                // reaches below zero the rim is a negative figure.
+                var floor = bottomKey.length === 0 ? chart.zeroRatio
+                                                   : chart.bands[back][bottomKey];
                 result.push(Qt.point(chart.bands[back].x * plot.width,
                                      (1 - floor) * plot.height));
             }
@@ -152,6 +168,54 @@ Item {
                         path: chart.topLine("playTop")
                     }
                 }
+            }
+
+            // The loan falling, dashed so it reads as a balance being paid off
+            // rather than as a fifth bucket. Net worth is where the total ends
+            // up once the debt is subtracted, so the crossing says more than
+            // either line alone.
+            Shape {
+                anchors.fill: parent
+                visible: chart.hasDebt && chart.debtSeries.length > 1
+
+                ShapePath {
+                    fillColor: "transparent"
+                    strokeColor: Theme.danger
+                    strokeWidth: 1.5
+                    strokeStyle: ShapePath.DashLine
+                    dashPattern: [5, 4]
+
+                    PathPolyline {
+                        path: chart.seriesLine(chart.debtSeries)
+                    }
+                }
+            }
+
+            Shape {
+                anchors.fill: parent
+                visible: chart.hasDebt && chart.netWorthSeries.length > 1
+
+                ShapePath {
+                    fillColor: "transparent"
+                    strokeColor: Theme.textPrimary
+                    strokeWidth: 1.5
+
+                    PathPolyline {
+                        path: chart.seriesLine(chart.netWorthSeries)
+                    }
+                }
+            }
+
+            // Zero stays marked when the axis reaches below it: without this
+            // line a negative net worth would look like a small positive one.
+            Rectangle {
+                visible: chart.hasDebt && chart.zeroRatio > 0
+                x: 0
+                y: (1 - chart.zeroRatio) * plot.height
+                width: plot.width
+                height: 1
+                color: Theme.textMuted
+                opacity: 0.6
             }
 
             Rectangle {
@@ -511,11 +575,67 @@ Item {
                                     bands: plan.projectionBands
                                     yLabels: plan.projectionYLabels
                                     xLabels: plan.projectionXLabels
+                                    debtSeries: plan.debtSeries
+                                    netWorthSeries: plan.netWorthSeries
+                                    hasDebt: plan.hasDebt
+                                    zeroRatio: plan.zeroLineRatio
                                     hasTarget: plan.hasTargetLine
                                     targetRatio: plan.targetLineRatio
                                     hasMarker: plan.hasFiMarker
                                     markerRatio: plan.fiMarkerRatio
                                     markerLabel: plan.fiMarkerLabel
+                                }
+
+                                // The debt in one line: what is owed today, when the
+                                // recorded amortisation clears it, and what is left at
+                                // the end once it is subtracted.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: plan.hasDebt
+                                    spacing: Theme.spaceLg
+
+                                    StatBlock {
+                                        Layout.fillWidth: true
+                                        label: qsTr("Debt today")
+                                        value: plan.debtTodayLabel
+                                        note: qsTr("Everything the balance sheet says is owed")
+                                    }
+
+                                    StatBlock {
+                                        Layout.fillWidth: true
+                                        visible: !plan.debtWithoutAmortisation
+                                        label: qsTr("Debt-free")
+                                        value: plan.debtFreeLabel
+                                        note: qsTr("At the recorded amortisation")
+                                    }
+
+                                    StatBlock {
+                                        Layout.fillWidth: true
+                                        label: qsTr("Net worth at the end")
+                                        value: plan.netWorthEndLabel
+                                        note: qsTr("In %1 years: investable capital minus debt")
+                                                  .arg(plan.horizonYears)
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: plan.debtWithoutAmortisation
+                                    spacing: Theme.spaceMd
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: plan.amortisationNote
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontCaption
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    PrimaryButton {
+                                        text: qsTr("Cashflow")
+                                        filled: false
+                                        onClicked: page.navigateRequested(2)
+                                    }
                                 }
 
                                 RowLayout {
@@ -544,6 +664,40 @@ Item {
                                                 color: Theme.textSecondary
                                                 font.pixelSize: Theme.fontCaption
                                             }
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        visible: plan.hasDebt
+                                        spacing: Theme.spaceXs
+
+                                        Rectangle {
+                                            implicitWidth: 12
+                                            implicitHeight: 2
+                                            color: Theme.danger
+                                        }
+
+                                        Text {
+                                            text: qsTr("Debt")
+                                            color: Theme.textSecondary
+                                            font.pixelSize: Theme.fontCaption
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        visible: plan.hasDebt
+                                        spacing: Theme.spaceXs
+
+                                        Rectangle {
+                                            implicitWidth: 12
+                                            implicitHeight: 2
+                                            color: Theme.textPrimary
+                                        }
+
+                                        Text {
+                                            text: qsTr("Net worth")
+                                            color: Theme.textSecondary
+                                            font.pixelSize: Theme.fontCaption
                                         }
                                     }
 

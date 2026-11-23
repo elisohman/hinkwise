@@ -29,6 +29,16 @@ struct ProjectionTick {
     domain::Money value{};
 };
 
+/// One point of a line that is not a bucket band: where it sits along the
+/// horizon, where it sits on the shared axis, and the amount it stands for, so
+/// the caller only has to format a figure rather than recover one from a
+/// position.
+struct ProjectionPoint {
+    double yearRatio = 0.0;
+    double ratio = 0.0;
+    domain::Money value{};
+};
+
 /// What the projection chart and its markings need from domain::project().
 ///
 /// The yearly steps are the domain's; this only turns them into positions. The
@@ -37,6 +47,11 @@ struct ProjectionTick {
 /// does not reach it within the horizon.
 struct ProjectionSeries {
     QVector<ProjectionBand> bands;
+    /// The debt line and the line it crosses: total minus debt. Both use the
+    /// same axis as the bands, so the year the capital overtakes the loan is a
+    /// crossing on screen and not a figure to compare by eye.
+    QVector<ProjectionPoint> debt;
+    QVector<ProjectionPoint> netWorth;
     QVector<ProjectionTick> yTicks;
     bool hasTarget = false;
     double targetRatio = 0.0;
@@ -44,6 +59,15 @@ struct ProjectionSeries {
     /// horizon or when the household states no target.
     int yearsToTarget = -1;
     double targetYearRatio = 0.0;
+    /// True when the household records debt. The page leaves the debt lines
+    /// out otherwise: a net-worth line on top of the total would say nothing.
+    bool hasDebt = false;
+    /// Year in which the debt is first zero, -1 when never within the horizon
+    /// or when the household records no debt.
+    int yearsToDebtFree = -1;
+    /// Where zero sits on the axis. Above the bottom only when debt outruns
+    /// investable capital, which is where the net-worth line lives.
+    double zeroRatio = 0.0;
     /// False when there is nothing to draw: no years, or every figure is zero.
     bool valid = false;
 };

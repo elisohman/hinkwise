@@ -34,28 +34,45 @@ ProjectionSeries projectionSeriesOf(const domain::ProjectionInput& input)
 
     const domain::Currency currency = years.front().total.currency();
 
-    // The axis covers whichever is higher, the household's own fortune or the
-    // target it is measured against, so the target line is always on screen.
+    // The axis covers whichever is higher, the household's own fortune, the
+    // debt it carries or the target it is measured against, so both the target
+    // line and the falling loan are always on screen. Below zero it reaches
+    // down to the lowest net worth, because a mortgage larger than the
+    // investable capital puts net worth there, and a line drawn off the chart
+    // is not a line the household can read.
     std::int64_t highest = input.fiTarget.minorUnits();
-    for (const domain::ProjectionYear& year : years)
+    std::int64_t lowest = 0;
+    for (const domain::ProjectionYear& year : years) {
         highest = std::max(highest, year.total.minorUnits());
-    const double axis = static_cast<double>(highest) * 1.08;
-    if (axis <= 0.0)
+        highest = std::max(highest, year.debt.minorUnits());
+        lowest = std::min(lowest, year.netWorth.minorUnits());
+    }
+    const double top = static_cast<double>(highest) * 1.08;
+    const double bottom = lowest < 0 ? static_cast<double>(lowest) * 1.08 : 0.0;
+    const double span = top - bottom;
+    if (span <= 0.0)
         return series;
 
     series.valid = true;
+    series.hasDebt = input.startingDebt.isPositive();
+    series.zeroRatio = -bottom / span;
+    const auto ratioOfAmount = [&](const domain::Money& amount) {
+        return std::clamp((static_cast<double>(amount.minorUnits()) - bottom) / span, 0.0, 1.0);
+    };
+
     series.hasTarget = input.fiTarget.isPositive();
-    series.targetRatio =
-        series.hasTarget ? static_cast<double>(input.fiTarget.minorUnits()) / axis : 0.0;
+    series.targetRatio = series.hasTarget ? ratioOfAmount(input.fiTarget) : 0.0;
 
     series.yTicks.reserve(kTickCount);
     for (int tick = 0; tick < kTickCount; ++tick) {
         const double ratio = static_cast<double>(tick) / (kTickCount - 1);
-        series.yTicks.append(ProjectionTick{ratio, tickValue(axis * ratio, currency)});
+        series.yTicks.append(ProjectionTick{ratio, tickValue(bottom + span * ratio, currency)});
     }
 
     const int horizon = static_cast<int>(years.size()) - 1;
     series.bands.reserve(years.size());
+    series.debt.reserve(years.size());
+    series.netWorth.reserve(years.size());
     for (const domain::ProjectionYear& year : years) {
         ProjectionBand band;
         band.yearRatio = horizon > 0 ? static_cast<double>(year.year) / horizon : 0.0;
@@ -63,15 +80,22 @@ ProjectionSeries projectionSeriesOf(const domain::ProjectionInput& input)
         // The tops are cumulative, so the band a delegate fills is the space
         // between two of them and the sum of all four is the total line.
         std::int64_t stacked = 0;
-        const auto top = [&](domain::Bucket bucket) {
+        const auto stackedTop = [&](domain::Bucket bucket) {
             stacked += year.perBucket[static_cast<std::size_t>(bucket)].minorUnits();
-            return std::clamp(static_cast<double>(stacked) / axis, 0.0, 1.0);
+            return std::clamp((static_cast<double>(stacked) - bottom) / span, 0.0, 1.0);
         };
-        band.bufferTop = top(domain::Bucket::Buffer);
-        band.preserveTop = top(domain::Bucket::Preserve);
-        band.growthTop = top(domain::Bucket::Growth);
-        band.playTop = top(domain::Bucket::Play);
+        band.bufferTop = stackedTop(domain::Bucket::Buffer);
+        band.preserveTop = stackedTop(domain::Bucket::Preserve);
+        band.growthTop = stackedTop(domain::Bucket::Growth);
+        band.playTop = stackedTop(domain::Bucket::Play);
         series.bands.append(band);
+
+        series.debt.append(ProjectionPoint{band.yearRatio, ratioOfAmount(year.debt), year.debt});
+        series.netWorth.append(
+            ProjectionPoint{band.yearRatio, ratioOfAmount(year.netWorth), year.netWorth});
+
+        if (series.hasDebt && series.yearsToDebtFree < 0 && year.debt.isZero())
+            series.yearsToDebtFree = year.year;
     }
 
     if (series.hasTarget) {

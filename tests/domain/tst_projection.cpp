@@ -68,6 +68,12 @@ private slots:
     void yearsToTargetForAZeroTarget();
     void zeroYearsYieldsTodayOnly();
     void negativeHorizonYieldsTodayOnly();
+    void debtFallsByTheAmortisationAndFloorsAtZero();
+    void aRepaidMortgageReadsZeroFromItsYearOnwards();
+    void amortisationThatIsZeroOrNegativeLeavesDebtFlat();
+    void netWorthIsTheTotalMinusDebt();
+    void debtDoesNotChangeYearsOfFreedom();
+    void noDebtLeavesNetWorthEqualToTheTotal();
 };
 
 void TestProjection::yearZeroIsToday()
@@ -323,6 +329,124 @@ void TestProjection::negativeHorizonYieldsTodayOnly()
 
     QCOMPARE(years.size(), static_cast<std::size_t>(1));
     QCOMPARE(years.front().year, 0);
+}
+
+void TestProjection::debtFallsByTheAmortisationAndFloorsAtZero()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 3;
+    input.startingDebt = sek(2500000);       // 25 000 kr
+    input.annualAmortisation = sek(1000000); // 10 000 kr
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[0].debt), qint64(2500000));
+    QCOMPARE(ore(years[1].debt), qint64(1500000));
+    QCOMPARE(ore(years[2].debt), qint64(500000));
+    // The last payment clears the loan; it does not lend the household money.
+    QCOMPARE(ore(years[3].debt), qint64(0));
+
+    // A negative balance is not a debt the model can reason about either, so
+    // today is floored the same way.
+    ProjectionInput negative = emptyInput();
+    negative.startingDebt = sek(-1000000);
+    QCOMPARE(ore(project(negative).front().debt), qint64(0));
+}
+
+void TestProjection::aRepaidMortgageReadsZeroFromItsYearOnwards()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 5;
+    input.startingDebt = sek(3000000);       // 30 000 kr
+    input.annualAmortisation = sek(1000000); // 10 000 kr a year
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[2].debt), qint64(1000000));
+    for (std::size_t year = 3; year < years.size(); ++year)
+        QCOMPARE(ore(years[year].debt), qint64(0));
+}
+
+void TestProjection::amortisationThatIsZeroOrNegativeLeavesDebtFlat()
+{
+    // No split recorded is zero here, and a negative figure is a broken input:
+    // neither may turn the loan into a growing balance.
+    for (const qint64 amortisation : {qint64(0), qint64(-1000000)}) {
+        ProjectionInput input = emptyInput();
+        input.years = 3;
+        input.startingDebt = sek(5000000); // 50 000 kr
+        input.annualAmortisation = sek(amortisation);
+
+        const std::vector<ProjectionYear> years = project(input);
+
+        for (const ProjectionYear& year : years)
+            QCOMPARE(ore(year.debt), qint64(5000000));
+    }
+}
+
+void TestProjection::netWorthIsTheTotalMinusDebt()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000); // 100 000 kr
+    input.annualContributions[indexOf(Bucket::Growth)] = sek(1000000);
+    input.startingDebt = sek(4000000);      // 40 000 kr
+    input.annualAmortisation = sek(500000); // 5 000 kr a year
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    for (const ProjectionYear& year : years)
+        QCOMPARE(ore(year.netWorth), ore(year.total) - ore(year.debt));
+
+    QCOMPARE(ore(years.front().netWorth), qint64(6000000));
+    // 100 000 + 10 000 twice, less the 30 000 still owed in year two.
+    QCOMPARE(ore(years[2].total), qint64(12000000));
+    QCOMPARE(ore(years[2].debt), qint64(3000000));
+    QCOMPARE(ore(years[2].netWorth), qint64(9000000));
+}
+
+void TestProjection::debtDoesNotChangeYearsOfFreedom()
+{
+    ProjectionInput borrowed = emptyInput();
+    borrowed.years = 2;
+    borrowed.startingBalances[indexOf(Bucket::Growth)] = sek(50000000); // 500 000 kr
+    borrowed.annualExpenses = sek(25000000);
+    borrowed.fiTarget = sek(100000000);
+    borrowed.startingDebt = sek(180000000); // a 1 800 000 kr mortgage
+    borrowed.annualAmortisation = sek(12000000);
+
+    ProjectionInput unencumbered = borrowed;
+    unencumbered.startingDebt = sek(0);
+    unencumbered.annualAmortisation = sek(0);
+
+    const std::vector<ProjectionYear> withDebt = project(borrowed);
+    const std::vector<ProjectionYear> withoutDebt = project(unencumbered);
+
+    QCOMPARE(withDebt.size(), withoutDebt.size());
+    for (std::size_t year = 0; year < withDebt.size(); ++year) {
+        QCOMPARE(bps(withDebt[year].yearsOfFreedom), bps(withoutDebt[year].yearsOfFreedom));
+        QCOMPARE(bps(withDebt[year].fiProgress), bps(withoutDebt[year].fiProgress));
+    }
+    // The same capital is worth more once the loan is smaller, but freedom is
+    // measured on the capital: a mortgage does not make it last longer.
+    QVERIFY(withDebt.back().netWorth < withoutDebt.back().netWorth);
+}
+
+void TestProjection::noDebtLeavesNetWorthEqualToTheTotal()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.startingBalances = {sek(500000), sek(2000000), sek(9000000), sek(300000)};
+    input.expectedRealReturn = {Percentage::fromBasisPoints(-100), Percentage::fromBasisPoints(100),
+                                Percentage::fromBasisPoints(700), Percentage::fromBasisPoints(400)};
+    input.annualContributions = {sek(0), sek(0), sek(2400000), sek(120000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    for (const ProjectionYear& year : years) {
+        QCOMPARE(ore(year.debt), qint64(0));
+        QCOMPARE(ore(year.netWorth), ore(year.total));
+    }
 }
 
 QTEST_APPLESS_MAIN(TestProjection)

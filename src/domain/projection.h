@@ -13,8 +13,8 @@
 namespace hinkwise::domain {
 
 /// What a projection needs: the four buckets as they stand today, what is
-/// added to them each year, and the two yardsticks the model measures progress
-/// against.
+/// added to them each year, the two yardsticks the model measures progress
+/// against, and the debt those buckets sit beside.
 ///
 /// Every return here is REAL. There is no inflation figure to supply and none
 /// is applied, so a projection speaks in today's money throughout and the one
@@ -36,17 +36,31 @@ struct ProjectionInput {
     /// The FI target to measure progress against. May be zero, which means the
     /// household states no target and progress against it is zero.
     Money fiTarget{};
+    /// Total debt today. Zero when the household records none.
+    Money startingDebt{};
+    /// Principal repaid per year. Interest is a separate cost and is NOT
+    /// modelled here: this is the amortisation the household records,
+    /// annualised.
+    Money annualAmortisation{};
     /// Number of yearly steps. A negative value is treated as zero.
     int years = 30;
 };
 
-/// One row of the projection. Year 0 is today: the starting balances, untouched.
+/// One row of the projection. Year 0 is today: the starting balances and the
+/// starting debt, untouched.
 struct ProjectionYear {
     /// 0 is today, 1 is one year from now.
     int year = 0;
     /// Indexed by Bucket.
     std::array<Money, 4> perBucket{};
     Money total{};
+    /// What is left to repay. Falls by the annual amortisation, never below
+    /// zero; a zero or negative amortisation leaves it where it is.
+    Money debt{};
+    /// Total minus debt. The buckets are investable capital only, so this is
+    /// what the household would have left of that capital if it cleared its
+    /// debts.
+    Money netWorth{};
     /// Total over annual expenses; 10 000 bp == one year of freedom.
     Percentage yearsOfFreedom{};
     /// Total over fiTarget; 10 000 bp == fully funded.

@@ -47,6 +47,9 @@ private slots:
     void marksTheYearTheTargetIsReached();
     void hasNoTargetWhenNoneIsStated();
     void refusesToDrawAnEmptyProjection();
+    void carriesTheDebtAndNetWorthAlongTheHorizon();
+    void reachesBelowZeroWhenDebtOutrunsTheCapital();
+    void leavesTheDebtOutWhenNoneIsRecorded();
 };
 
 void TestProjectionSeries::stacksTheBucketsUpOneAxis()
@@ -131,6 +134,85 @@ void TestProjectionSeries::refusesToDrawAnEmptyProjection()
     const ProjectionSeries series = projectionSeriesOf(projection);
     QVERIFY(!series.valid);
     QVERIFY(series.bands.isEmpty());
+}
+
+void TestProjectionSeries::carriesTheDebtAndNetWorthAlongTheHorizon()
+{
+    // 100 000 kr of capital and a 50 000 kr loan repaid at 10 000 kr a year:
+    // the loan is gone in year five, and every year of it is a point on the
+    // same axis as the buckets.
+    domain::ProjectionInput projection = input();
+    projection.startingDebt = sek(5000000);
+    projection.annualAmortisation = sek(1000000);
+
+    const ProjectionSeries series = projectionSeriesOf(projection);
+
+    QVERIFY(series.valid);
+    QVERIFY(series.hasDebt);
+    QCOMPARE(series.debt.size(), series.bands.size());
+    QCOMPARE(series.netWorth.size(), series.bands.size());
+
+    QCOMPARE(series.debt.front().yearRatio, 0.0);
+    QCOMPARE(series.debt.back().yearRatio, 1.0);
+    QCOMPARE(series.debt.front().value.minorUnits(), qint64{5000000});
+    QCOMPARE(series.debt[1].value.minorUnits(), qint64{4000000});
+    QVERIFY(series.debt.front().ratio > series.debt[1].ratio);
+    QCOMPARE(series.debt.back().ratio, 0.0);
+
+    QCOMPARE(series.yearsToDebtFree, 5);
+    // 100 000 kr of capital less today's 50 000 kr loan.
+    QCOMPARE(series.netWorth.front().value.minorUnits(), qint64{5000000});
+    QVERIFY(series.netWorth.back().ratio > series.netWorth.front().ratio);
+    // Nothing sits below zero here, so the axis still starts at the bottom.
+    QCOMPARE(series.zeroRatio, 0.0);
+}
+
+void TestProjectionSeries::reachesBelowZeroWhenDebtOutrunsTheCapital()
+{
+    // A 300 000 kr loan against 100 000 kr of capital: net worth is negative
+    // today, and the line has to be on the chart rather than below its rim.
+    domain::ProjectionInput projection = input();
+    projection.startingDebt = sek(30000000);
+    projection.annualAmortisation = sek(500000);
+
+    const ProjectionSeries series = projectionSeriesOf(projection);
+
+    QVERIFY(series.valid);
+    QVERIFY(series.hasDebt);
+    QVERIFY(series.zeroRatio > 0.0);
+    QVERIFY(series.zeroRatio < 1.0);
+
+    QVERIFY(series.netWorth.front().value.minorUnits() < 0);
+    QVERIFY(series.netWorth.front().ratio < series.zeroRatio);
+    QVERIFY(series.netWorth.front().ratio > 0.0);
+
+    // The loan is the highest figure in the projection and is drawn under the
+    // top of the axis, above the zero line.
+    QVERIFY(series.debt.front().ratio < 1.0);
+    QVERIFY(series.debt.front().ratio > series.zeroRatio);
+    QCOMPARE(series.debt.front().value.minorUnits(), qint64{30000000});
+
+    // Ten years of 5 000 kr does not clear 300 000 kr.
+    QCOMPARE(series.yearsToDebtFree, -1);
+
+    // The ticks start below zero, so the axis labels say where the net-worth
+    // line lives instead of leaving it to be guessed.
+    QVERIFY(series.yTicks.front().value.minorUnits() < 0);
+    QCOMPARE(series.yTicks.front().ratio, 0.0);
+    QCOMPARE(series.yTicks.back().ratio, 1.0);
+}
+
+void TestProjectionSeries::leavesTheDebtOutWhenNoneIsRecorded()
+{
+    const ProjectionSeries series = projectionSeriesOf(input());
+
+    QVERIFY(series.valid);
+    QVERIFY(!series.hasDebt);
+    QCOMPARE(series.yearsToDebtFree, -1);
+    QCOMPARE(series.zeroRatio, 0.0);
+    QCOMPARE(series.debt.front().value.minorUnits(), qint64{0});
+    // With no debt, net worth is the total the bands already draw.
+    QCOMPARE(series.netWorth.front().ratio, series.bands.front().playTop);
 }
 
 QTEST_APPLESS_MAIN(TestProjectionSeries)

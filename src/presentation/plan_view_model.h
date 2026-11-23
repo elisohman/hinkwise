@@ -50,8 +50,19 @@ class PlanViewModel : public QObject {
     Q_PROPERTY(QVariantList projectionBands READ projectionBands NOTIFY changed)
     Q_PROPERTY(QVariantList projectionYLabels READ projectionYLabels NOTIFY changed)
     Q_PROPERTY(QVariantList projectionXLabels READ projectionXLabels NOTIFY changed)
+    Q_PROPERTY(QVariantList debtSeries READ debtSeries NOTIFY changed)
+    Q_PROPERTY(QVariantList netWorthSeries READ netWorthSeries NOTIFY changed)
+    Q_PROPERTY(double zeroLineRatio READ zeroLineRatio NOTIFY changed)
     Q_PROPERTY(QVariantList bucketLegend READ bucketLegend NOTIFY changed)
     Q_PROPERTY(bool chartEmpty READ chartEmpty NOTIFY changed)
+
+    /// The household's debt, and whether the projection can make it fall.
+    Q_PROPERTY(bool hasDebt READ hasDebt NOTIFY changed)
+    Q_PROPERTY(bool debtWithoutAmortisation READ debtWithoutAmortisation NOTIFY changed)
+    Q_PROPERTY(QString debtTodayLabel READ debtTodayLabel NOTIFY changed)
+    Q_PROPERTY(QString debtFreeLabel READ debtFreeLabel NOTIFY changed)
+    Q_PROPERTY(QString netWorthEndLabel READ netWorthEndLabel NOTIFY changed)
+    Q_PROPERTY(QString amortisationNote READ amortisationNote NOTIFY changed)
     Q_PROPERTY(bool hasTargetLine READ hasTargetLine NOTIFY changed)
     Q_PROPERTY(double targetLineRatio READ targetLineRatio NOTIFY changed)
     Q_PROPERTY(bool hasFiMarker READ hasFiMarker NOTIFY changed)
@@ -101,8 +112,17 @@ public:
     QVariantList projectionBands() const { return m_projectionBands; }
     QVariantList projectionYLabels() const { return m_projectionYLabels; }
     QVariantList projectionXLabels() const { return m_projectionXLabels; }
+    QVariantList debtSeries() const { return m_debtSeries; }
+    QVariantList netWorthSeries() const { return m_netWorthSeries; }
+    double zeroLineRatio() const { return m_zeroLineRatio; }
     QVariantList bucketLegend() const { return m_bucketLegend; }
     bool chartEmpty() const { return m_chartEmpty; }
+    bool hasDebt() const { return m_hasDebt; }
+    bool debtWithoutAmortisation() const { return m_debtWithoutAmortisation; }
+    QString debtTodayLabel() const { return m_debtTodayLabel; }
+    QString debtFreeLabel() const { return m_debtFreeLabel; }
+    QString netWorthEndLabel() const { return m_netWorthEndLabel; }
+    QString amortisationNote() const { return m_amortisationNote; }
     bool hasTargetLine() const { return m_hasTargetLine; }
     double targetLineRatio() const { return m_targetLineRatio; }
     bool hasFiMarker() const { return m_hasFiMarker; }
@@ -162,8 +182,17 @@ private:
     QVariantList m_projectionBands;
     QVariantList m_projectionYLabels;
     QVariantList m_projectionXLabels;
+    QVariantList m_debtSeries;
+    QVariantList m_netWorthSeries;
+    double m_zeroLineRatio = 0.0;
     QVariantList m_bucketLegend;
     bool m_chartEmpty = true;
+    bool m_hasDebt = false;
+    bool m_debtWithoutAmortisation = false;
+    QString m_debtTodayLabel;
+    QString m_debtFreeLabel;
+    QString m_netWorthEndLabel;
+    QString m_amortisationNote;
     bool m_hasTargetLine = false;
     double m_targetLineRatio = 0.0;
     bool m_hasFiMarker = false;
