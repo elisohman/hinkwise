@@ -55,20 +55,23 @@ struct ParsedDebtTerms {
     bool ok = false;
     domain::RepaymentStyle style = domain::RepaymentStyle::FixedAmortisation;
     domain::Money payment{};
-    domain::Money fee{};
+    /// MONTHLY, the unit Liability stores: the annual amount read here is
+    /// spread over twelve before it reaches the model.
+    domain::Money monthlyFee{};
     int termMonths = 0;
     QString error;
 };
 
-ParsedDebtTerms readDebtTerms(int styleIndex, const QString& paymentText, const QString& feeText,
-                              const QString& termYearsText, domain::Currency currency)
+ParsedDebtTerms readDebtTerms(int styleIndex, const QString& paymentText,
+                              const QString& annualFeeText, const QString& termYearsText,
+                              domain::Currency currency)
 {
     ParsedDebtTerms terms;
     terms.style = styleIndex == static_cast<int>(domain::RepaymentStyle::Annuity)
                       ? domain::RepaymentStyle::Annuity
                       : domain::RepaymentStyle::FixedAmortisation;
     terms.payment = domain::Money::zero(currency);
-    terms.fee = domain::Money::zero(currency);
+    terms.monthlyFee = domain::Money::zero(currency);
 
     // An unstated amount is zero, which is honest: the model reads a loan's
     // payment to know whether it can fall, and zero means no terms were
@@ -87,13 +90,13 @@ ParsedDebtTerms readDebtTerms(int styleIndex, const QString& paymentText, const 
         return terms;
     }
 
-    if (!feeText.trimmed().isEmpty()) {
-        const MoneyInput parsed = parseMoneyInput(feeText, currency);
+    if (!annualFeeText.trimmed().isEmpty()) {
+        const MoneyInput parsed = parseMoneyInput(annualFeeText, currency);
         if (!parsed.ok) {
             terms.error = parsed.error;
             return terms;
         }
-        terms.fee = parsed.value;
+        terms.monthlyFee = domain::monthlyFeeFromAnnual(parsed.value);
     }
 
     if (!termYearsText.trimmed().isEmpty()) {
@@ -323,16 +326,19 @@ void AccountsViewModel::reload()
         row.name = QString::fromStdString(liability.name);
         row.kindIndex = static_cast<int>(liability.kind);
         row.kindLabel = catalog::liabilityKindLabel(liability.kind);
-        row.rateLabel = formatPercentage(liability.interestRate);
+        row.rateLabel = formatInterestRate(liability.interestRate);
         row.styleIndex = static_cast<int>(liability.style);
-        row.rateText = formatPercentagePlain(liability.interestRate);
+        row.rateText = formatInterestRatePlain(liability.interestRate);
         // The payment and fee are amounts in the household's one base currency,
         // the same reading the plan makes of them, so a field reopens with the
-        // figure the model has been using.
+        // figure the model has been using. The field collects a year of fee,
+        // while the model spreads it over the months, so it shows twelve of the
+        // stored monthly charge.
         const domain::Money payment{liability.regularPayment.minorUnits(), m_currency};
-        const domain::Money fee{liability.monthlyFee.minorUnits(), m_currency};
+        const domain::Money monthlyFee{liability.monthlyFee.minorUnits(), m_currency};
+        const domain::Money annualFee = domain::annualFeeFromMonthly(monthlyFee);
         row.paymentText = payment.isZero() ? QString{} : formatMoneyPlain(payment);
-        row.feeText = fee.isZero() ? QString{} : formatMoneyPlain(fee);
+        row.feeText = annualFee.isZero() ? QString{} : formatMoneyPlain(annualFee);
         row.termYearsText = formatTermYears(liability.termMonths);
 
         const std::optional<domain::Money> balance = controller->latestDebtBalance(liability.id);
@@ -581,9 +587,9 @@ QString AccountsViewModel::addDebt(const QString& name, int kindIndex, const QSt
     // An unstated rate is zero, which is honest: the model reads a debt's rate
     // to decide whether it is worth paying down first, and a zero rate never
     // claims more than the household said.
-    domain::Percentage rate{};
+    domain::InterestRate rate{};
     if (!rateText.trimmed().isEmpty()) {
-        const PercentageInput parsed = parsePercentageInput(rateText);
+        const InterestRateInput parsed = parseInterestRateInput(rateText);
         if (!parsed.ok)
             return parsed.error;
         rate = parsed.value;
@@ -600,7 +606,7 @@ QString AccountsViewModel::addDebt(const QString& name, int kindIndex, const QSt
 
     const domain::Liability liability = domain::makeLiability(
         newId().toStdString(), trimmed.toStdString(), liabilityKindAt(kindIndex), rate, terms.style,
-        terms.payment, terms.fee, terms.termMonths);
+        terms.payment, terms.monthlyFee, terms.termMonths);
 
     // The debt and the balance it was created with are one decision, so they are
     // written inside one transaction: a loan must not survive without its
@@ -648,9 +654,9 @@ QString AccountsViewModel::updateDebt(const QString& liabilityId, const QString&
     if (found == existing.cend())
         return tr("That debt is no longer there. Reload the page.");
 
-    domain::Percentage rate{};
+    domain::InterestRate rate{};
     if (!rateText.trimmed().isEmpty()) {
-        const PercentageInput parsed = parsePercentageInput(rateText);
+        const InterestRateInput parsed = parseInterestRateInput(rateText);
         if (!parsed.ok)
             return parsed.error;
         rate = parsed.value;
@@ -666,7 +672,7 @@ QString AccountsViewModel::updateDebt(const QString& liabilityId, const QString&
     // and starting another one without its history.
     const domain::Liability updated =
         domain::makeLiability(found->id, trimmed.toStdString(), liabilityKindAt(kindIndex), rate,
-                              terms.style, terms.payment, terms.fee, terms.termMonths);
+                              terms.style, terms.payment, terms.monthlyFee, terms.termMonths);
 
     const application::Status status = controller->updateLiability(updated);
     return status.ok() ? QString{} : message(status);

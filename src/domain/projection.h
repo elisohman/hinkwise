@@ -22,7 +22,7 @@ namespace hinkwise::domain {
 struct LoanTerms {
     /// What is left to repay today.
     Money balance{};
-    Percentage annualRate{};
+    InterestRate annualRate{};
     RepaymentStyle style = RepaymentStyle::FixedAmortisation;
     /// MONTHLY. For FixedAmortisation this is the principal repaid; for Annuity
     /// it is the total paid, interest and fee included.
@@ -152,7 +152,7 @@ std::vector<ProjectionYear> project(const ProjectionInput& input);
 /// fee and amortisation together - and the principal is then exactly the
 /// annuity principal, which is what keeps the loan on its term instead of
 /// letting the fee stretch it.
-Money annuityPayment(const Money& balance, Percentage annualRate, int months,
+Money annuityPayment(const Money& balance, InterestRate annualRate, int months,
                      const Money& monthlyFee);
 
 /// The first year in which the total reaches fiTarget, or nullopt when it never

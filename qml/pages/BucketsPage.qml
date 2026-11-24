@@ -1118,7 +1118,7 @@ Item {
                                 id: debtRate
 
                                 unit: "%"
-                                placeholder: qsTr("4,5")
+                                placeholder: qsTr("2,655")
                             }
                         }
 
@@ -1197,7 +1197,7 @@ Item {
 
                     FormRow {
                         visible: debtStyleAnnuity.checked
-                        label: qsTr("Monthly fee")
+                        label: qsTr("Annual fee")
                         hint: accounts.currencyCode
 
                         MoneyField {
@@ -1208,7 +1208,8 @@ Item {
                         }
 
                         Text {
-                            text: qsTr("Administration fee, if your lender charges one.")
+                            text: qsTr("CSN charges this once a year; hinkwise spreads it "
+                                 + "across the months.")
                             color: Theme.textMuted
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true

@@ -381,7 +381,7 @@ void TestMetrics::housingAndPensionDoNotCountAsFreedom()
     const Asset house = makeAsset("house", "Flat", AssetKind::RealEstate);
     const Asset pension = makeAsset("pension", "Income pension", AssetKind::PensionIncome);
     const Liability mortgage = makeLiability("mortgage", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(350));
+                                             InterestRate::fromPartsPer100k(3500));
 
     const std::array<Holding, 4> holdings{
         Holding{&bank, sek(10000000)},    // 100 000 kr

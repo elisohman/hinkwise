@@ -359,9 +359,9 @@ void populate(FakeHousehold& household)
     household.assets.stored.push_back(makeAsset("crypto", "Crypto", AssetKind::Crypto));
 
     household.liabilities.stored.push_back(makeLiability(
-        "mortgage", "Mortgage", LiabilityKind::Mortgage, Percentage::fromBasisPoints(400)));
+        "mortgage", "Mortgage", LiabilityKind::Mortgage, InterestRate::fromPartsPer100k(4000)));
     household.liabilities.stored.push_back(makeLiability(
-        "card", "Credit card", LiabilityKind::CreditCard, Percentage::fromBasisPoints(1995)));
+        "card", "Credit card", LiabilityKind::CreditCard, InterestRate::fromPartsPer100k(19950)));
 
     household.valuations.upsert("buffer", kSnapshotMonth, sek(1000000));
     household.valuations.upsert("fund", kSnapshotMonth, sek(40000000));
@@ -597,9 +597,9 @@ void TestDashboard::flowLaterThanTheSnapshotMonthIsNotPartOfIt()
 void TestDashboard::totalBadLoansSumsOnlyDebtsAboveTheBenchmark()
 {
     const Liability mortgage = makeLiability("mortgage", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(450));
+                                             InterestRate::fromPartsPer100k(4500));
     const Liability card = makeLiability("card", "Credit card", LiabilityKind::CreditCard,
-                                         Percentage::fromBasisPoints(1995));
+                                         InterestRate::fromPartsPer100k(19950));
 
     const std::vector<Debt> debts{{&mortgage, sek(200000000)}, {&card, sek(2000000)}};
     QCOMPARE(ore(totalBadLoans(debts)), qint64(2000000));
@@ -613,7 +613,7 @@ void TestDashboard::debtsCarryTheirTermsAndLatestBalance()
     FakeHousehold household;
     populate(household);
     household.liabilities.stored.push_back(makeLiability(
-        "csn", "Student loan", LiabilityKind::StudentLoan, Percentage::fromBasisPoints(150),
+        "csn", "Student loan", LiabilityKind::StudentLoan, InterestRate::fromPartsPer100k(1500),
         RepaymentStyle::Annuity, sek(150000), sek(5000)));
     household.debtBalances.upsert("csn", kSnapshotMonth, sek(30000000));
 
@@ -631,7 +631,7 @@ void TestDashboard::debtsCarryTheirTermsAndLatestBalance()
 
     const DebtInEffect& csn = find("csn");
     QCOMPARE(static_cast<int>(csn.kind), static_cast<int>(LiabilityKind::StudentLoan));
-    QCOMPARE(bps(csn.interestRate), 150);
+    QCOMPARE(csn.interestRate.partsPer100k(), 1500);
     QCOMPARE(static_cast<int>(csn.style), static_cast<int>(RepaymentStyle::Annuity));
     QCOMPARE(ore(csn.regularPayment), qint64(150000));
     QCOMPARE(ore(csn.monthlyFee), qint64(5000));
@@ -662,7 +662,7 @@ void TestDashboard::aTermCarriesThePaymentItImplies()
         FakeHousehold household;
         populate(household);
         household.liabilities.stored.push_back(
-            makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, Percentage{},
+            makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, InterestRate{},
                           RepaymentStyle::Annuity, sek(recordedPayment), sek(monthlyFee), 12));
         household.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
         return household.build(kSnapshotMonth);
@@ -688,7 +688,7 @@ void TestDashboard::aTermCarriesThePaymentItImplies()
     FakeHousehold termWithoutPayment;
     termWithoutPayment.profiles.stored = sampleProfile();
     termWithoutPayment.liabilities.stored.push_back(
-        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, Percentage{},
+        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, InterestRate{},
                       RepaymentStyle::Annuity, sek(0), sek(0), 12));
     termWithoutPayment.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
     QVERIFY(!termWithoutPayment.build(kSnapshotMonth).hasDebtWithoutTerms);
@@ -722,9 +722,9 @@ void TestDashboard::aTermCarriesThePaymentItImplies()
     // recalculated. That is the state a file written before terms existed is in.
     FakeHousehold paymentOnly;
     populate(paymentOnly);
-    paymentOnly.liabilities.stored.push_back(makeLiability("csn", "Student loan",
-                                                           LiabilityKind::StudentLoan, Percentage{},
-                                                           RepaymentStyle::Annuity, sek(110000)));
+    paymentOnly.liabilities.stored.push_back(
+        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, InterestRate{},
+                      RepaymentStyle::Annuity, sek(110000)));
     paymentOnly.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
 
     const DashboardSnapshot withoutTerm = paymentOnly.build(kSnapshotMonth);
@@ -822,7 +822,7 @@ void TestDashboard::balanceMonthIsTheLaterOfTheTwoSides()
     household.profiles.stored = sampleProfile();
     household.assets.stored.push_back(makeAsset("fund", "Global fund", AssetKind::Fund));
     household.liabilities.stored.push_back(makeLiability(
-        "bolan", "Mortgage", LiabilityKind::Mortgage, Percentage::fromBasisPoints(420)));
+        "bolan", "Mortgage", LiabilityKind::Mortgage, InterestRate::fromPartsPer100k(4200)));
 
     // The fund was valued two months ago and the mortgage last month: the
     // household's balances were last looked at last month, when it updated the

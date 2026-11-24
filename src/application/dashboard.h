@@ -73,7 +73,7 @@ struct DebtInEffect {
     std::string id;
     std::string name;
     domain::LiabilityKind kind = domain::LiabilityKind::Other;
-    domain::Percentage interestRate{};
+    domain::InterestRate interestRate{};
     domain::RepaymentStyle style = domain::RepaymentStyle::FixedAmortisation;
     domain::Money regularPayment{};
     domain::Money monthlyFee{};

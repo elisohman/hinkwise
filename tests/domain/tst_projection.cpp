@@ -48,10 +48,16 @@ ProjectionInput emptyInput()
     return input;
 }
 
+/// A loan rate stated in the basis points these older tests read most easily.
+InterestRate rateOfBasisPoints(int basisPoints)
+{
+    return InterestRate::fromPartsPer100k(basisPoints * 10);
+}
+
 /// A loan repaid by a fixed principal amount each month.
 LoanTerms fixedLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment)
 {
-    return LoanTerms{sek(balance), Percentage::fromBasisPoints(annualRateBp),
+    return LoanTerms{sek(balance), rateOfBasisPoints(annualRateBp),
                      RepaymentStyle::FixedAmortisation, sek(monthlyPayment), sek(0)};
 }
 
@@ -59,8 +65,8 @@ LoanTerms fixedLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment)
 LoanTerms annuityLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment,
                       qint64 monthlyFee = 0)
 {
-    return LoanTerms{sek(balance), Percentage::fromBasisPoints(annualRateBp),
-                     RepaymentStyle::Annuity, sek(monthlyPayment), sek(monthlyFee)};
+    return LoanTerms{sek(balance), rateOfBasisPoints(annualRateBp), RepaymentStyle::Annuity,
+                     sek(monthlyPayment), sek(monthlyFee)};
 }
 
 /// A student loan on CSN's terms: the household records how long the loan still
@@ -70,7 +76,7 @@ LoanTerms annuityLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment,
 LoanTerms termAnnuityLoan(qint64 balance, int annualRateBp, int termMonths, qint64 monthlyFee = 0)
 {
     return LoanTerms{sek(balance),
-                     Percentage::fromBasisPoints(annualRateBp),
+                     rateOfBasisPoints(annualRateBp),
                      RepaymentStyle::Annuity,
                      sek(0),
                      sek(monthlyFee),
@@ -592,26 +598,25 @@ void TestProjection::annuityPaymentIsTheAnnuityFactor()
 {
     // One month is the factor in closed form: the balance plus that month's
     // interest, because there is no month left to spread anything over.
-    QCOMPARE(ore(annuityPayment(sek(1000000), Percentage::fromBasisPoints(1200), 1, sek(0))),
+    QCOMPARE(ore(annuityPayment(sek(1000000), rateOfBasisPoints(1200), 1, sek(0))),
              qint64(1010000));
 
     // Nothing to amortise, or no month to amortise it in, is nothing to pay.
-    QCOMPARE(ore(annuityPayment(sek(0), Percentage::fromBasisPoints(1200), 12, sek(0))), qint64(0));
-    QCOMPARE(ore(annuityPayment(sek(1000000), Percentage::fromBasisPoints(1200), 0, sek(0))),
-             qint64(0));
+    QCOMPARE(ore(annuityPayment(sek(0), rateOfBasisPoints(1200), 12, sek(0))), qint64(0));
+    QCOMPARE(ore(annuityPayment(sek(1000000), rateOfBasisPoints(1200), 0, sek(0))), qint64(0));
 
     // A negative rate is broken input rather than a rebate, so the loan is
     // divided by its term as if it carried no interest at all.
-    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage::fromBasisPoints(-100), 12, sek(0))),
+    QCOMPARE(ore(annuityPayment(sek(1200000), rateOfBasisPoints(-100), 12, sek(0))),
              qint64(100000));
 
     // The fee is part of the one amount CSN asks for, so it is added to the
     // amortisation rather than taken out of it: 1 000 kr of principal plus a
     // 50 kr fee is 1 050 kr, and the principal still falls by 1 000.
-    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage{}, 12, sek(5000))), qint64(105000));
+    QCOMPARE(ore(annuityPayment(sek(1200000), InterestRate{}, 12, sek(5000))), qint64(105000));
 
     // A negative fee is broken input, not a discount on the payment.
-    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage{}, 12, sek(-5000))), qint64(100000));
+    QCOMPARE(ore(annuityPayment(sek(1200000), InterestRate{}, 12, sek(-5000))), qint64(100000));
 }
 
 void TestProjection::aTermAnnuityClearsExactlyAtTheEndOfItsTerm()
@@ -667,16 +672,15 @@ void TestProjection::aTermAnnuityRecalculatesEachJanuaryFromWhatIsLeft()
     // of its own, and the projection must not simply carry it forward.
     ProjectionInput input = emptyInput();
     input.years = 3;
-    input.loans = {LoanTerms{sek(10000000), Percentage::fromBasisPoints(200),
-                             RepaymentStyle::Annuity, sek(1000), sek(0), 60}};
+    input.loans = {LoanTerms{sek(10000000), rateOfBasisPoints(200), RepaymentStyle::Annuity,
+                             sek(1000), sek(0), 60}};
 
     const std::vector<ProjectionYear> years = project(input);
 
     // Year two's payment is the annuity factor of the balance the first year
     // left and the months it left, computed here from the two figures the
     // projection reports rather than read back from it.
-    const Money expected =
-        annuityPayment(years[1].debt, Percentage::fromBasisPoints(200), 60 - 12, sek(0));
+    const Money expected = annuityPayment(years[1].debt, rateOfBasisPoints(200), 60 - 12, sek(0));
     QCOMPARE(ore(years[2].loanPayment), ore(expected));
     QVERIFY(years[2].loanPayment.isPositive());
 
@@ -751,8 +755,8 @@ void TestProjection::aTermOnAFixedAmortisationLoanIsIgnored()
     // and a term beside it is not a second way of reading the same loan.
     ProjectionInput withTerm = emptyInput();
     withTerm.years = 3;
-    withTerm.loans = {LoanTerms{sek(3000000), Percentage::fromBasisPoints(0),
-                                RepaymentStyle::FixedAmortisation, sek(100000), sek(0), 12}};
+    withTerm.loans = {LoanTerms{sek(3000000), InterestRate{}, RepaymentStyle::FixedAmortisation,
+                                sek(100000), sek(0), 12}};
 
     ProjectionInput withoutTerm = withTerm;
     withoutTerm.loans = {fixedLoan(3000000, 0, 100000)};

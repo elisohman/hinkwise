@@ -322,7 +322,7 @@ void UpdateFlowViewModel::reload()
             row.isDebt = true;
             row.name = QString::fromStdString(liability.name);
             row.detailLabel = tr("%1 · %2").arg(catalog::liabilityKindLabel(liability.kind),
-                                                formatPercentage(liability.interestRate));
+                                                formatInterestRate(liability.interestRate));
             row.effect =
                 history.empty()
                     ? std::nullopt

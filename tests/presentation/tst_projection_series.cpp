@@ -22,7 +22,7 @@ domain::Money sek(qint64 minorUnits)
 /// chart tests can state the paydown as one figure a year.
 domain::LoanTerms fixedLoan(qint64 balance, qint64 monthlyPayment)
 {
-    return domain::LoanTerms{sek(balance), domain::Percentage{},
+    return domain::LoanTerms{sek(balance), domain::InterestRate{},
                              domain::RepaymentStyle::FixedAmortisation, sek(monthlyPayment),
                              sek(0)};
 }
@@ -184,9 +184,9 @@ void TestProjectionSeries::carriesWhatTheDebtCostsOverTheHorizon()
     // adding the years up itself.
     domain::ProjectionInput projection = input();
     projection.years = 5;
-    projection.loans = {domain::LoanTerms{sek(5000000), domain::Percentage::fromBasisPoints(450),
-                                          domain::RepaymentStyle::Annuity, sek(300000), sek(2500),
-                                          60}};
+    projection.loans = {
+        domain::LoanTerms{sek(5000000), domain::InterestRate::fromPartsPer100k(4500),
+                          domain::RepaymentStyle::Annuity, sek(300000), sek(2500), 60}};
 
     const ProjectionSeries series = projectionSeriesOf(projection);
 

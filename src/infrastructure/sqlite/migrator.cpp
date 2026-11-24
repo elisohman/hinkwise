@@ -184,6 +184,30 @@ application::Status addLoanTerm(QSqlDatabase& database)
                    "ALTER TABLE liability ADD COLUMN term_months INTEGER NOT NULL DEFAULT 0");
 }
 
+/// The schema of version 6: a loan's interest rate to three decimals.
+///
+/// The rate moves from basis points (0.01 %) to parts per 100 000 (0.001 %),
+/// which is the precision a lender quotes. The old column is copied across by
+/// multiplying by ten, so a recorded rate is widened and never lost, and only
+/// then dropped. Every statement runs inside the transaction the migrator
+/// wraps around a step, so a failure leaves the old column and its values in
+/// place rather than a half-converted row.
+application::Status addThreeDecimalInterestRate(QSqlDatabase& database)
+{
+    static constexpr const char* kStatements[] = {
+        "ALTER TABLE liability ADD COLUMN interest_100k INTEGER NOT NULL DEFAULT 0",
+        "UPDATE liability SET interest_100k = interest_bp * 10",
+        "ALTER TABLE liability DROP COLUMN interest_bp",
+    };
+
+    for (const char* statement : kStatements) {
+        const application::Status status = execute(database, statement);
+        if (!status.ok())
+            return status;
+    }
+    return application::Status::success();
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -201,11 +225,9 @@ std::string contextMessage(const QString& context, const QSqlError& error)
 
 MigrationList schemaMigrations()
 {
-    return MigrationList{{1, &createInitialSchema},
-                         {2, &addSavingBreakdown},
-                         {3, &addTrackingMode},
-                         {4, &addLoanTerms},
-                         {5, &addLoanTerm}};
+    return MigrationList{{1, &createInitialSchema}, {2, &addSavingBreakdown},
+                         {3, &addTrackingMode},     {4, &addLoanTerms},
+                         {5, &addLoanTerm},         {6, &addThreeDecimalInterestRate}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

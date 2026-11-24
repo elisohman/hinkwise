@@ -105,7 +105,7 @@ QJsonObject liabilityToJson(const domain::Liability& liability)
     put(object, "id", storageKeyText(liability.id));
     put(object, "name", storageKeyText(liability.name));
     put(object, "kind", storageKeyText(domain::storageKey(liability.kind)));
-    put(object, "interestBp", liability.interestRate.basisPoints());
+    put(object, "interest_100k", liability.interestRate.partsPer100k());
     put(object, "repaymentStyle", storageKeyText(domain::storageKey(liability.style)));
     put(object, "regularPayment", moneyToJson(liability.regularPayment));
     put(object, "monthlyFee", moneyToJson(liability.monthlyFee));
@@ -463,10 +463,24 @@ application::Result<domain::Liability> liabilityFromJson(const QJsonValue& value
         return Outcome::err(kind.error());
     liability.kind = kind.value();
 
-    const application::Result<int> interest = requireInt(object.value(), "interestBp", context);
-    if (!interest.ok())
-        return Outcome::err(interest.error());
-    liability.interestRate = domain::Percentage::fromBasisPoints(interest.value());
+    // The rate arrived at basis points, then moved to parts per 100 000. A
+    // backup written before that has 'interestBp' instead, and ten parts per
+    // 100 000 make one basis point, so the old figure widens exactly.
+    const QJsonValue interestValue = object.value().value(key("interest_100k"));
+    if (!interestValue.isUndefined()) {
+        const application::Result<int> interest =
+            requireInt(object.value(), "interest_100k", context);
+        if (!interest.ok())
+            return Outcome::err(interest.error());
+        liability.interestRate = domain::InterestRate::fromPartsPer100k(interest.value());
+    } else if (!object.value().value(key("interestBp")).isUndefined()) {
+        const application::Result<int> interest = requireInt(object.value(), "interestBp", context);
+        if (!interest.ok())
+            return Outcome::err(interest.error());
+        liability.interestRate = domain::InterestRate::fromPartsPer100k(interest.value() * 10);
+    } else {
+        return Outcome::err(context + ": no 'interest_100k'");
+    }
 
     // A backup written before the terms existed has none of these keys. Absence
     // means fixed amortisation with a zero payment, which is the model's "no

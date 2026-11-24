@@ -9,7 +9,7 @@
 namespace hinkwise::domain {
 
 Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
-                        Percentage interestRate, RepaymentStyle style, Money regularPayment,
+                        InterestRate interestRate, RepaymentStyle style, Money regularPayment,
                         Money monthlyFee, int termMonths)
 {
     if (id.empty())
@@ -42,10 +42,28 @@ Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
     return liability;
 }
 
+Money annualFeeFromMonthly(const Money& monthlyFee)
+{
+    return Money{monthlyFee.minorUnits() * 12, monthlyFee.currency()};
+}
+
+Money monthlyFeeFromAnnual(const Money& annualFee)
+{
+    std::int64_t scale = 1;
+    for (int index = 0; index < traitsOf(annualFee.currency()).minorDigits; ++index)
+        scale *= 10;
+
+    const std::int64_t divisor = scale * 12;
+    const std::int64_t adjusted = annualFee.minorUnits() >= 0
+                                      ? annualFee.minorUnits() + divisor / 2
+                                      : annualFee.minorUnits() - divisor / 2;
+    return Money{(adjusted / divisor) * scale, annualFee.currency()};
+}
+
 bool isBadLoan(const Liability& liability, Percentage mortgageBenchmark)
 {
     // Percentage only offers <, so read this as "rate strictly above benchmark".
-    return mortgageBenchmark < liability.interestRate;
+    return mortgageBenchmark < liability.interestRate.toPercentage();
 }
 
 } // namespace hinkwise::domain

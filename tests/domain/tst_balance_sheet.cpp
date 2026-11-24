@@ -69,7 +69,7 @@ void TestBalanceSheet::netWorthIsAssetsMinusLiabilities()
 {
     const Asset bank = makeAsset("bank", "Bank account", AssetKind::BankAccount);
     const Liability mortgage = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(450));
+                                             InterestRate::fromPartsPer100k(4500));
 
     const std::array<Holding, 1> holdings{{{&bank, sek(100000000)}}};
     const std::array<Debt, 1> debts{{{&mortgage, sek(250000000)}}};
@@ -108,7 +108,7 @@ void TestBalanceSheet::headlineExcludesHousingAndPension()
     const Asset pension = makeAsset("inkomstpension", "Pension income", AssetKind::PensionIncome);
     const Asset bank = makeAsset("bank", "Bank account", AssetKind::BankAccount);
     const Liability mortgage = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(450));
+                                             InterestRate::fromPartsPer100k(4500));
 
     const std::array<Holding, 3> holdings{{
         {&flat, sek(300000000)},
@@ -248,12 +248,12 @@ void TestBalanceSheet::emptyInputYieldsZeroes()
 void TestBalanceSheet::badLoanTotalSumsOnlyTheBadLoans()
 {
     const Liability mortgage = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(450));
+                                             InterestRate::fromPartsPer100k(4500));
     const Liability consumer =
         makeLiability("blankolan", "Consumer loan", LiabilityKind::ConsumerLoan,
-                      Percentage::fromBasisPoints(850));
+                      InterestRate::fromPartsPer100k(8500));
     const Liability card = makeLiability("kort", "Credit card", LiabilityKind::CreditCard,
-                                         Percentage::fromBasisPoints(1995));
+                                         InterestRate::fromPartsPer100k(19950));
 
     const std::array<Debt, 3> debts{{
         {&mortgage, sek(200000000)},

@@ -523,7 +523,7 @@ void TestUseCases::addAndRemoveLiability()
 {
     FakeLiabilityRepository liabilities;
     const Liability card = makeLiability("card", "Credit card", LiabilityKind::CreditCard,
-                                         Percentage::fromBasisPoints(1995));
+                                         InterestRate::fromPartsPer100k(19950));
 
     QVERIFY(addLiability(liabilities, card).ok());
     const std::size_t expectedAfterAdd = 1;
@@ -537,12 +537,12 @@ void TestUseCases::updateLiabilityChangesTheTermsAndKeepsTheLoan()
 {
     FakeLiabilityRepository liabilities;
     const Liability mortgage = makeLiability(
-        "bolan", "Mortgage", LiabilityKind::Mortgage, Percentage::fromBasisPoints(265),
+        "bolan", "Mortgage", LiabilityKind::Mortgage, InterestRate::fromPartsPer100k(2650),
         RepaymentStyle::FixedAmortisation, sek(300000), sek(0));
     QVERIFY(addLiability(liabilities, mortgage).ok());
 
     Liability repriced = mortgage;
-    repriced.interestRate = Percentage::fromBasisPoints(310);
+    repriced.interestRate = InterestRate::fromPartsPer100k(3100);
     repriced.style = RepaymentStyle::Annuity;
     repriced.regularPayment = sek(350000);
     repriced.monthlyFee = sek(5000);
@@ -553,7 +553,7 @@ void TestUseCases::updateLiabilityChangesTheTermsAndKeepsTheLoan()
     const std::size_t expectedCount = 1;
     QCOMPARE(liabilities.stored.size(), expectedCount);
     QCOMPARE(QString::fromStdString(liabilities.stored.front().id), QStringLiteral("bolan"));
-    QCOMPARE(liabilities.stored.front().interestRate.basisPoints(), 310);
+    QCOMPARE(liabilities.stored.front().interestRate.partsPer100k(), 3100);
     QCOMPARE(static_cast<int>(liabilities.stored.front().style),
              static_cast<int>(RepaymentStyle::Annuity));
     QCOMPARE(liabilities.stored.front().regularPayment.minorUnits(), qint64(350000));
@@ -564,20 +564,21 @@ void TestUseCases::updateLiabilityRejectsInvalidTerms()
 {
     FakeLiabilityRepository liabilities;
     Liability loan = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
-                                   Percentage::fromBasisPoints(265), RepaymentStyle::Annuity,
+                                   InterestRate::fromPartsPer100k(2650), RepaymentStyle::Annuity,
                                    sek(300000), sek(5000));
 
     loan.regularPayment = sek(-1);
     QVERIFY(!updateLiability(liabilities, loan).ok());
 
-    loan = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage, Percentage{});
+    loan = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage, InterestRate{});
     loan.monthlyFee = sek(5000);
     QVERIFY(!updateLiability(liabilities, loan).ok());
 
     // A term is a count of months left: below zero is not a loan with no time
     // left but a broken figure, and it must not reach the store.
-    loan = makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
-                         Percentage::fromBasisPoints(150), RepaymentStyle::Annuity, sek(150000));
+    loan =
+        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                      InterestRate::fromPartsPer100k(1500), RepaymentStyle::Annuity, sek(150000));
     loan.termMonths = -1;
     QVERIFY(!updateLiability(liabilities, loan).ok());
 

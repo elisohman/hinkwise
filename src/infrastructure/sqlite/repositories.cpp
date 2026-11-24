@@ -79,7 +79,7 @@ constexpr const char* kUpsertAsset = R"(
 constexpr const char* kDeleteAsset = "DELETE FROM asset WHERE id = ?";
 
 constexpr const char* kSelectLiabilities = R"(
-    SELECT id, name, kind, interest_bp, repayment_style, regular_payment_minor,
+    SELECT id, name, kind, interest_100k, repayment_style, regular_payment_minor,
            monthly_fee_minor, term_months,
            COALESCE((SELECT base_currency FROM profile WHERE id = 1), 'SEK')
     FROM liability
@@ -88,13 +88,13 @@ constexpr const char* kSelectLiabilities = R"(
 )";
 
 constexpr const char* kUpsertLiability = R"(
-    INSERT INTO liability (id, name, kind, interest_bp, repayment_style,
+    INSERT INTO liability (id, name, kind, interest_100k, repayment_style,
                            regular_payment_minor, monthly_fee_minor, term_months, archived)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
         kind = excluded.kind,
-        interest_bp = excluded.interest_bp,
+        interest_100k = excluded.interest_100k,
         repayment_style = excluded.repayment_style,
         regular_payment_minor = excluded.regular_payment_minor,
         monthly_fee_minor = excluded.monthly_fee_minor,
@@ -578,7 +578,7 @@ application::Result<std::vector<domain::Liability>> SqliteLiabilityRepository::a
             return Outcome::err(unknownKey("liability '" + liability.id + "'", "kind", kindKey));
         liability.kind = *kind;
 
-        liability.interestRate = domain::Percentage::fromBasisPoints(statement.value(3).toInt());
+        liability.interestRate = domain::InterestRate::fromPartsPer100k(statement.value(3).toInt());
 
         const std::string styleKey = toStd(statement.value(4).toString());
         const std::optional<domain::RepaymentStyle> style =
@@ -610,7 +610,7 @@ application::Status SqliteLiabilityRepository::upsert(const domain::Liability& l
         toQString(liability.id),
         toQString(liability.name),
         QString::fromUtf8(domain::storageKey(liability.kind)),
-        liability.interestRate.basisPoints(),
+        liability.interestRate.partsPer100k(),
         QString::fromUtf8(domain::storageKey(liability.style)),
         static_cast<qlonglong>(liability.regularPayment.minorUnits()),
         static_cast<qlonglong>(liability.monthlyFee.minorUnits()),

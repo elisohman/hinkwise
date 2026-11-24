@@ -56,7 +56,7 @@ json::BackupData fullyPopulated()
     data.assets = {fund, flat};
 
     data.liabilities = {domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                                              domain::Percentage::fromBasisPoints(420),
+                                              domain::InterestRate::fromPartsPer100k(4200),
                                               domain::RepaymentStyle::Annuity, sek(1750000),
                                               sek(5000), 240)};
 
@@ -131,6 +131,7 @@ private slots:
     void acceptsAProfileWrittenBeforeTrackingModeExisted();
     void rejectsUnknownTrackingMode();
     void acceptsALiabilityWrittenBeforeTermsExisted();
+    void acceptsALiabilityWrittenBeforeThreeDecimalRatesExisted();
     void rejectsANegativeTerm();
     void rejectsUnknownRepaymentStyle();
 };
@@ -170,7 +171,7 @@ void TestBackup::roundTripIsLossless()
     QCOMPARE(data.liabilities.size(), std::size_t(1));
     QCOMPARE(static_cast<int>(data.liabilities[0].kind),
              static_cast<int>(domain::LiabilityKind::Mortgage));
-    QCOMPARE(data.liabilities[0].interestRate.basisPoints(), 420);
+    QCOMPARE(data.liabilities[0].interestRate.partsPer100k(), 4200);
     QCOMPARE(static_cast<int>(data.liabilities[0].style),
              static_cast<int>(domain::RepaymentStyle::Annuity));
     QCOMPARE(data.liabilities[0].regularPayment.minorUnits(), qint64(1750000));
@@ -403,6 +404,24 @@ void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
     // The term arrived with the recalculation: a file without one states no
     // term, so its recorded payment stays in force.
     QCOMPARE(parsed.value().liabilities[0].termMonths, 0);
+}
+
+/// The rate moved from basis points to parts per 100 000. A backup written
+/// before that has 'interestBp' instead of 'interest_100k', and loading it must
+/// widen the old figure rather than drop it.
+void TestBackup::acceptsALiabilityWrittenBeforeThreeDecimalRatesExisted()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject mortgage = liabilities.at(0).toObject();
+    mortgage.remove(QStringLiteral("interest_100k"));
+    mortgage.insert(QStringLiteral("interestBp"), 420);
+    liabilities.replace(0, mortgage);
+    root.insert(QStringLiteral("liabilities"), liabilities);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(parsed.value().liabilities[0].interestRate.partsPer100k(), 4200);
 }
 
 /// A term is a count of months, and a count below zero is a file that cannot be

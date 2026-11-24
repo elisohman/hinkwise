@@ -106,7 +106,7 @@ void TestSettingsFlow::initTestCase()
     QVERIFY(m_controller->addAsset(makeAsset("fund", "Global fund", AssetKind::Fund)).ok());
     QVERIFY(m_controller
                 ->addLiability(makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
-                                             Percentage::fromBasisPoints(420)))
+                                             InterestRate::fromPartsPer100k(4200)))
                 .ok());
     QVERIFY(
         m_controller

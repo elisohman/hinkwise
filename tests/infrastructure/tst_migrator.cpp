@@ -24,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 5;
+constexpr int kExpectedVersion = 6;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -67,6 +67,13 @@ constexpr std::array<const char*, 3> kLoanTermsColumns{
     "regular_payment_minor",
     "monthly_fee_minor",
 };
+
+/// The liability row a version 5 file holds: the schema before a loan's rate
+/// gained a third decimal. Its rate is still stated in basis points.
+constexpr const char* kInsertVersionFiveLiability =
+    "INSERT INTO liability (id, name, kind, interest_bp, repayment_style, "
+    "regular_payment_minor, monthly_fee_minor, term_months, archived) VALUES "
+    "('bolan', 'Mortgage', 'mortgage', 265, 'fixed-amortisation', 0, 0, 0, 0)";
 
 /// The liability row a version 4 file holds: the schema before a loan could
 /// state how long it still has to run.
@@ -129,6 +136,7 @@ private slots:
     void versionTwoProfileComesOutAsPlanning();
     void versionThreeLiabilityComesOutWithoutTerms();
     void versionFourLiabilityComesOutWithoutATerm();
+    void versionFiveLiabilityKeepsItsRate();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
@@ -171,6 +179,11 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
 
     // So is the remaining term, whose default is the loan that states none.
     QVERIFY(hasColumn(connection, "liability", "term_months"));
+
+    // The rate is stored to three decimals, and the two-decimal column it came
+    // from is gone rather than left beside it.
+    QVERIFY(hasColumn(connection, "liability", "interest_100k"));
+    QVERIFY(!hasColumn(connection, "liability", "interest_bp"));
 }
 
 /// A file written by the release that only knew schema version 1 has months in
@@ -326,12 +339,13 @@ void TestMigrator::versionThreeLiabilityComesOutWithoutTerms()
         QVERIFY(hasColumn(connection, "liability", column));
 
     QSqlQuery select{connection};
-    QVERIFY(select.exec(QStringLiteral("SELECT name, interest_bp, repayment_style, "
+    QVERIFY(select.exec(QStringLiteral("SELECT name, interest_100k, repayment_style, "
                                        "regular_payment_minor, monthly_fee_minor "
                                        "FROM liability WHERE id = 'bolan'")));
     QVERIFY(select.next());
     QCOMPARE(select.value(0).toString(), QStringLiteral("Mortgage"));
-    QCOMPARE(select.value(1).toInt(), 420);
+    // 4.20 % in basis points becomes 4.200 % in parts per 100 000.
+    QCOMPARE(select.value(1).toInt(), 4200);
     QCOMPARE(select.value(2).toString(), QStringLiteral("fixed-amortisation"));
     QCOMPARE(select.value(3).toLongLong(), qint64(0));
     QCOMPARE(select.value(4).toLongLong(), qint64(0));
@@ -385,12 +399,12 @@ void TestMigrator::versionFourLiabilityComesOutWithoutATerm()
     QVERIFY(hasColumn(connection, "liability", "term_months"));
 
     QSqlQuery select{connection};
-    QVERIFY(select.exec(QStringLiteral("SELECT name, interest_bp, repayment_style, "
+    QVERIFY(select.exec(QStringLiteral("SELECT name, interest_100k, repayment_style, "
                                        "regular_payment_minor, monthly_fee_minor, term_months "
                                        "FROM liability WHERE id = 'csn'")));
     QVERIFY(select.next());
     QCOMPARE(select.value(0).toString(), QStringLiteral("Student loan"));
-    QCOMPARE(select.value(1).toInt(), 150);
+    QCOMPARE(select.value(1).toInt(), 1500);
     QCOMPARE(select.value(2).toString(), QStringLiteral("annuity"));
     QCOMPARE(select.value(3).toLongLong(), qint64(150000));
     QCOMPARE(select.value(4).toLongLong(), qint64(5000));
@@ -407,6 +421,54 @@ void TestMigrator::versionFourLiabilityComesOutWithoutATerm()
     QVERIFY(select.exec(QStringLiteral("SELECT term_months FROM liability WHERE id = 'csn'")));
     QVERIFY(select.next());
     QCOMPARE(select.value(0).toInt(), 96);
+}
+
+/// A version 5 file records its loan rates in basis points. Widening the unit
+/// to parts per 100 000 must keep the rate exactly: 2.65 % becomes 2.650 %, and
+/// the old column is dropped only after the value has been copied.
+void TestMigrator::versionFiveLiabilityKeepsItsRate()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{6});
+    const std::span<const sqlite::Migration> upToVersionFive{migrations.data(), 5};
+
+    const application::Result<int> atFive = sqlite::applyMigrations(connection, upToVersionFive);
+    QVERIFY2(atFive.ok(), atFive.error().c_str());
+    QCOMPARE(atFive.value(), 5);
+    QVERIFY(hasColumn(connection, "liability", "interest_bp"));
+    QVERIFY(!hasColumn(connection, "liability", "interest_100k"));
+
+    QSqlQuery insert{connection};
+    QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionFiveLiability)),
+             qPrintable(insert.lastError().text()));
+
+    const application::Result<int> atSix = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atSix.ok(), atSix.error().c_str());
+    QCOMPARE(atSix.value(), kExpectedVersion);
+    QVERIFY(hasColumn(connection, "liability", "interest_100k"));
+    QVERIFY(!hasColumn(connection, "liability", "interest_bp"));
+
+    QSqlQuery select{connection};
+    QVERIFY(select.exec(QStringLiteral("SELECT interest_100k FROM liability WHERE id = 'bolan'")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toInt(), 2650);
+
+    // Running the migrator again leaves the widened rate alone.
+    const application::Result<int> again = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(again.ok(), again.error().c_str());
+    QCOMPARE(again.value(), kExpectedVersion);
+    select.finish();
+    QVERIFY(select.exec(QStringLiteral("SELECT interest_100k FROM liability WHERE id = 'bolan'")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toInt(), 2650);
 }
 
 void TestMigrator::migratingTwiceChangesNothing()

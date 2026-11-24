@@ -26,6 +26,10 @@ private slots:
     void rejectsWhatIsNotAnAmount();
     void refusesOneMinorUnitPastTheMaximum();
     void readsRatesAsBasisPoints();
+    void roundTripsInterestRatesThroughPlainText_data();
+    void roundTripsInterestRatesThroughPlainText();
+    void rejectsInterestRatesWithTooManyDecimals_data();
+    void rejectsInterestRatesWithTooManyDecimals();
     void readsTermsAsMonths();
     void formatsTermsAsWholeYears();
     void rejectsRatesWithTooManyDecimals_data();
@@ -193,6 +197,67 @@ void TestInputText::readsRatesAsBasisPoints()
     const PercentageInput empty = parsePercentageInput(QString{});
     QVERIFY(!empty.ok);
     QVERIFY(!empty.error.isEmpty());
+}
+
+void TestInputText::roundTripsInterestRatesThroughPlainText_data()
+{
+    QTest::addColumn<QString>("locale");
+    QTest::addColumn<int>("partsPer100k");
+
+    // The three decimals a lender quotes, including the third that basis
+    // points cannot hold.
+    const std::array<int, 5> rates{0, 2655, 4500, 19950, 100000};
+    for (const QString& locale : {QStringLiteral("sv_SE"), QStringLiteral("en_US")}) {
+        for (const int parts : rates) {
+            const QString name = QStringLiteral("%1/%2").arg(locale).arg(parts);
+            QTest::newRow(qPrintable(name)) << locale << parts;
+        }
+    }
+}
+
+void TestInputText::roundTripsInterestRatesThroughPlainText()
+{
+    QFETCH(QString, locale);
+    QFETCH(int, partsPer100k);
+
+    const QLocale previous = QLocale();
+    QLocale::setDefault(QLocale{locale});
+
+    const domain::InterestRate rate = domain::InterestRate::fromPartsPer100k(partsPer100k);
+    const QString text = formatInterestRatePlain(rate);
+    const InterestRateInput parsed = parseInterestRateInput(text);
+
+    QVERIFY2(parsed.ok, qPrintable(parsed.error));
+    QCOMPARE(parsed.value.partsPer100k(), partsPer100k);
+    QVERIFY(formatInterestRate(rate).contains(QLatin1Char('%')));
+
+    QLocale::setDefault(previous);
+}
+
+void TestInputText::rejectsInterestRatesWithTooManyDecimals_data()
+{
+    QTest::addColumn<QString>("locale");
+    QTest::addColumn<QString>("text");
+
+    QTest::newRow("sv four decimals") << QStringLiteral("sv_SE") << QStringLiteral("2,6555");
+    QTest::newRow("en four decimals") << QStringLiteral("en_US") << QStringLiteral("2.6555");
+}
+
+void TestInputText::rejectsInterestRatesWithTooManyDecimals()
+{
+    QFETCH(QString, locale);
+    QFETCH(QString, text);
+
+    // Three decimals are the whole point of a loan rate; a fourth is refused
+    // rather than rounded away, like every other amount field.
+    const QLocale previous = QLocale();
+    QLocale::setDefault(QLocale{locale});
+
+    const InterestRateInput parsed = parseInterestRateInput(text);
+    QVERIFY(!parsed.ok);
+    QVERIFY(!parsed.error.isEmpty());
+
+    QLocale::setDefault(previous);
 }
 
 void TestInputText::readsTermsAsMonths()

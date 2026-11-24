@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "domain/interest_rate.h"
 #include "domain/money.h"
 #include "domain/percentage.h"
 #include "domain/year_month.h"
@@ -33,6 +34,14 @@ QString formatPercentage(domain::Percentage percentage);
 /// The rate without the percent sign, so that text can be put back into a
 /// field and read by parsePercentageInput() unchanged.
 QString formatPercentagePlain(domain::Percentage percentage);
+
+/// "2,655 %" - a loan's interest rate in the user's own notation, with the
+/// three decimals a lender quotes.
+QString formatInterestRate(domain::InterestRate rate);
+
+/// The loan rate without the percent sign, so that text can be put back into a
+/// field and read by parseInterestRateInput() unchanged.
+QString formatInterestRatePlain(domain::InterestRate rate);
 
 /// A month in the user's own notation, in the format the caller asks for:
 /// "October 2026" for a sentence, "Oct" for an axis. Every screen names a
@@ -72,6 +81,19 @@ struct PercentageInput {
 /// Reads a rate in percent with the same rules as money: "4,5" is 4.50 %,
 /// stored as basis points.
 PercentageInput parsePercentageInput(const QString& text);
+
+/// A string that has been read as a loan interest rate.
+struct InterestRateInput {
+    bool ok = false;
+    domain::InterestRate value{};
+    QString error;
+    QString label;
+};
+
+/// Reads a loan rate in percent with the same rules as money, keeping three
+/// decimals: "2,655" is 2.655 %, stored as parts per 100 000. A fourth decimal
+/// is refused rather than rounded away.
+InterestRateInput parseInterestRateInput(const QString& text);
 
 /// A string that has been read as a loan term in years.
 struct TermYearsInput {

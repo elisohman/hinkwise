@@ -369,7 +369,7 @@ void TestSetupFlow::bucketsPageAddsAndRemovesADebt()
     QCOMPARE(accounts.debts()
                  ->data(accounts.debts()->index(0, 0), DebtRowModel::RateLabelRole)
                  .toString(),
-             formatPercentage(domain::Percentage::fromBasisPoints(450)));
+             formatInterestRate(domain::InterestRate::fromPartsPer100k(4500)));
 
     const application::DashboardSnapshot withDebt = m_controller->dashboardSnapshot();
     QVERIFY(withDebt.facts.sheet.netWorth.isNegative());
@@ -397,11 +397,13 @@ void TestSetupFlow::bucketsPageEditsADebtsTermsAndKeepsItsHistory()
     QCOMPARE(accounts.debts()->data(row, DebtRowModel::StyleIndexRole).toInt(), annuity);
     // The rate reopens without its unit, so the field reads it back unchanged.
     QCOMPARE(accounts.debts()->data(row, DebtRowModel::RateTextRole).toString(),
-             QStringLiteral("2,50"));
+             QStringLiteral("2,500"));
     QCOMPARE(accounts.debts()->data(row, DebtRowModel::PaymentTextRole).toString(),
              formatMoneyPlain(domain::Money{120000, domain::Currency::Eur}));
+    // The field collected 25 kr a year; the model spreads it to 2 kr a month,
+    // and the field shows that year again (24 kr).
     QCOMPARE(accounts.debts()->data(row, DebtRowModel::FeeTextRole).toString(),
-             formatMoneyPlain(domain::Money{2500, domain::Currency::Eur}));
+             formatMoneyPlain(domain::Money{2400, domain::Currency::Eur}));
     // The term is entered in years; the model stores months.
     QCOMPARE(accounts.debts()->data(row, DebtRowModel::TermYearsTextRole).toString(),
              QStringLiteral("18"));

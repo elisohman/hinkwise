@@ -224,6 +224,18 @@ QString formatPercentagePlain(domain::Percentage percentage)
     return locale.toString(static_cast<double>(percentage.basisPoints()) / 100.0, 'f', 2);
 }
 
+QString formatInterestRate(domain::InterestRate rate)
+{
+    const QLocale locale;
+    return message("%1 %").arg(locale.toString(rate.asPercent(), 'f', 3));
+}
+
+QString formatInterestRatePlain(domain::InterestRate rate)
+{
+    const QLocale locale;
+    return locale.toString(rate.asPercent(), 'f', 3);
+}
+
 QString formatMonth(domain::YearMonth month, const QString& format)
 {
     const QDate date{month.year(), static_cast<int>(month.month()), 1};
@@ -261,6 +273,23 @@ PercentageInput parsePercentageInput(const QString& text)
     result.ok = true;
     result.value = domain::Percentage::fromBasisPoints(static_cast<std::int32_t>(reading.units));
     result.label = formatPercentage(result.value);
+    return result;
+}
+
+InterestRateInput parseInterestRateInput(const QString& text)
+{
+    // Three decimals of a percent are parts per 100 000, which is exactly the
+    // unit InterestRate stores, so the digits are the value.
+    const NumberReading reading = readNumber(text, 3);
+    if (reading.error != NumberError::None)
+        return InterestRateInput{false, {}, errorFor(reading.error, text.trimmed(), 3, false), {}};
+    if (reading.units > std::numeric_limits<std::int32_t>::max())
+        return InterestRateInput{false, {}, errorFor(NumberError::TooLarge, {}, 3, false), {}};
+
+    InterestRateInput result;
+    result.ok = true;
+    result.value = domain::InterestRate::fromPartsPer100k(static_cast<std::int32_t>(reading.units));
+    result.label = formatInterestRate(result.value);
     return result;
 }
 

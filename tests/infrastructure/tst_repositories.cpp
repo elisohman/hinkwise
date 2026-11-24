@@ -247,7 +247,7 @@ void TestRepositories::liabilityRoundTrip()
 
     const domain::Liability mortgage =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                              domain::Percentage::fromBasisPoints(425),
+                              domain::InterestRate::fromPartsPer100k(4250),
                               domain::RepaymentStyle::Annuity, sek(1500000), sek(5000), 240);
     QVERIFY(liabilities.upsert(mortgage).ok());
 
@@ -260,7 +260,7 @@ void TestRepositories::liabilityRoundTrip()
     QCOMPARE(QString::fromStdString(all.value()[0].name), QStringLiteral("Mortgage"));
     QCOMPARE(static_cast<int>(all.value()[0].kind),
              static_cast<int>(domain::LiabilityKind::Mortgage));
-    QCOMPARE(all.value()[0].interestRate.basisPoints(), 425);
+    QCOMPARE(all.value()[0].interestRate.partsPer100k(), 4250);
     QCOMPARE(static_cast<int>(all.value()[0].style),
              static_cast<int>(domain::RepaymentStyle::Annuity));
     QCOMPARE(all.value()[0].regularPayment.minorUnits(), qint64(1500000));
@@ -269,14 +269,14 @@ void TestRepositories::liabilityRoundTrip()
 
     const domain::Liability repriced =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                              domain::Percentage::fromBasisPoints(390),
+                              domain::InterestRate::fromPartsPer100k(3900),
                               domain::RepaymentStyle::FixedAmortisation, sek(0), sek(0));
     QVERIFY(liabilities.upsert(repriced).ok());
 
     const application::Result<std::vector<domain::Liability>> reloaded = liabilities.all();
     QVERIFY2(reloaded.ok(), reloaded.error().c_str());
     QCOMPARE(reloaded.value().size(), expectedCount);
-    QCOMPARE(reloaded.value()[0].interestRate.basisPoints(), 390);
+    QCOMPARE(reloaded.value()[0].interestRate.partsPer100k(), 3900);
     QCOMPARE(static_cast<int>(reloaded.value()[0].style),
              static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
     QCOMPARE(reloaded.value()[0].regularPayment.minorUnits(), qint64(0));
@@ -437,7 +437,7 @@ void TestRepositories::debtBalanceRoundTrip()
     sqlite::SqliteLiabilityRepository liabilities{connection()};
     QVERIFY(liabilities
                 .upsert(domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                                              domain::Percentage::fromBasisPoints(420)))
+                                              domain::InterestRate::fromPartsPer100k(4200)))
                 .ok());
 
     sqlite::SqliteDebtBalanceRepository balances{connection()};
@@ -474,7 +474,7 @@ void TestRepositories::debtBalanceRoundTrip()
     // so every balance recorded against it is still there afterwards.
     QVERIFY(liabilities
                 .upsert(domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                                              domain::Percentage::fromBasisPoints(360)))
+                                              domain::InterestRate::fromPartsPer100k(3600)))
                 .ok());
     const application::Result<std::vector<application::MoneyPoint>> afterRateChange =
         balances.history("bolan");

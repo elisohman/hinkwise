@@ -22,6 +22,7 @@ add_library(hinkwise_domain STATIC
     src/domain/bucket.cpp
     src/domain/household.cpp
     src/domain/insight.cpp
+    src/domain/interest_rate.cpp
     src/domain/jurisdiction.cpp
     src/domain/liability.cpp
     src/domain/metrics.cpp

@@ -17,6 +17,9 @@ namespace {
 /// Basis points in a whole: 100 % of a target, or one year of expenses.
 constexpr std::int64_t basisPointsInWhole = 10000;
 
+/// Parts per 100 000 in a whole: 100 % of a loan's interest rate.
+constexpr std::int64_t partsPer100kInWhole = 100000;
+
 /// Months in a year, and therefore the divisor that turns an annual rate into
 /// the rate one repayment is charged at.
 constexpr std::int64_t monthsPerYear = 12;
@@ -50,22 +53,22 @@ Money sumOf(const std::array<Money, 4>& balances)
 /// One month of interest: the annual rate spread over the twelve repayments of
 /// a year, in integer minor units, rounded half away from zero. A negative rate
 /// is broken input rather than a rebate, so it earns nothing.
-Money monthlyInterest(const Money& balance, Percentage annualRate)
+Money monthlyInterest(const Money& balance, InterestRate annualRate)
 {
     if (!balance.isPositive() || annualRate.isNegative())
         return Money::zero(balance.currency());
 
-    const std::int64_t divisor = basisPointsInWhole * monthsPerYear;
-    const std::int64_t product = balance.minorUnits() * annualRate.basisPoints();
+    const std::int64_t divisor = partsPer100kInWhole * monthsPerYear;
+    const std::int64_t product = balance.minorUnits() * annualRate.partsPer100k();
     const std::int64_t adjusted = product >= 0 ? product + divisor / 2 : product - divisor / 2;
     return Money{adjusted / divisor, balance.currency()};
 }
 
 /// The rate one month is charged at, as the fraction the annuity factor needs.
-double monthlyRateOf(Percentage annualRate)
+double monthlyRateOf(InterestRate annualRate)
 {
-    return static_cast<double>(annualRate.basisPoints()) /
-           static_cast<double>(basisPointsInWhole * monthsPerYear);
+    return static_cast<double>(annualRate.partsPer100k()) /
+           static_cast<double>(partsPer100kInWhole * monthsPerYear);
 }
 
 /// One loan while the projection runs: its terms, the balance left after the
@@ -231,7 +234,7 @@ void fillDerived(ProjectionYear& year, const ProjectionInput& input)
 
 } // namespace
 
-Money annuityPayment(const Money& balance, Percentage annualRate, int months,
+Money annuityPayment(const Money& balance, InterestRate annualRate, int months,
                      const Money& monthlyFee)
 {
     if (!balance.isPositive() || months <= 0)
