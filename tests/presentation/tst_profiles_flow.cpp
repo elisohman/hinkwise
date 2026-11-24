@@ -18,8 +18,11 @@
 #include <QFile>
 #include <QLocale>
 #include <QString>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QVariantList>
+#include <QVariantMap>
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -78,6 +81,7 @@ private slots:
 
     void theBuildingWealthExampleIsAWholeHousehold();
     void thePreservingExampleTellsTheLaterStory();
+    void theExampleChooserOffersEveryPhaseInOrder();
     void aNewProfileIsEmptyAndOnboardingFillsIt();
     void switchingReplacesEveryFigure();
     void aSwitchIsRefusedWhileWorkIsUnsaved();
@@ -183,9 +187,9 @@ void TestProfilesFlow::thePreservingExampleTellsTheLaterStory()
     QCOMPARE(static_cast<int>(created.value().phase), static_cast<int>(Phase::Preserving));
 
     const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
-    QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Buffer)), kronor(900000));
+    QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Buffer)), kronor(864000));
     QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Preserve)), kronor(7200000));
-    QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Growth)), kronor(2000000));
+    QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Growth)), kronor(500000));
     QCOMPARE(minorOf(bucketBalance(snapshot, Bucket::Play)), kronor(25000));
 
     // The mortgage is gone, so there is no debt at all.
@@ -198,6 +202,28 @@ void TestProfilesFlow::thePreservingExampleTellsTheLaterStory()
     const std::vector<std::string> urgent = urgentInsightIds(snapshot);
     QVERIFY2(urgent.empty(),
              urgent.empty() ? "an example fired an urgent insight" : urgent.front().c_str());
+}
+
+void TestProfilesFlow::theExampleChooserOffersEveryPhaseInOrder()
+{
+    // The chooser's index is the ExampleProfile value createExample() reads, so
+    // the list order is the phase order and nothing can drift between them.
+    ProfilesViewModel model;
+    const QVariantList choices = model.exampleChoices();
+    QCOMPARE(choices.size(), 4);
+
+    const QStringList labels{
+        QStringLiteral("Example: getting started"),
+        QStringLiteral("Example: building wealth"),
+        QStringLiteral("Example: preserving"),
+        QStringLiteral("Example: financially independent"),
+    };
+    for (int index = 0; index < choices.size(); ++index) {
+        const QVariantMap choice = choices.at(index).toMap();
+        QCOMPARE(choice.value(QStringLiteral("index")).toInt(), index);
+        QCOMPARE(choice.value(QStringLiteral("label")).toString(), labels.at(index));
+        QVERIFY(!choice.value(QStringLiteral("description")).toString().isEmpty());
+    }
 }
 
 void TestProfilesFlow::aNewProfileIsEmptyAndOnboardingFillsIt()
@@ -267,7 +293,7 @@ void TestProfilesFlow::switchingReplacesEveryFigure()
     // And back again, without a restart in between.
     QCOMPARE(model.switchTo(static_cast<int>(preserving.value().id)), QString{});
     QCOMPARE(minorOf(bucketBalance(m_controller->dashboardSnapshot(), Bucket::Growth)),
-             kronor(2000000));
+             kronor(500000));
     QVERIFY(m_controller->liabilities().empty());
 }
 

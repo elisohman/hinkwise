@@ -210,6 +210,14 @@ public:
     std::optional<Insight> evaluate(const HouseholdFacts& facts,
                                     const Metrics& metrics) const override
     {
+        // Saving is an accumulating-phase instruction. A household drawing on
+        // its capital records a saving of zero because that is correct, and
+        // telling it to pay itself first first would be advice for a different
+        // stage of life. The examples exposed this: a preserving household was
+        // being told to save 10 % of a pension it is already spending.
+        if (!isAccumulating(facts.phase))
+            return std::nullopt;
+
         if (!(metrics.savingsRate < Percentage::fromBasisPoints(1000)) ||
             !facts.flow.income.isPositive())
             return std::nullopt;

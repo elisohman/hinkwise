@@ -98,6 +98,7 @@ private slots:
     void deletingAProfileRemovesAllOfItsData();
     void deletingTheLastProfileIsRefused();
     void interruptedDeleteLeavesTheProfileAndThePointerIntact();
+    void danglingActivePointerRepairsToTheFirstHousehold();
     void valuationCannotCrossProfiles();
     void mostRecentMonthIgnoresAnotherHouseholdsDates();
 
@@ -462,6 +463,37 @@ void TestProfiles::deletingTheLastProfileIsRefused()
     QVERIFY2(listed.ok(), listed.error().c_str());
     QCOMPARE(listed.value().size(), std::size_t{1});
     QCOMPARE(profiles.load().value()->id, only.value().id);
+}
+
+void TestProfiles::danglingActivePointerRepairsToTheFirstHousehold()
+{
+    // The pointer can outlive the row it names: an external edit, a tool, or a
+    // write interrupted between the two steps. Refusing to open would brick a
+    // file whose data is entirely intact, so the load repairs instead.
+    sqlite::SqliteProfileRepository profiles{connection()};
+
+    const application::Result<domain::Profile> first =
+        profiles.create(household("First", domain::Currency::Sek, domain::TrackingMode::Planning));
+    QVERIFY2(first.ok(), first.error().c_str());
+
+    const application::Result<domain::Profile> second =
+        profiles.create(household("Second", domain::Currency::Sek, domain::TrackingMode::Planning));
+    QVERIFY2(second.ok(), second.error().c_str());
+
+    QSqlQuery dangle{connection()};
+    QVERIFY(
+        dangle.exec(QStringLiteral("UPDATE meta SET value = '9999' WHERE key = 'active_profile'")));
+
+    const application::Result<std::optional<domain::Profile>> loaded = profiles.load();
+    QVERIFY2(loaded.ok(), loaded.error().c_str());
+    QVERIFY(loaded.value().has_value());
+    QCOMPARE(loaded.value()->id, first.value().id);
+
+    // Repairing means rewriting the pointer, so the next start is clean.
+    QSqlQuery read{connection()};
+    QVERIFY(read.exec(QStringLiteral("SELECT value FROM meta WHERE key = 'active_profile'")));
+    QVERIFY(read.next());
+    QCOMPARE(read.value(0).toLongLong(), static_cast<qlonglong>(first.value().id));
 }
 
 void TestProfiles::interruptedDeleteLeavesTheProfileAndThePointerIntact()

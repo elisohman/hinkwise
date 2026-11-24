@@ -182,4 +182,9 @@ target_link_libraries(tst_transactions PRIVATE hinkwise_application)
 hinkwise_add_infrastructure_test(tst_backup infrastructure/tst_backup.cpp)
 hinkwise_add_infrastructure_test(tst_migrator infrastructure/tst_migrator.cpp)
 hinkwise_add_infrastructure_test(tst_profiles infrastructure/tst_profiles.cpp)
+
+# The example seeds are application use cases that write through the database,
+# so their figures are checked over a real file rather than an in-memory double.
+hinkwise_add_infrastructure_test(tst_examples infrastructure/tst_examples.cpp)
+target_link_libraries(tst_examples PRIVATE hinkwise_application)
 hinkwise_add_infrastructure_test(tst_repositories infrastructure/tst_repositories.cpp)

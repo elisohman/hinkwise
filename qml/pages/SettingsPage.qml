@@ -1440,9 +1440,9 @@ Item {
         }
     }
 
-    // Two stories, both flagged as examples. The choice says what each one
-    // contains before it is written, because an example that surprises the
-    // household is worse than none.
+    // Four stories, one per phase, all flagged as examples. The choice says
+    // what each one contains before it is written, because an example that
+    // surprises the household is worse than none.
     Popup {
         id: exampleDialog
 

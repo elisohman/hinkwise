@@ -243,7 +243,7 @@ QString ProfilesViewModel::createExample(int index)
     m_actionError.clear();
     m_actionMessage.clear();
 
-    const int lastExample = static_cast<int>(application::ExampleProfile::Preserving);
+    const int lastExample = static_cast<int>(application::ExampleProfile::FinanciallyIndependent);
     if (index < 0 || index > lastExample) {
         m_actionError = tr("That example does not exist.");
         emit changed();
@@ -318,12 +318,19 @@ QVariantList ProfilesViewModel::exampleChoices() const
     };
 
     return {
+        choice(application::ExampleProfile::GettingStarted, tr("Example: getting started"),
+               tr("A household that has just started: a buffer still below its band, the first "
+                  "index fund, an occupational pension and twelve recorded months.")),
         choice(application::ExampleProfile::BuildingWealth, tr("Example: building wealth"),
                tr("A household in its accumulating years: a buffer, index funds, a flat with a "
                   "mortgage, income pension, play money and twelve recorded months.")),
         choice(application::ExampleProfile::Preserving, tr("Example: preserving"),
                tr("The same household later: the buffer and preserve buckets carry the living "
-                  "costs, the mortgage is gone, and the phase is Preserving.")),
+                  "costs, growth is optional, the mortgage is gone and there is no debt.")),
+        choice(application::ExampleProfile::FinanciallyIndependent,
+               tr("Example: financially independent"),
+               tr("The end state: five years of cash and twenty-five years of index funds, with "
+                  "no property, no growth, no play and living off withdrawals.")),
     };
 }
 

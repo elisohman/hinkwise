@@ -12,7 +12,7 @@
 
 namespace hinkwise::application {
 
-/// The two example households settings can create.
+/// The four example households settings can create, in phase order.
 ///
 /// An example is a whole financial story in one profile: twelve recorded
 /// months, the holdings the story talks about and the balances that go with
@@ -20,18 +20,25 @@ namespace hinkwise::application {
 /// flagged as an example - see domain::Profile::isExample - because figures the
 /// household did not enter must never be mistaken for its own.
 enum class ExampleProfile : std::uint8_t {
+    /// A household that has just started: the buffer is still below its band,
+    /// the first index fund is in growth and the occupational pension promise
+    /// sits in preserve.
+    GettingStarted = 0,
     /// A household in its accumulating years: a buffer, index funds, a flat
     /// with a mortgage, income pension and a little play money.
-    BuildingWealth = 0,
+    BuildingWealth = 1,
     /// The same household later: the buffer and preserve buckets carry the
-    /// living costs and there is no debt left.
-    Preserving = 1,
+    /// living costs, growth is optional and there is no debt left.
+    Preserving = 2,
+    /// The end state of the model: five years of cash and twenty-five years of
+    /// preserve, with growth and play gone and the property sold.
+    FinanciallyIndependent = 3,
 };
 
 /// The profile an example starts as: named for what it shows, in the phase its
-/// figures were built for, flagged as an example and keeping a monthly record,
-/// because that is what twelve recorded months are. The id is zero: the caller
-/// stores the row and owns the result.
+/// figures were built for, flagged as an example and keeping the record the
+/// story is told in. The id is zero: the caller stores the row and owns the
+/// result.
 domain::Profile exampleProfile(ExampleProfile kind);
 
 /// Writes one example's holdings, twelve recorded months, this month's

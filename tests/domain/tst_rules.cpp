@@ -254,6 +254,7 @@ private slots:
 
     void savingsRateLowFires();
     void savingsRateLowStaysQuietWithoutIncome();
+    void savingsRateLowStaysQuietWhenPreserving();
 
     void needsShareHighFires();
     void needsShareHighStaysQuietAtTheSplit();
@@ -377,6 +378,21 @@ void TestRules::savingsRateLowStaysQuietWithoutIncome()
     Scenario scenario = perturbed(fires::savingsRateLow);
     scenario.facts.flow.income = sek(0);
 
+    QVERIFY(!fired(evaluate(scenario), "savings-rate-low"));
+}
+
+void TestRules::savingsRateLowStaysQuietWhenPreserving()
+{
+    // Spending capital means saving zero, which is the correct behaviour rather
+    // than a shortfall. "Pay yourself first" is advice for the accumulating
+    // phases, and a preserving household that records no saving must not be
+    // told to save more of a pension it is already spending.
+    Scenario scenario = perturbed(fires::savingsRateLow);
+    scenario.facts.phase = Phase::Preserving;
+
+    QVERIFY(!fired(evaluate(scenario), "savings-rate-low"));
+
+    scenario.facts.phase = Phase::FinanciallyIndependent;
     QVERIFY(!fired(evaluate(scenario), "savings-rate-low"));
 }
 

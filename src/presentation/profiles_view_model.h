@@ -37,8 +37,9 @@ class ProfilesViewModel : public QObject {
     Q_PROPERTY(QString activeTrackingModeLabel READ activeTrackingModeLabel NOTIFY changed)
     Q_PROPERTY(bool activeIsExample READ activeIsExample NOTIFY changed)
 
-    /// The two example stories createExample() can write. The labels are the
-    /// names the profiles will carry, so the choice and the list row match.
+    /// The four example stories createExample() can write, in phase order. The
+    /// labels are the names the profiles will carry, so the choice and the list
+    /// row match.
     Q_PROPERTY(QVariantList exampleChoices READ exampleChoices CONSTANT)
 
     /// The screens that would lose unsaved work to a switch. QML binds each one

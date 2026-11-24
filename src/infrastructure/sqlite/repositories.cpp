@@ -665,22 +665,31 @@ application::Result<std::optional<domain::Profile>> SqliteProfileRepository::loa
     if (!active.value())
         return Outcome::ok(std::nullopt);
 
-    Statement statement{m_connection, kSelectProfile, "load profile"};
-    const application::Status ran = statement.exec({QString::number(*active.value())});
-    if (!ran.ok())
-        return Outcome::err(ran.error());
+    const application::Result<std::optional<domain::Profile>> loaded = loadById(*active.value());
+    if (!loaded.ok())
+        return Outcome::err(loaded.error());
+    if (loaded.value())
+        return loaded;
 
-    // A pointer into a missing row is not "no profile": the file says which
-    // household is active and the row it names is gone, which is corrupt data
-    // the caller has to see rather than a fresh empty state.
-    if (!statement.next())
-        return Outcome::err("profile: active profile " + std::to_string(*active.value()) +
-                            " does not exist");
+    // The pointer names a profile that is gone. Its household data is intact, so
+    // repair rather than refuse to open: a stale pointer is recoverable, a
+    // database that will not open is not. Fall back to the oldest household and
+    // rewrite the pointer so the next start is clean.
+    Statement first{m_connection, kSelectFirstProfileId, "find first profile"};
+    const application::Status looked = first.exec();
+    if (!looked.ok())
+        return Outcome::err(looked.error());
+    if (!first.next()) {
+        // No households at all is an empty state, not an error: the caller runs
+        // onboarding.
+        return Outcome::ok(std::nullopt);
+    }
 
-    application::Result<domain::Profile> decoded = decodeProfileRow(statement, "profile");
-    if (!decoded.ok())
-        return Outcome::err(decoded.error());
-    return Outcome::ok(std::move(decoded.value()));
+    const std::int64_t fallback = first.value(0).toLongLong();
+    const application::Status pointed = writeActiveProfileId(m_connection, fallback);
+    if (!pointed.ok())
+        return Outcome::err(pointed.error());
+    return loadById(fallback);
 }
 
 application::Result<std::optional<domain::Profile>>
