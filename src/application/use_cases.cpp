@@ -6,6 +6,7 @@
 #include "domain/jurisdiction.h"
 #include "domain/percentage.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -133,12 +134,20 @@ Result<domain::Profile> createProfile(const std::string& displayName, domain::Cu
 }
 
 Status changePhase(IProfileRepository& profiles, IPhaseHistoryRepository& history,
-                   domain::Profile& profile, domain::Phase next, std::string_view isoTimestamp)
+                   ITransactionFactory& transactions, domain::Profile& profile, domain::Phase next,
+                   std::string_view isoTimestamp)
 {
     if (isoTimestamp.empty())
         return Status::err("Changing phase needs a timestamp.");
     if (next == profile.phase)
         return Status::err("The household is already in that phase.");
+
+    // Both writes fail or neither does: the transaction is dropped without a
+    // commit on either early return, which rolls the history entry back too.
+    Result<std::unique_ptr<Transaction>> begun = transactions.begin();
+    if (!begun.ok())
+        return Status::err(begun.error());
+    std::unique_ptr<Transaction> transaction = std::move(begun.value());
 
     const Status appended = history.append(PhaseChange{std::string{isoTimestamp}, next});
     if (!appended.ok())
@@ -149,6 +158,10 @@ Status changePhase(IProfileRepository& profiles, IPhaseHistoryRepository& histor
     const Status saved = profiles.save(updated);
     if (!saved.ok())
         return saved;
+
+    const Status committed = transaction->commit();
+    if (!committed.ok())
+        return committed;
 
     profile.phase = next;
     return Status::success();

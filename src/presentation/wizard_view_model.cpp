@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -579,26 +580,42 @@ bool WizardViewModel::createEconomy()
     const domain::MonthFlow flow{m_income.value, m_needs.value, m_wants.value,
                                  m_income.value - m_needs.value - m_wants.value};
 
+    // A household is a profile, its accounts, the month's flow and the balances
+    // of those accounts: one decision, so one transaction. Without it a failure
+    // halfway leaves a profile the onboarding screen reads as "set up" and no
+    // accounts to go with it. Committed only once the last balance is stored;
+    // dropped uncommitted, which rolls the lot back, on the first failure.
+    application::Result<std::unique_ptr<application::Transaction>> begun =
+        controller->beginTransaction();
+    if (!begun.ok())
+        return fail(QString::fromStdString(begun.error()));
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
     application::Status status =
         controller->createHousehold(currency(), phaseAt(m_phaseIndex), trackingMode());
-    if (!status.ok())
-        return fail(QString::fromStdString(status.error()));
 
     for (const domain::Asset& asset : assets) {
-        status = controller->addAsset(asset);
         if (!status.ok())
-            return fail(QString::fromStdString(status.error()));
+            break;
+        status = controller->addAsset(asset);
     }
 
-    status = controller->recordMonth(month, flow);
-    if (!status.ok())
-        return fail(QString::fromStdString(status.error()));
+    if (status.ok())
+        status = controller->recordMonth(month, flow);
 
     for (std::size_t index = 0; index < assets.size(); ++index) {
+        if (!status.ok())
+            break;
         status = controller->recordValuation(assets[index].id, month,
                                              balances.at(static_cast<int>(index)));
-        if (!status.ok())
-            return fail(QString::fromStdString(status.error()));
+    }
+
+    if (status.ok())
+        status = transaction->commit();
+
+    if (!status.ok()) {
+        transaction.reset();
+        return fail(QString::fromStdString(status.error()));
     }
 
     m_createError.clear();

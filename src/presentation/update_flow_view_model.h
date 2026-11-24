@@ -163,6 +163,9 @@ public:
 
     /// Writes every non-empty balance for the month on screen. Returns the
     /// message to show when a field cannot be read or the write is refused.
+    /// The month is written whole or not at all: every row goes in inside one
+    /// transaction, which is dropped - rolling the month back - on the first row
+    /// that fails.
     Q_INVOKABLE QString saveBalances();
 
     /// Writes the cashflow step for the month on screen. Returns the message

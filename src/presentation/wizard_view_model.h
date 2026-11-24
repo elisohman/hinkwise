@@ -205,6 +205,10 @@ public:
     /// Creates the household exactly as the review step describes it: the
     /// profile, one asset per account, this month's flow and a valuation per
     /// account. Returns false and sets createError() when a use case refuses.
+    /// It is one transaction, so a refusal stores none of it: the onboarding
+    /// screen decides whether to show itself by whether a profile exists, and a
+    /// profile without the accounts it was reviewed with would hide the only
+    /// screen that can finish the job.
     Q_INVOKABLE bool createEconomy();
 
 signals:

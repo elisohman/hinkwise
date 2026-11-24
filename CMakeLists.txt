@@ -62,6 +62,7 @@ add_library(hinkwise_infrastructure STATIC
     src/infrastructure/sqlite/database.cpp
     src/infrastructure/sqlite/migrator.cpp
     src/infrastructure/sqlite/repositories.cpp
+    src/infrastructure/sqlite/sqlite_transaction.cpp
 )
 target_link_libraries(hinkwise_infrastructure PUBLIC
     hinkwise_domain

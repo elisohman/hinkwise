@@ -12,6 +12,7 @@
 #include <QString>
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -420,15 +421,35 @@ QString UpdateFlowViewModel::saveBalances()
         return m_balancesError;
     }
 
+    // One month of balances is one decision, so the rows are recorded inside one
+    // transaction: it is committed once every row succeeded, and dropped
+    // uncommitted - which rolls the month back - on the first row that fails.
+    application::Result<std::unique_ptr<application::Transaction>> begun =
+        controller->beginTransaction();
+    if (!begun.ok()) {
+        m_balancesError = QString::fromStdString(begun.error());
+        emit changed();
+        return m_balancesError;
+    }
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
     for (const Pending& entry : pending) {
         const application::Status status =
             entry.isDebt ? controller->recordDebtBalance(entry.id, chosen, entry.amount)
                          : controller->recordValuation(entry.id, chosen, entry.amount);
         if (!status.ok()) {
+            transaction.reset();
             m_balancesError = QString::fromStdString(status.error());
             emit changed();
             return m_balancesError;
         }
+    }
+
+    const application::Status committed = transaction->commit();
+    if (!committed.ok()) {
+        m_balancesError = QString::fromStdString(committed.error());
+        emit changed();
+        return m_balancesError;
     }
 
     m_balancesError.clear();

@@ -14,6 +14,7 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -541,13 +542,27 @@ QString AccountsViewModel::recordMonthBalances(const QVariantMap& balances)
     }
 
     const domain::YearMonth month = AppController::currentMonth();
+
+    // The month is recorded whole or not at all: every account's figure goes in
+    // inside one transaction, which is committed once the last one succeeded and
+    // dropped - rolling back the rows already written - on the first that fails.
+    application::Result<std::unique_ptr<application::Transaction>> begun =
+        controller->beginTransaction();
+    if (!begun.ok())
+        return QString::fromStdString(begun.error());
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
     for (const Pending& record : pending) {
         const application::Status status =
             controller->recordValuation(record.id, month, record.balance);
-        if (!status.ok())
+        if (!status.ok()) {
+            transaction.reset();
             return message(status);
+        }
     }
-    return {};
+
+    const application::Status committed = transaction->commit();
+    return committed.ok() ? QString{} : message(committed);
 }
 
 QString AccountsViewModel::addDebt(const QString& name, int kindIndex, const QString& rateText,
@@ -587,13 +602,29 @@ QString AccountsViewModel::addDebt(const QString& name, int kindIndex, const QSt
         newId().toStdString(), trimmed.toStdString(), liabilityKindAt(kindIndex), rate, terms.style,
         terms.payment, terms.fee, terms.termMonths);
 
-    application::Status status = controller->addLiability(liability);
-    if (!status.ok())
-        return message(status);
+    // The debt and the balance it was created with are one decision, so they are
+    // written inside one transaction: a loan must not survive without its
+    // opening figure, and a failed balance takes the loan with it.
+    application::Result<std::unique_ptr<application::Transaction>> begun =
+        controller->beginTransaction();
+    if (!begun.ok())
+        return QString::fromStdString(begun.error());
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
 
-    status =
-        controller->recordDebtBalance(liability.id, AppController::currentMonth(), amount.value);
-    return status.ok() ? QString{} : message(status);
+    application::Status status = controller->addLiability(liability);
+    if (status.ok())
+        status = controller->recordDebtBalance(liability.id, AppController::currentMonth(),
+                                               amount.value);
+    if (status.ok())
+        status = transaction->commit();
+
+    if (!status.ok()) {
+        // Dropping the transaction is what rolls the liability back; either way
+        // the household is told the error the use case reported.
+        transaction.reset();
+        return message(status);
+    }
+    return {};
 }
 
 QString AccountsViewModel::updateDebt(const QString& liabilityId, const QString& name,

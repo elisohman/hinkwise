@@ -12,6 +12,7 @@
 #include "domain/year_month.h"
 #include "ports.h"
 #include "result.h"
+#include "transaction.h"
 
 #include <string>
 #include <string_view>
@@ -74,8 +75,14 @@ Result<domain::Profile> createProfile(const std::string& displayName, domain::Cu
 /// `isoTimestamp` is stamped by the caller, because the clock is not the
 /// application layer's business. The change is validated first: an empty
 /// timestamp or the phase the household already has is rejected, and the
-/// profile is only mutated once both the history entry and the save succeed.
+/// profile passed in is only mutated once both writes have been stored.
+///
+/// The history entry and the profile are one write in two rows, so they happen
+/// inside one transaction: if either fails, neither is stored and the failure
+/// the repository reported is returned unchanged. A history entry that claimed
+/// a change the profile never got would be worse than no change at all.
 Status changePhase(IProfileRepository& profiles, IPhaseHistoryRepository& history,
-                   domain::Profile& profile, domain::Phase next, std::string_view isoTimestamp);
+                   ITransactionFactory& transactions, domain::Profile& profile, domain::Phase next,
+                   std::string_view isoTimestamp);
 
 } // namespace hinkwise::application

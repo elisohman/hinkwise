@@ -54,13 +54,9 @@ hinkwise_add_presentation_test(tst_cashflow_series presentation/tst_cashflow_ser
 hinkwise_add_presentation_test(tst_projection_series presentation/tst_projection_series.cpp)
 hinkwise_add_presentation_test(tst_fi_track presentation/tst_fi_track.cpp)
 
-# The setup wizard and the pages that read or write the household are tested
-# together against a real database in a temporary directory: creating a
-# household, recording a month and acting on the plan are the flows that have to
-# work end to end for the application to be usable at all. The view models live
-# in the executable, so the sources are compiled in here too.
-add_executable(tst_setup_flow
-    presentation/tst_setup_flow.cpp
+# The view models live in the executable, so every test that drives a screen
+# compiles them too. One list, so the suites cannot drift apart.
+set(HINKWISE_VIEW_MODELS
     ${CMAKE_SOURCE_DIR}/src/presentation/accounts_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/app_controller.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/cashflow_series.cpp
@@ -74,6 +70,16 @@ add_executable(tst_setup_flow
     ${CMAKE_SOURCE_DIR}/src/presentation/review_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/update_flow_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/wizard_view_model.cpp
+)
+
+# The setup wizard and the pages that read or write the household are tested
+# together against a real database in a temporary directory: creating a
+# household, recording a month and acting on the plan are the flows that have to
+# work end to end for the application to be usable at all. The view models live
+# in the executable, so the sources are compiled in here too.
+add_executable(tst_setup_flow
+    presentation/tst_setup_flow.cpp
+    ${HINKWISE_VIEW_MODELS}
 )
 target_link_libraries(tst_setup_flow PRIVATE
     hinkwise_application
@@ -115,8 +121,37 @@ target_include_directories(tst_settings_flow PRIVATE
 )
 add_test(NAME tst_settings_flow COMMAND tst_settings_flow)
 
+# Every screen decision that writes more than one row is proved here, against a
+# real database: the last write is made to fail and the rows written before it
+# have to be gone, which is the whole point of the transaction around them.
+add_executable(tst_multi_write_flow
+    presentation/tst_multi_write_flow.cpp
+    ${HINKWISE_VIEW_MODELS}
+)
+target_link_libraries(tst_multi_write_flow PRIVATE
+    hinkwise_application
+    hinkwise_domain
+    hinkwise_infrastructure
+    Qt6::Core
+    Qt6::Qml
+    Qt6::Sql
+    Qt6::Test
+)
+target_include_directories(tst_multi_write_flow PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/presentation
+)
+add_test(NAME tst_multi_write_flow COMMAND tst_multi_write_flow)
+
 # Serialisation belongs to the domain, so this one needs no database.
 hinkwise_add_test(tst_serialisation infrastructure/tst_serialisation.cpp)
+
+# The transaction boundary is an infrastructure behaviour, so it is tested over a
+# real file: what has to be true is what a second connection can read afterwards.
+# The application layer is linked for changePhase(), which is the use case that
+# writes two rows.
+hinkwise_add_infrastructure_test(tst_transactions infrastructure/tst_transactions.cpp)
+target_link_libraries(tst_transactions PRIVATE hinkwise_application)
 
 hinkwise_add_infrastructure_test(tst_backup infrastructure/tst_backup.cpp)
 hinkwise_add_infrastructure_test(tst_migrator infrastructure/tst_migrator.cpp)

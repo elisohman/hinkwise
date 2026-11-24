@@ -18,7 +18,9 @@
 #include <QTest>
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -265,6 +267,67 @@ public:
     }
 };
 
+/// A stand-in for the database's transaction.
+///
+/// The fakes write straight into their own containers, so a rollback has to put
+/// them back: the factory is told how, and does it both when a transaction is
+/// dropped without a commit and when its commit fails - the two ways SQLite ends
+/// a transaction without storing it.
+class FakeTransactionFactory final : public ITransactionFactory {
+public:
+    /// Restores the repositories the transaction covered. Empty when the test
+    /// does not need undoing.
+    std::function<void()> restore;
+    bool failBegin = false;
+    bool failCommit = false;
+    int commits = 0;
+    int rollbacks = 0;
+
+    class Boundary final : public Transaction {
+    public:
+        explicit Boundary(FakeTransactionFactory& owner)
+            : m_owner(owner)
+        {
+        }
+
+        ~Boundary() override
+        {
+            if (m_ended)
+                return;
+            m_owner.rollBack();
+        }
+
+        Status commit() override
+        {
+            m_ended = true;
+            if (m_owner.failCommit) {
+                m_owner.rollBack();
+                return Status::err("the boundary could not be committed");
+            }
+            ++m_owner.commits;
+            return Status::success();
+        }
+
+    private:
+        FakeTransactionFactory& m_owner;
+        bool m_ended = false;
+    };
+
+    Result<std::unique_ptr<Transaction>> begin() override
+    {
+        if (failBegin)
+            return Result<std::unique_ptr<Transaction>>::err("no boundary");
+        return Result<std::unique_ptr<Transaction>>::ok(std::make_unique<Boundary>(*this));
+    }
+
+    void rollBack()
+    {
+        ++rollbacks;
+        if (restore)
+            restore();
+    }
+};
+
 Profile sampleProfile()
 {
     Profile profile;
@@ -298,7 +361,9 @@ private slots:
     void changePhaseAppendsHistoryAndPersists();
     void changePhaseRejectsTheCurrentPhase();
     void changePhaseRejectsAnEmptyTimestamp();
-    void changePhaseKeepsTheProfileWhenTheSaveFails();
+    void changePhaseRollsBackBothWritesWhenTheSaveFails();
+    void changePhaseReportsAFailedCommitAndStoresNothing();
+    void changePhaseReportsWhenNoBoundaryCanBeOpened();
 };
 
 void TestUseCases::recordMonthStoresTheFlow()
@@ -543,11 +608,16 @@ void TestUseCases::changePhaseAppendsHistoryAndPersists()
 {
     FakeProfileRepository profiles;
     FakePhaseHistoryRepository history;
+    FakeTransactionFactory transactions;
     Profile profile = sampleProfile();
 
-    const Status changed =
-        changePhase(profiles, history, profile, Phase::Preserving, "2026-03-15T12:00:00Z");
+    const Status changed = changePhase(profiles, history, transactions, profile, Phase::Preserving,
+                                       "2026-03-15T12:00:00Z");
     QVERIFY2(changed.ok(), changed.error().c_str());
+
+    // Both writes went through one boundary, which was committed once.
+    QCOMPARE(transactions.commits, 1);
+    QCOMPARE(transactions.rollbacks, 0);
 
     QCOMPARE(static_cast<int>(profile.phase), static_cast<int>(Phase::Preserving));
     QVERIFY(profiles.stored.has_value());
@@ -564,10 +634,11 @@ void TestUseCases::changePhaseRejectsTheCurrentPhase()
 {
     FakeProfileRepository profiles;
     FakePhaseHistoryRepository history;
+    FakeTransactionFactory transactions;
     Profile profile = sampleProfile();
 
-    const Status changed =
-        changePhase(profiles, history, profile, Phase::BuildingWealth, "2026-03-15T12:00:00Z");
+    const Status changed = changePhase(profiles, history, transactions, profile,
+                                       Phase::BuildingWealth, "2026-03-15T12:00:00Z");
     QVERIFY(!changed.ok());
     QVERIFY(history.entries.empty());
 }
@@ -576,24 +647,88 @@ void TestUseCases::changePhaseRejectsAnEmptyTimestamp()
 {
     FakeProfileRepository profiles;
     FakePhaseHistoryRepository history;
+    FakeTransactionFactory transactions;
     Profile profile = sampleProfile();
 
-    const Status changed = changePhase(profiles, history, profile, Phase::Preserving, "");
+    const Status changed =
+        changePhase(profiles, history, transactions, profile, Phase::Preserving, "");
     QVERIFY(!changed.ok());
     QVERIFY(history.entries.empty());
     QCOMPARE(static_cast<int>(profile.phase), static_cast<int>(Phase::BuildingWealth));
 }
 
-void TestUseCases::changePhaseKeepsTheProfileWhenTheSaveFails()
+/// The history entry is written first, so a failed save used to leave a change on
+/// record that the profile never got. The boundary takes it back.
+void TestUseCases::changePhaseRollsBackBothWritesWhenTheSaveFails()
 {
     FakeProfileRepository profiles;
     profiles.failSave = true;
     FakePhaseHistoryRepository history;
-    Profile profile = sampleProfile();
+    FakeTransactionFactory transactions;
 
-    const Status changed =
-        changePhase(profiles, history, profile, Phase::Preserving, "2026-03-15T12:00:00Z");
+    const std::optional<Profile> profileBefore = profiles.stored;
+    const std::vector<PhaseChange> historyBefore = history.entries;
+    transactions.restore = [&profiles, &history, profileBefore, historyBefore] {
+        profiles.stored = profileBefore;
+        history.entries = historyBefore;
+    };
+
+    Profile profile = sampleProfile();
+    const Status changed = changePhase(profiles, history, transactions, profile, Phase::Preserving,
+                                       "2026-03-15T12:00:00Z");
     QVERIFY(!changed.ok());
+    QVERIFY(!changed.error().empty());
+    QCOMPARE(transactions.commits, 0);
+    QCOMPARE(transactions.rollbacks, 1);
+
+    QCOMPARE(static_cast<int>(profile.phase), static_cast<int>(Phase::BuildingWealth));
+    QVERIFY(history.entries.empty());
+}
+
+/// A commit that fails stores nothing, and the caller reads the error the
+/// boundary reported rather than a success.
+void TestUseCases::changePhaseReportsAFailedCommitAndStoresNothing()
+{
+    FakeProfileRepository profiles;
+    FakePhaseHistoryRepository history;
+    FakeTransactionFactory transactions;
+    transactions.failCommit = true;
+
+    const std::optional<Profile> profileBefore = profiles.stored;
+    const std::vector<PhaseChange> historyBefore = history.entries;
+    transactions.restore = [&profiles, &history, profileBefore, historyBefore] {
+        profiles.stored = profileBefore;
+        history.entries = historyBefore;
+    };
+
+    Profile profile = sampleProfile();
+    const Status changed = changePhase(profiles, history, transactions, profile, Phase::Preserving,
+                                       "2026-03-15T12:00:00Z");
+    QVERIFY(!changed.ok());
+    QVERIFY(!changed.error().empty());
+    QCOMPARE(transactions.commits, 0);
+
+    QCOMPARE(static_cast<int>(profile.phase), static_cast<int>(Phase::BuildingWealth));
+    QVERIFY(!profiles.stored.has_value());
+    QVERIFY(history.entries.empty());
+}
+
+void TestUseCases::changePhaseReportsWhenNoBoundaryCanBeOpened()
+{
+    FakeProfileRepository profiles;
+    FakePhaseHistoryRepository history;
+    FakeTransactionFactory transactions;
+    transactions.failBegin = true;
+
+    Profile profile = sampleProfile();
+    const Status changed = changePhase(profiles, history, transactions, profile, Phase::Preserving,
+                                       "2026-03-15T12:00:00Z");
+    QVERIFY(!changed.ok());
+    QVERIFY(!changed.error().empty());
+
+    // Nothing is written without a boundary to write it in.
+    QVERIFY(!profiles.stored.has_value());
+    QVERIFY(history.entries.empty());
     QCOMPARE(static_cast<int>(profile.phase), static_cast<int>(Phase::BuildingWealth));
 }
 

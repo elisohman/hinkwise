@@ -198,8 +198,13 @@ public:
     Q_INVOKABLE QString removeAccount(const QString& assetId);
     Q_INVOKABLE QString recordValuation(const QString& assetId, const QString& balanceText);
     /// Saves one balance per account in the selected bucket at once. `bytes` is
-    /// keyed by asset id; a missing id is left alone.
+    /// keyed by asset id; a missing id is left alone. The month is one decision:
+    /// every figure goes in inside one transaction, so a refusal leaves the whole
+    /// month untouched rather than half recorded.
     Q_INVOKABLE QString recordMonthBalances(const QVariantMap& balances);
+    /// Adds the debt and records the balance it starts with. The two writes are
+    /// one decision, inside one transaction: a refused balance takes the loan
+    /// with it instead of leaving a debt with no figure against it.
     Q_INVOKABLE QString addDebt(const QString& name, int kindIndex, const QString& rateText,
                                 int styleIndex, const QString& paymentText, const QString& feeText,
                                 const QString& termYearsText, const QString& balanceText);

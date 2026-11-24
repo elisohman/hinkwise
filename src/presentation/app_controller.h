@@ -5,6 +5,7 @@
 
 #include "application/dashboard.h"
 #include "application/result.h"
+#include "application/transaction.h"
 #include "domain/asset.h"
 #include "domain/household.h"
 #include "domain/liability.h"
@@ -34,6 +35,7 @@ class SqliteMonthFlowRepository;
 class SqlitePhaseHistoryRepository;
 class SqlitePlannedExpenseRepository;
 class SqliteProfileRepository;
+class SqliteTransactionFactory;
 class SqliteValuationRepository;
 } // namespace hinkwise::infrastructure::sqlite
 
@@ -46,7 +48,12 @@ namespace hinkwise::presentation {
 /// mutation goes through one of the use cases below and announces itself with
 /// dataChanged(), which is what keeps the rail footer and the dashboard in step
 /// with the page that did the writing.
-class AppController : public QObject {
+///
+/// It is also the transaction factory, because it owns the connection the
+/// boundary is drawn on. A screen that writes more than one row takes a
+/// transaction from beginTransaction() and commits it once every write has
+/// succeeded.
+class AppController : public QObject, public application::ITransactionFactory {
     Q_OBJECT
     QML_ELEMENT
     QML_SINGLETON
@@ -148,7 +155,9 @@ public:
     ///
     /// Every one returns the use case's own message on failure, and emits
     /// dataChanged() only when the write succeeded, so a screen can show the
-    /// message and leave its state alone.
+    /// message and leave its state alone. Inside a transaction the signal waits
+    /// for the commit, so a form that writes several rows is announced once and
+    /// only when they are really stored.
     /// Creates the household. The tracking mode is part of the same write: the
     /// wizard asks for it on the phase step, and a household that started in
     /// one mode and was saved again in the other would have two writes where
@@ -169,15 +178,51 @@ public:
     application::Status recordDebtBalance(std::string_view liabilityId, domain::YearMonth month,
                                           domain::Money balance);
 
+    /// Begins a transaction that covers every write until it is committed.
+    ///
+    /// A form that makes one decision out of several rows takes one of these:
+    /// the wizard's household, a whole month of balances, a debt together with
+    /// the balance it was created with. commit() stores them together; dropping
+    /// the transaction without committing rolls all of them back, which is what
+    /// a failure halfway through the writes ends up doing.
+    ///
+    /// dataChanged() is held back until the commit, so no screen reloads and
+    /// shows rows that a rollback may still throw away; the commit announces the
+    /// whole transaction once.
+    ///
+    /// A second begin() while one is open fails rather than nesting, and the
+    /// transaction that is open is left alone.
+    application::Result<std::unique_ptr<application::Transaction>> beginTransaction();
+
+    /// The application layer's ITransactionFactory, so that a use case which
+    /// writes more than one row - changePhase() - can be handed this controller.
+    /// The same call as beginTransaction().
+    application::Result<std::unique_ptr<application::Transaction>> begin() override
+    {
+        return beginTransaction();
+    }
+
 signals:
     /// The household's data changed. Every screen reloads from the controller,
     /// so the page that wrote and the rail that summarises it never disagree.
     void dataChanged();
 
 private:
+    /// The transaction beginTransaction() hands out. Defined in the
+    /// implementation file because it is the one thing here that has to know
+    /// when a transaction ended: it is how dataChanged() is held back and then
+    /// announced once.
+    class OpenTransaction;
+
     /// Emits dataChanged() for a write that went through, and hands the same
     /// Status back so callers do not have to branch twice.
     application::Status report(application::Status status);
+
+    /// Called by the transaction beginTransaction() handed out, once it has
+    /// ended: on a commit the whole transaction is announced in one
+    /// dataChanged(), and a rollback announces nothing because nothing outside
+    /// it changed.
+    void endTransaction(bool committed);
 
     // The database is declared first so that it outlives the repositories
     // borrowing its connection.
@@ -190,7 +235,17 @@ private:
     std::unique_ptr<infrastructure::sqlite::SqliteMonthFlowRepository> m_flows;
     std::unique_ptr<infrastructure::sqlite::SqlitePlannedExpenseRepository> m_plannedExpenses;
     std::unique_ptr<infrastructure::sqlite::SqlitePhaseHistoryRepository> m_phaseHistory;
+    std::unique_ptr<infrastructure::sqlite::SqliteTransactionFactory> m_transactions;
     QString m_lastError;
+
+    /// How many transactions this controller has open. Nesting is refused, so
+    /// it is 0 or 1; it is a count so that a rollback and a commit can be told
+    /// apart without the number going negative.
+    int m_openTransactions = 0;
+
+    /// A write went through while a transaction was open, so its commit has
+    /// something to announce.
+    bool m_changedInTransaction = false;
 
     static AppController* s_instance;
 };

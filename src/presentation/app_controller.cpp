@@ -8,6 +8,7 @@
 #include "infrastructure/json/backup.h"
 #include "infrastructure/sqlite/database.h"
 #include "infrastructure/sqlite/repositories.h"
+#include "infrastructure/sqlite/sqlite_transaction.h"
 
 #include <QDate>
 #include <QDateTime>
@@ -77,6 +78,50 @@ bool namesTheDatabase(const QString& destination, const QString& databasePath)
 
 } // namespace
 
+/// The transaction beginTransaction() hands out.
+///
+/// It is the SQLite transaction plus the one fact the controller needs: when it
+/// ended. While one is open dataChanged() is held back, so no screen reloads
+/// and reads rows that a rollback may throw away; a commit announces the whole
+/// transaction in one signal, and a rollback announces nothing because nothing
+/// outside the transaction changed.
+///
+/// It refers to its controller, which owns the database it runs on, so it must
+/// not outlive the controller: the holder keeps it in the scope of the
+/// operation that began it.
+class AppController::OpenTransaction final : public application::Transaction {
+public:
+    OpenTransaction(std::unique_ptr<application::Transaction> inner, AppController& owner)
+        : m_inner(std::move(inner))
+        , m_owner(owner)
+    {
+    }
+
+    ~OpenTransaction() override
+    {
+        if (m_committed)
+            return;
+
+        // Roll back before the controller is told, so that whatever a slot does
+        // on the way out already reads what the database strips back to.
+        m_inner.reset();
+        m_owner.endTransaction(false);
+    }
+
+    application::Status commit() override
+    {
+        m_committed = true;
+        const application::Status committed = m_inner->commit();
+        m_owner.endTransaction(committed.ok());
+        return committed;
+    }
+
+private:
+    std::unique_ptr<application::Transaction> m_inner;
+    AppController& m_owner;
+    bool m_committed = false;
+};
+
 AppController* AppController::s_instance = nullptr;
 
 AppController::AppController(QObject* parent)
@@ -140,6 +185,7 @@ bool AppController::initialise()
         std::make_unique<infrastructure::sqlite::SqlitePlannedExpenseRepository>(connection);
     m_phaseHistory =
         std::make_unique<infrastructure::sqlite::SqlitePhaseHistoryRepository>(connection);
+    m_transactions = std::make_unique<infrastructure::sqlite::SqliteTransactionFactory>(connection);
 
     m_lastError.clear();
     return true;
@@ -198,8 +244,8 @@ application::Status AppController::changePhase(domain::Phase next)
         return application::Status::err(toStd(tr("There is no household to change phase for.")));
 
     const QString stamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    return report(
-        application::changePhase(*m_profiles, *m_phaseHistory, *current, next, toStd(stamp)));
+    return report(application::changePhase(*m_profiles, *m_phaseHistory, *this, *current, next,
+                                           toStd(stamp)));
 }
 
 std::vector<application::PhaseChange> AppController::phaseHistory() const
@@ -410,10 +456,49 @@ std::vector<domain::PlannedExpense> AppController::plannedExpenses() const
     return rowsOrEmpty(m_plannedExpenses->all());
 }
 
+application::Result<std::unique_ptr<application::Transaction>> AppController::beginTransaction()
+{
+    using Outcome = application::Result<std::unique_ptr<application::Transaction>>;
+
+    if (!m_transactions)
+        return Outcome::err(toStd(tr("The database is not open.")));
+
+    application::Result<std::unique_ptr<application::Transaction>> begun = m_transactions->begin();
+    if (!begun.ok())
+        return Outcome::err(begun.error());
+
+    ++m_openTransactions;
+    m_changedInTransaction = false;
+    return Outcome::ok(std::make_unique<OpenTransaction>(std::move(begun.value()), *this));
+}
+
+void AppController::endTransaction(bool committed)
+{
+    if (m_openTransactions > 0)
+        --m_openTransactions;
+    if (m_openTransactions > 0)
+        return;
+
+    const bool announce = committed && m_changedInTransaction;
+    m_changedInTransaction = false;
+    if (announce)
+        emit dataChanged();
+}
+
 application::Status AppController::report(application::Status status)
 {
-    if (status.ok())
-        emit dataChanged();
+    if (!status.ok())
+        return status;
+
+    // Inside a transaction nothing is announced yet: a screen that reloaded now
+    // would read rows the commit can still throw away. The commit announces
+    // them once, for the whole transaction.
+    if (m_openTransactions > 0) {
+        m_changedInTransaction = true;
+        return status;
+    }
+
+    emit dataChanged();
     return status;
 }
 
