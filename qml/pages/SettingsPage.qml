@@ -18,6 +18,23 @@ import Hinkwise
 Item {
     id: page
 
+    /// The households this database holds. The settings list, the rail's
+    /// switcher and the shell's example badge all read this one model, so the
+    /// three cannot disagree about which household is open.
+    required property ProfilesViewModel profiles
+
+    /// True while any field on this page holds what the household typed but has
+    /// not saved. The shell refuses a profile switch while this is set.
+    readonly property bool unsavedChanges: settings.trackingModeDirty
+                                          || settings.displayNameDirty
+                                          || settings.bufferTargetDirty
+                                          || settings.jurisdictionDirty
+
+    /// The profile whose deletion has been asked for, and its name for the
+    /// question. Zero while no deletion is waiting.
+    property int pendingDeleteId: 0
+    property string pendingDeleteName: ""
+
     // The four phases as one control. The label wraps rather than elides: at
     // the window's minimum width "Financially independent" is two lines, and a
     // phase the household cannot read is not a choice.
@@ -50,6 +67,46 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             wrapMode: Text.WordWrap
+        }
+    }
+
+    // A switch drawn from the theme's own colours rather than the platform's,
+    // so the row that changes household looks like the rest of the page. The
+    // active profile's switch is disabled: choosing the household that is
+    // already open would do nothing.
+    component ProfileSwitch: Item {
+        id: control
+
+        property bool checked: false
+
+        signal toggled()
+
+        implicitWidth: 36
+        implicitHeight: 20
+        opacity: control.enabled ? 1.0 : 0.45
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: control.checked ? Theme.positive : Theme.surfaceRaised
+            border.width: 1
+            border.color: control.checked ? Theme.positive : Theme.border
+        }
+
+        Rectangle {
+            y: 3
+            x: control.checked ? parent.width - width - 3 : 3
+            implicitWidth: 14
+            implicitHeight: 14
+            radius: 7
+            color: Theme.background
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: control.enabled
+            cursorShape: Qt.PointingHandCursor
+            onClicked: control.toggled()
         }
     }
 
@@ -124,6 +181,214 @@ Item {
             ColumnLayout {
                 width: scroll.availableWidth
                 spacing: Theme.spaceLg
+
+                // -----------------------------------------------------------
+                // Profiles
+                // -----------------------------------------------------------
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: profilesCard.implicitHeight + 2 * Theme.spaceLg
+                    radius: Theme.radius
+                    color: Theme.surface
+                    border.color: Theme.border
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: profilesCard
+
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceLg
+                        spacing: Theme.spaceSm
+
+                        SectionHeader {
+                            Layout.fillWidth: true
+                            title: qsTr("Profiles")
+                            note: qsTr("%1 in this database").arg(page.profiles.count)
+                        }
+
+                        Text {
+                            text: qsTr("A profile is one independent financial dataset: its own "
+                                 + "accounts, debts, months and history. Profiles do not sync. "
+                                 + "Duplicating one makes a copy, not a second view of the same "
+                                 + "household.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontBody
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceXs
+
+                            Repeater {
+                                model: page.profiles.profiles
+
+                                delegate: Rectangle {
+                                    id: profileRow
+
+                                    required property var modelData
+
+                                    Layout.fillWidth: true
+                                    implicitHeight: profileRowLayout.implicitHeight
+                                                     + 2 * Theme.spaceSm
+                                    radius: Theme.radiusSmall
+                                    color: profileRow.modelData.isActive ? Theme.surfaceRaised
+                                                                        : "transparent"
+                                    border.width: 1
+                                    border.color: profileRow.modelData.isActive ? Theme.border
+                                                                               : "transparent"
+
+                                    RowLayout {
+                                        id: profileRowLayout
+
+                                        anchors.fill: parent
+                                        anchors.margins: Theme.spaceSm
+                                        spacing: Theme.spaceSm
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 2
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spaceSm
+
+                                                Text {
+                                                    text: profileRow.modelData.name
+                                                    color: Theme.textPrimary
+                                                    font.pixelSize: Theme.fontBody
+                                                    font.weight: Font.DemiBold
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+
+                                                // An example says so here as well as in the
+                                                // rail: the list is where the household
+                                                // decides what to delete.
+                                                Rectangle {
+                                                    visible: profileRow.modelData.isExample
+                                                    implicitWidth: exampleTag.implicitWidth
+                                                                   + 2 * Theme.spaceSm
+                                                    implicitHeight: exampleTag.implicitHeight
+                                                                    + 2 * Theme.spaceXs
+                                                    radius: Theme.radiusSmall
+                                                    color: Theme.surface
+                                                    border.width: 1
+                                                    border.color: Theme.warning
+
+                                                    Text {
+                                                        id: exampleTag
+
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Example")
+                                                        color: Theme.warning
+                                                        font.pixelSize: Theme.fontCaption
+                                                        font.weight: Font.DemiBold
+                                                    }
+                                                }
+                                            }
+
+                                            Text {
+                                                text: profileRow.modelData.trackingModeLabel
+                                                      + " · " + profileRow.modelData.phaseLabel
+                                                color: Theme.textMuted
+                                                font.pixelSize: Theme.fontCaption
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+
+                                        Text {
+                                            visible: profileRow.modelData.isActive
+                                            text: qsTr("Current")
+                                            color: Theme.textSecondary
+                                            font.pixelSize: Theme.fontCaption
+                                        }
+
+                                        ProfileSwitch {
+                                            checked: profileRow.modelData.isActive
+                                            enabled: !profileRow.modelData.isActive
+                                            onToggled: page.profiles.switchTo(
+                                                           profileRow.modelData.id)
+                                        }
+
+                                        PrimaryButton {
+                                            text: qsTr("Delete")
+                                            filled: false
+                                            onClicked: {
+                                                page.pendingDeleteId = profileRow.modelData.id;
+                                                page.pendingDeleteName = profileRow.modelData.name;
+                                                deleteProfileDialog.open();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceSm
+
+                            PrimaryButton {
+                                text: qsTr("New profile")
+                                onClicked: page.profiles.createNewProfile()
+                            }
+
+                            PrimaryButton {
+                                text: qsTr("Duplicate profile")
+                                filled: false
+                                onClicked: {
+                                    if (page.profiles.beginDuplicate(page.profiles.activeId).length
+                                            === 0)
+                                        duplicateDialog.open();
+                                }
+                            }
+
+                            PrimaryButton {
+                                text: qsTr("Create an example")
+                                filled: false
+                                onClicked: exampleDialog.open()
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Text {
+                            text: qsTr("Creates an independent copy. Changes will not sync "
+                                 + "between profiles.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            visible: page.profiles.actionMessage.length > 0
+                            text: page.profiles.actionMessage
+                            textFormat: Text.PlainText
+                            color: Theme.positive
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            visible: page.profiles.actionError.length > 0
+                            text: page.profiles.actionError
+                            textFormat: Text.PlainText
+                            color: Theme.danger
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
 
                 // -----------------------------------------------------------
                 // Phase
@@ -851,6 +1116,15 @@ Item {
                             wrapMode: Text.WordWrap
                         }
 
+                        Text {
+                            text: qsTr("A duplicate stays inside this database. Use Export for a "
+                                 + "copy you can keep.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.topMargin: Theme.spaceXs
@@ -859,10 +1133,10 @@ Item {
                         }
 
                         Text {
-                            text: qsTr("Importing a backup is not available yet. It would have "
-                                 + "to replace everything already recorded, and this build "
-                                 + "cannot do that without risking what is here, so it writes "
-                                 + "backups and nothing else.")
+                            text: qsTr("Import is not yet available. It would have to replace "
+                                 + "everything already recorded, and this build cannot do that "
+                                 + "without risking what is here, so it writes backups and "
+                                 + "nothing else.")
                             color: Theme.textSecondary
                             font.pixelSize: Theme.fontCaption
                             Layout.fillWidth: true
@@ -1053,6 +1327,233 @@ Item {
         nameFilters: [qsTr("JSON backup (*.json)")]
         currentFile: settings.backupFileUrl
         onAccepted: settings.exportBackup(selectedFile)
+    }
+
+    // A copy is named before it exists: two profiles with one name are two rows
+    // the household cannot tell apart.
+    Popup {
+        id: duplicateDialog
+
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(480, parent ? parent.width - 2 * Theme.spaceLg : 480)
+        modal: true
+        focus: true
+        padding: Theme.spaceLg
+        closePolicy: Popup.CloseOnEscape
+        // Dismissing the question is the same as cancelling it; confirming has
+        // already cleared the pending name by the time this runs.
+        onClosed: page.profiles.cancelDuplicate()
+
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.72)
+        }
+
+        background: Rectangle {
+            radius: Theme.radius
+            color: Theme.surfaceRaised
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+
+            Text {
+                text: qsTr("Duplicate profile")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontTitle
+                font.weight: Font.DemiBold
+                Layout.fillWidth: true
+            }
+
+            Text {
+                text: qsTr("Creates an independent copy. Changes will not sync between "
+                     + "profiles.")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontBody
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                text: qsTr("Name of the copy")
+                color: Theme.textMuted
+                font.pixelSize: Theme.fontCaption
+                Layout.fillWidth: true
+            }
+
+            TextField {
+                id: duplicateNameField
+
+                Layout.fillWidth: true
+                text: page.profiles.duplicateName
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontBody
+                selectionColor: Theme.buffer
+                selectedTextColor: Theme.background
+                onTextEdited: page.profiles.duplicateName = text
+
+                background: Rectangle {
+                    implicitHeight: 34
+                    radius: Theme.radiusSmall
+                    color: Theme.background
+                    border.width: 1
+                    border.color: duplicateNameField.activeFocus ? Theme.textSecondary
+                                                                 : Theme.border
+                }
+            }
+
+            Text {
+                visible: page.profiles.actionError.length > 0
+                text: page.profiles.actionError
+                textFormat: Text.PlainText
+                color: Theme.danger
+                font.pixelSize: Theme.fontCaption
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spaceSm
+                spacing: Theme.spaceSm
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                PrimaryButton {
+                    text: qsTr("Cancel")
+                    filled: false
+                    onClicked: duplicateDialog.close()
+                }
+
+                PrimaryButton {
+                    text: qsTr("Create copy")
+                    onClicked: {
+                        if (page.profiles.confirmDuplicate().length === 0)
+                            duplicateDialog.close();
+                    }
+                }
+            }
+        }
+    }
+
+    // Two stories, both flagged as examples. The choice says what each one
+    // contains before it is written, because an example that surprises the
+    // household is worse than none.
+    Popup {
+        id: exampleDialog
+
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(520, parent ? parent.width - 2 * Theme.spaceLg : 520)
+        modal: true
+        focus: true
+        padding: Theme.spaceLg
+        closePolicy: Popup.CloseOnEscape
+
+        Overlay.modal: Rectangle {
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.72)
+        }
+
+        background: Rectangle {
+            radius: Theme.radius
+            color: Theme.surfaceRaised
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spaceMd
+
+            Text {
+                text: qsTr("Create an example")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontTitle
+                font.weight: Font.DemiBold
+                Layout.fillWidth: true
+            }
+
+            Text {
+                text: qsTr("An example is a whole household built from a story: its accounts, "
+                     + "debts, months and balances. It is marked as an example everywhere, "
+                     + "and deleting it removes every row it made.")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontBody
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+                model: page.profiles.exampleChoices
+
+                delegate: ColumnLayout {
+                    id: exampleChoice
+
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing: Theme.spaceXs
+
+                    PrimaryButton {
+                        Layout.fillWidth: true
+                        text: exampleChoice.modelData.label
+                        onClicked: {
+                            if (page.profiles.createExample(exampleChoice.modelData.index).length
+                                    === 0)
+                                exampleDialog.close();
+                        }
+                    }
+
+                    Text {
+                        text: exampleChoice.modelData.description
+                        color: Theme.textMuted
+                        font.pixelSize: Theme.fontCaption
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
+            Text {
+                visible: page.profiles.actionError.length > 0
+                text: page.profiles.actionError
+                textFormat: Text.PlainText
+                color: Theme.danger
+                font.pixelSize: Theme.fontCaption
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spaceSm
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                PrimaryButton {
+                    text: qsTr("Cancel")
+                    filled: false
+                    onClicked: exampleDialog.close()
+                }
+            }
+        }
+    }
+
+    // Deleting a profile is deleting a household's whole record, so the
+    // question says what goes with it in the same words every time.
+    ConfirmDialog {
+        id: deleteProfileDialog
+
+        title: qsTr("Delete profile")
+        message: qsTr("Delete %1? Its accounts, debts, months and history go with it. This "
+                      + "cannot be undone.")
+                     .arg(page.pendingDeleteName)
+        onConfirmed: page.profiles.deleteProfile(page.pendingDeleteId)
     }
 
     // The phase change, with what it does to this household's own figures.

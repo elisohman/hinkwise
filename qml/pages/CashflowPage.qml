@@ -27,6 +27,11 @@ Item {
     /// which mode the household chose.
     required property string updateActionLabel
 
+    /// True while the month editor holds what the household typed but has not
+    /// saved. The shell refuses a profile switch while this is set, so the draft
+    /// is never thrown away by a change of household.
+    readonly property bool unsavedChanges: cashflow.dirty
+
     signal updateRequested()
 
     // One horizontal stacked bar: needs, then wants, then saving, each a share

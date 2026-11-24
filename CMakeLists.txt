@@ -46,6 +46,7 @@ endif()
 # domain, so the calculations stay testable without a GUI or a database.
 add_library(hinkwise_application STATIC
     src/application/dashboard.cpp
+    src/application/examples.cpp
     src/application/update_flow.cpp
     src/application/use_cases.cpp
 )
@@ -122,6 +123,8 @@ qt_add_qml_module(hinkwise
         src/presentation/dashboard_view_model.h
         src/presentation/plan_view_model.cpp
         src/presentation/plan_view_model.h
+        src/presentation/profiles_view_model.cpp
+        src/presentation/profiles_view_model.h
         src/presentation/review_view_model.cpp
         src/presentation/review_view_model.h
         src/presentation/settings_view_model.cpp

@@ -27,6 +27,31 @@ ApplicationWindow {
         id: updateFlowModel
     }
 
+    /// The households in this database. One model feeds the settings list, the
+    /// rail's switcher and the shell's example badge, so the three cannot
+    /// disagree about which one is open.
+    ProfilesViewModel {
+        id: profilesModel
+
+        // Only the shell knows what is on screen, so the two things a switch
+        // must not throw away are bound here from the pages that own them.
+        updateFlowOpen: updateFlow.visible
+        cashflowDirty: cashflowPage.unsavedChanges
+        settingsDirty: settingsPage.unsavedChanges
+
+        // A profile was created empty and is active now: the wizard fills it
+        // in, and the shell steps aside until it has.
+        onOnboardingRequested: {
+            wizardPage.restart();
+            window.onboarding = true;
+        }
+    }
+
+    /// True while the wizard is filling in a profile created from settings.
+    /// The pages are hidden meanwhile, because the wizard creates the household
+    /// every other screen needs before there is anything to show.
+    property bool onboarding: false
+
     // The update flow is the same sheet wherever it starts: the overview's
     // status line, the accounts page, cashflow, or the plan with nothing to
     // project. Opening it always begins at the current month.
@@ -48,13 +73,16 @@ ApplicationWindow {
     // first run takes the whole window. Once the wizard has written the
     // profile, dashboardModel.hasProfile flips and the shell appears.
     OnboardingPage {
+        id: wizardPage
+
         anchors.fill: parent
-        visible: !dashboardModel.hasProfile
+        visible: !dashboardModel.hasProfile || window.onboarding
+        onFinished: window.onboarding = false
     }
 
     RowLayout {
         anchors.fill: parent
-        visible: dashboardModel.hasProfile
+        visible: dashboardModel.hasProfile && !window.onboarding
         spacing: 0
 
         NavRail {
@@ -63,6 +91,7 @@ ApplicationWindow {
             Layout.fillHeight: true
             phaseLabel: dashboardModel.phaseLabel
             yearsOfFreedomLabel: dashboardModel.yearsOfFreedomLabel
+            profiles: profilesModel
         }
 
         StackLayout {
@@ -82,6 +111,8 @@ ApplicationWindow {
             }
 
             CashflowPage {
+                id: cashflowPage
+
                 updateActionLabel: dashboardModel.updateActionLabel
                 onUpdateRequested: window.openUpdateFlow()
             }
@@ -98,6 +129,9 @@ ApplicationWindow {
             }
 
             SettingsPage {
+                id: settingsPage
+
+                profiles: profilesModel
             }
         }
     }

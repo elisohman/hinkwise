@@ -53,6 +53,11 @@ struct Profile {
     /// balances every month, and a fresh household greeted with staleness
     /// warnings on its second day would be told off for a choice it never made.
     TrackingMode trackingMode = TrackingMode::Planning;
+    /// True for a profile the application filled with an example rather than
+    /// the household itself. The flag exists so every screen can say so and the
+    /// household can delete it in one action: example figures that cannot be
+    /// told apart from real ones are worse than no example at all.
+    bool isExample = false;
 };
 
 } // namespace hinkwise::domain

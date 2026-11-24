@@ -66,6 +66,7 @@ set(HINKWISE_VIEW_MODELS
     ${CMAKE_SOURCE_DIR}/src/presentation/fi_track.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/input_text.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/plan_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/profiles_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/projection_series.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/review_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/update_flow_view_model.cpp
@@ -142,6 +143,31 @@ target_include_directories(tst_multi_write_flow PRIVATE
     ${CMAKE_SOURCE_DIR}/src/presentation
 )
 add_test(NAME tst_multi_write_flow COMMAND tst_multi_write_flow)
+
+# Profiles are managed from settings and switched from the rail. The examples,
+# the refusal to switch over unsaved work and the deletion rules are proved
+# against a real database in a temporary directory, like the other flows.
+add_executable(tst_profiles_flow
+    presentation/tst_profiles_flow.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/app_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/catalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/input_text.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/profiles_view_model.cpp
+)
+target_link_libraries(tst_profiles_flow PRIVATE
+    hinkwise_application
+    hinkwise_domain
+    hinkwise_infrastructure
+    Qt6::Core
+    Qt6::Qml
+    Qt6::Sql
+    Qt6::Test
+)
+target_include_directories(tst_profiles_flow PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/presentation
+)
+add_test(NAME tst_profiles_flow COMMAND tst_profiles_flow)
 
 # Serialisation belongs to the domain, so this one needs no database.
 hinkwise_add_test(tst_serialisation infrastructure/tst_serialisation.cpp)

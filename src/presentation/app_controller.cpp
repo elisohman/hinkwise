@@ -3,6 +3,7 @@
 
 #include "app_controller.h"
 
+#include "application/examples.h"
 #include "application/use_cases.h"
 #include "domain/year_month.h"
 #include "infrastructure/json/backup.h"
@@ -19,6 +20,7 @@
 #include <QSaveFile>
 #include <QSqlDatabase>
 #include <QString>
+#include <QUuid>
 #include <algorithm>
 #include <limits>
 #include <memory>
@@ -74,6 +76,36 @@ bool namesTheDatabase(const QString& destination, const QString& databasePath)
             return true;
     }
     return false;
+}
+
+/// The id a copied holding gets. Asset, liability and expense ids are unique
+/// across the whole file, so a duplicate has to mint its own rather than carry
+/// the source's ids into a second profile.
+std::string copiedId(const char* prefix)
+{
+    return std::string{prefix} + "-" +
+           QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+}
+
+/// "Household", or the first free "Household 2", "Household 3": two empty
+/// profiles are told apart in the list before either has been through
+/// onboarding, and onboarding keeps the name it finds.
+std::string availableHouseholdName(const std::vector<application::ProfileSummary>& existing)
+{
+    const auto taken = [&existing](const std::string& name) {
+        return std::any_of(existing.cbegin(), existing.cend(),
+                           [&name](const application::ProfileSummary& summary) {
+                               return summary.displayName == name;
+                           });
+    };
+
+    if (!taken("Household"))
+        return "Household";
+    for (int suffix = 2;; ++suffix) {
+        std::string candidate = "Household " + std::to_string(suffix);
+        if (!taken(candidate))
+            return candidate;
+    }
 }
 
 } // namespace
@@ -303,6 +335,308 @@ application::Status AppController::setActiveProfile(std::int64_t id)
     // them through the same signal an ordinary write uses.
     emit dataChanged();
     return application::Status::success();
+}
+
+std::vector<application::ProfileSummary> AppController::profiles() const
+{
+    if (!m_profiles)
+        return {};
+    if (!syncActiveProfile().ok())
+        return {};
+    return rowsOrEmpty(m_profiles->list());
+}
+
+application::Result<domain::Profile> AppController::createEmptyProfile()
+{
+    using Outcome = application::Result<domain::Profile>;
+
+    if (!m_profiles)
+        return Outcome::err(toStd(tr("The database is not open.")));
+
+    const application::Status synced = syncActiveProfile();
+    if (!synced.ok())
+        return Outcome::err(synced.error());
+
+    const application::Result<std::vector<application::ProfileSummary>> listed = m_profiles->list();
+    if (!listed.ok())
+        return Outcome::err(listed.error());
+
+    // Empty means empty: the profile exists so the wizard has something to fill
+    // in, and every setting the wizard asks for is answered there. Its default
+    // currency and phase are therefore placeholders, not the household's choice.
+    const application::Result<domain::Profile> draft =
+        application::createProfile(availableHouseholdName(listed.value()), domain::Currency::Sek,
+                                   domain::Phase::BuildingWealth);
+    if (!draft.ok())
+        return Outcome::err(draft.error());
+
+    application::Result<std::unique_ptr<application::Transaction>> begun = beginTransaction();
+    if (!begun.ok())
+        return Outcome::err(begun.error());
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
+    const application::Result<domain::Profile> created = m_profiles->create(draft.value());
+    if (!created.ok()) {
+        transaction.reset();
+        return Outcome::err(created.error());
+    }
+
+    // The new row is the stored active profile now, so the scoped repositories
+    // follow it before anything reads from them or a screen reloads.
+    const application::Status activated = activateStoredProfile();
+    if (!activated.ok()) {
+        transaction.reset();
+        return Outcome::err(activated.error());
+    }
+
+    // The writes above went through the repositories directly, so the open
+    // transaction has not been told there is anything to announce. Marking it
+    // changed makes the commit announce the whole profile once.
+    report(application::Status::success());
+
+    const application::Status committed = transaction->commit();
+    if (!committed.ok())
+        return Outcome::err(committed.error());
+    return Outcome::ok(created.value());
+}
+
+application::Result<domain::Profile> AppController::duplicateProfile(std::int64_t sourceId,
+                                                                     const std::string& name)
+{
+    using Outcome = application::Result<domain::Profile>;
+
+    if (!m_database || !m_profiles || !m_assets || !m_liabilities || !m_plannedExpenses ||
+        !m_valuations || !m_debtBalances || !m_flows || !m_phaseHistory)
+        return Outcome::err(toStd(tr("The database is not open.")));
+    if (name.empty())
+        return Outcome::err(toStd(tr("A duplicated profile needs a name.")));
+
+    const application::Status synced = syncActiveProfile();
+    if (!synced.ok())
+        return Outcome::err(synced.error());
+
+    const application::Result<std::optional<domain::Profile>> source =
+        m_profiles->loadById(sourceId);
+    if (!source.ok())
+        return Outcome::err(source.error());
+    if (!source.value().has_value())
+        return Outcome::err(toStd(tr("That profile does not exist.")));
+
+    // The copy is the household's own from the moment it exists. Duplicating an
+    // example is how the household takes the story over, so the copy carries no
+    // example flag; and because nothing below points back at the source, the two
+    // are independent records - a change in one is not a change in the other.
+    domain::Profile copy = *source.value();
+    copy.id = 0;
+    copy.displayName = name;
+    copy.isExample = false;
+
+    application::Result<std::unique_ptr<application::Transaction>> begun = beginTransaction();
+    if (!begun.ok())
+        return Outcome::err(begun.error());
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
+    const application::Result<domain::Profile> created = m_profiles->create(copy);
+    if (!created.ok()) {
+        transaction.reset();
+        return Outcome::err(created.error());
+    }
+
+    const application::Status activated = activateStoredProfile();
+    if (!activated.ok()) {
+        transaction.reset();
+        return Outcome::err(activated.error());
+    }
+
+    // The source is read through its own repositories on the same connection,
+    // while the controller's own repositories are pointed at the copy. Nothing
+    // is moved: the source keeps every row it had.
+    const QSqlDatabase connection = m_database->connection();
+    infrastructure::sqlite::SqliteAssetRepository sourceAssets{connection};
+    infrastructure::sqlite::SqliteLiabilityRepository sourceLiabilities{connection};
+    infrastructure::sqlite::SqlitePlannedExpenseRepository sourceExpenses{connection};
+    infrastructure::sqlite::SqliteValuationRepository sourceValuations{connection};
+    infrastructure::sqlite::SqliteDebtBalanceRepository sourceDebtBalances{connection};
+    infrastructure::sqlite::SqliteMonthFlowRepository sourceFlows{connection};
+    infrastructure::sqlite::SqlitePhaseHistoryRepository sourceHistory{connection};
+
+    sourceAssets.setActiveProfile(sourceId);
+    sourceLiabilities.setActiveProfile(sourceId);
+    sourceExpenses.setActiveProfile(sourceId);
+    sourceValuations.setActiveProfile(sourceId);
+    sourceDebtBalances.setActiveProfile(sourceId);
+    sourceFlows.setActiveProfile(sourceId);
+    sourceHistory.setActiveProfile(sourceId);
+
+    const auto abandon = [&transaction](const std::string& message) {
+        transaction.reset();
+        return Outcome::err(message);
+    };
+
+    const application::Result<std::vector<domain::Asset>> assets = sourceAssets.all();
+    if (!assets.ok())
+        return abandon(assets.error());
+    for (const domain::Asset& asset : assets.value()) {
+        domain::Asset assetCopy = asset;
+        assetCopy.id = copiedId("asset");
+        const application::Status stored = m_assets->upsert(assetCopy);
+        if (!stored.ok())
+            return abandon(stored.error());
+
+        const application::Result<std::vector<application::MoneyPoint>> history =
+            sourceValuations.history(asset.id);
+        if (!history.ok())
+            return abandon(history.error());
+        for (const application::MoneyPoint& point : history.value()) {
+            const application::Status valued =
+                m_valuations->upsert(assetCopy.id, point.month, point.amount);
+            if (!valued.ok())
+                return abandon(valued.error());
+        }
+    }
+
+    const application::Result<std::vector<domain::Liability>> liabilities = sourceLiabilities.all();
+    if (!liabilities.ok())
+        return abandon(liabilities.error());
+    for (const domain::Liability& liability : liabilities.value()) {
+        domain::Liability liabilityCopy = liability;
+        liabilityCopy.id = copiedId("liability");
+        const application::Status stored = m_liabilities->upsert(liabilityCopy);
+        if (!stored.ok())
+            return abandon(stored.error());
+
+        const application::Result<std::vector<application::MoneyPoint>> history =
+            sourceDebtBalances.history(liability.id);
+        if (!history.ok())
+            return abandon(history.error());
+        for (const application::MoneyPoint& point : history.value()) {
+            const application::Status balanced =
+                m_debtBalances->upsert(liabilityCopy.id, point.month, point.amount);
+            if (!balanced.ok())
+                return abandon(balanced.error());
+        }
+    }
+
+    const application::Result<std::vector<domain::PlannedExpense>> expenses = sourceExpenses.all();
+    if (!expenses.ok())
+        return abandon(expenses.error());
+    for (const domain::PlannedExpense& expense : expenses.value()) {
+        domain::PlannedExpense expenseCopy = expense;
+        expenseCopy.id = copiedId("expense");
+        const application::Status stored = m_plannedExpenses->upsert(expenseCopy);
+        if (!stored.ok())
+            return abandon(stored.error());
+    }
+
+    const application::Result<std::vector<application::MonthFlowRecord>> flows =
+        sourceFlows.recent(std::numeric_limits<int>::max());
+    if (!flows.ok())
+        return abandon(flows.error());
+    for (const application::MonthFlowRecord& record : flows.value()) {
+        const application::Status stored = m_flows->upsert(record.month, record.flow);
+        if (!stored.ok())
+            return abandon(stored.error());
+    }
+
+    const application::Result<std::vector<application::PhaseChange>> history = sourceHistory.all();
+    if (!history.ok())
+        return abandon(history.error());
+    for (const application::PhaseChange& change : history.value()) {
+        const application::Status stored = m_phaseHistory->append(change);
+        if (!stored.ok())
+            return abandon(stored.error());
+    }
+
+    // The writes above went through the repositories directly, so the open
+    // transaction has not been told there is anything to announce. Marking it
+    // changed makes the commit announce the whole profile once.
+    report(application::Status::success());
+
+    const application::Status committed = transaction->commit();
+    if (!committed.ok())
+        return Outcome::err(committed.error());
+    return Outcome::ok(created.value());
+}
+
+application::Result<domain::Profile>
+AppController::createExampleProfile(application::ExampleProfile kind)
+{
+    using Outcome = application::Result<domain::Profile>;
+
+    if (!m_profiles || !m_assets || !m_liabilities || !m_flows || !m_valuations || !m_debtBalances)
+        return Outcome::err(toStd(tr("The database is not open.")));
+
+    const application::Status synced = syncActiveProfile();
+    if (!synced.ok())
+        return Outcome::err(synced.error());
+
+    application::Result<std::unique_ptr<application::Transaction>> begun = beginTransaction();
+    if (!begun.ok())
+        return Outcome::err(begun.error());
+    std::unique_ptr<application::Transaction> transaction = std::move(begun.value());
+
+    const application::Result<domain::Profile> created =
+        m_profiles->create(application::exampleProfile(kind));
+    if (!created.ok()) {
+        transaction.reset();
+        return Outcome::err(created.error());
+    }
+
+    const application::Status activated = activateStoredProfile();
+    if (!activated.ok()) {
+        transaction.reset();
+        return Outcome::err(activated.error());
+    }
+
+    const application::Status seeded =
+        application::seedExample(kind, created.value().id, *m_assets, *m_liabilities, *m_flows,
+                                 *m_valuations, *m_debtBalances, currentMonth());
+    if (!seeded.ok()) {
+        transaction.reset();
+        return Outcome::err(seeded.error());
+    }
+
+    // The writes above went through the repositories directly, so the open
+    // transaction has not been told there is anything to announce. Marking it
+    // changed makes the commit announce the whole profile once.
+    report(application::Status::success());
+
+    const application::Status committed = transaction->commit();
+    if (!committed.ok())
+        return Outcome::err(committed.error());
+    return Outcome::ok(created.value());
+}
+
+application::Status AppController::removeProfile(std::int64_t id)
+{
+    if (!m_profiles)
+        return application::Status::err(toStd(tr("The database is not open.")));
+
+    const application::Status synced = syncActiveProfile();
+    if (!synced.ok())
+        return synced;
+
+    const application::Result<std::vector<application::ProfileSummary>> listed = m_profiles->list();
+    if (!listed.ok())
+        return application::Status::err(listed.error());
+
+    // The repository refuses this too, but its message names the operation. What
+    // the household has to read is why one profile has to stay.
+    if (listed.value().size() <= 1)
+        return application::Status::err(
+            toStd(tr("The last profile cannot be deleted: Hinkwise needs one household to show.")));
+
+    const application::Status removed = m_profiles->remove(id);
+    if (!removed.ok())
+        return removed;
+
+    // Removing the active profile moves the stored pointer to the household that
+    // takes over, and the scoped repositories have to move with it before any
+    // screen reloads and reads the wrong one.
+    const application::Status activated = activateStoredProfile();
+    if (!activated.ok())
+        return activated;
+    return report(application::Status::success());
 }
 
 QString AppController::lastError() const
@@ -713,10 +1047,14 @@ application::Status AppController::createHousehold(domain::Currency currency, do
     if (!synced.ok())
         return synced;
 
-    // The wizard does not ask for a name: the household is the only one this
-    // application holds, and settings can rename it once that page exists.
+    // The wizard is two things: the first run, which names the household, and
+    // the way a profile created from settings is filled in. In the second case
+    // the profile already has the name settings gave it, and finishing
+    // onboarding must not rename what the household just called itself.
+    const std::optional<domain::Profile> current = profile();
+    const std::string name = current.has_value() ? current->displayName : toStd(tr("Household"));
     const application::Result<domain::Profile> created =
-        application::createProfile(toStd(tr("Household")), currency, phase);
+        application::createProfile(name, currency, phase);
     if (!created.ok())
         return application::Status::err(created.error());
 

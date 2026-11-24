@@ -58,6 +58,10 @@ public:
     Q_INVOKABLE void addRow();
     Q_INVOKABLE void removeRow(int row);
 
+    /// Empties the draft and puts the two starting rows back, so the wizard
+    /// can begin a second household in the same session.
+    void reset();
+
     /// Re-reads every balance against `currency`. Called when the household
     /// changes currency on the first step, so no row is left holding an amount
     /// in a currency the profile will not have.
@@ -201,6 +205,11 @@ public:
     /// step is incomplete.
     Q_INVOKABLE void next();
     Q_INVOKABLE void back();
+
+    /// Forgets every answer and returns to the first step. The wizard is shown
+    /// again when settings creates a profile, and it must not offer the answers
+    /// the household gave for a different household.
+    Q_INVOKABLE void reset();
 
     /// Creates the household exactly as the review step describes it: the
     /// profile, one asset per account, this month's flow and a valuation per

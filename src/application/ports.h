@@ -44,13 +44,17 @@ struct MoneyPoint {
     domain::Money amount;
 };
 
-/// One profile as a list shows it: enough to name the household and tell which
-/// way it keeps its record, without loading the whole row.
+/// One profile as a list shows it: enough to name the household, tell which way
+/// it keeps its record and where it is on the journey, and say whether the
+/// figures are an example rather than the household's own - without loading the
+/// whole row, its accounts and its history.
 struct ProfileSummary {
     std::int64_t id = 0;
     std::string displayName;
     std::string baseCurrency;
     std::string trackingMode;
+    domain::Phase phase = domain::Phase::BuildingWealth;
+    bool isExample = false;
 };
 
 /// The repositories are the application layer's view of storage: pure virtual,

@@ -56,6 +56,17 @@ domain::AssetKind assetKindAt(int index)
 AccountDraftModel::AccountDraftModel(QObject* parent)
     : QAbstractListModel(parent)
 {
+    reset();
+}
+
+void AccountDraftModel::reset()
+{
+    beginResetModel();
+    m_rows.clear();
+    endResetModel();
+
+    // The two rows a household most often starts from. They are a starting
+    // point, not a statement: the names are editable and both can be removed.
     addRow();
     setName(0, tr("Savings account"));
     setKind(0, static_cast<int>(domain::AssetKind::BankAccount));
@@ -267,6 +278,25 @@ WizardViewModel::WizardViewModel(QObject* parent)
     m_income.value = domain::Money::zero(currency());
     m_needs.value = domain::Money::zero(currency());
     m_wants.value = domain::Money::zero(currency());
+}
+
+void WizardViewModel::reset()
+{
+    m_step = 0;
+    m_currencyIndex = 0;
+    m_phaseIndex = 0;
+    m_trackingModeIndex = static_cast<int>(domain::TrackingMode::Planning);
+    m_createError.clear();
+
+    m_income = Field{};
+    m_needs = Field{};
+    m_wants = Field{};
+    m_income.value = domain::Money::zero(currency());
+    m_needs.value = domain::Money::zero(currency());
+    m_wants.value = domain::Money::zero(currency());
+
+    m_accounts->reset();
+    emit changed();
 }
 
 int WizardViewModel::stepCount() const

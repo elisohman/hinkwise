@@ -83,6 +83,7 @@ QJsonObject profileToJson(const domain::Profile& profile)
     put(object, "phase", storageKeyText(domain::storageKey(profile.phase)));
     put(object, "riskToleranceBp", profile.riskTolerance.basisPoints());
     put(object, "trackingMode", storageKeyText(domain::storageKey(profile.trackingMode)));
+    put(object, "isExample", profile.isExample);
     put(object, "jurisdiction", jurisdictionToJson(profile.jurisdiction));
     return object;
 }
@@ -437,6 +438,17 @@ application::Result<domain::Profile> profileFromJson(const QJsonValue& value,
         jurisdictionFromJson(object.value().value(key("jurisdiction")), context + ": jurisdiction");
     if (!jurisdiction.ok())
         return Outcome::err(jurisdiction.error());
+    // The example flag arrived after the first backup format. A file written
+    // before it holds a household's own record, so absence means false; text
+    // that is there and not a boolean is still refused.
+    const QJsonValue isExample = object.value().value(key("isExample"));
+    if (!isExample.isUndefined()) {
+        const application::Result<bool> decoded = requireBool(object.value(), "isExample", context);
+        if (!decoded.ok())
+            return Outcome::err(decoded.error());
+        profile.isExample = decoded.value();
+    }
+
     profile.jurisdiction = jurisdiction.value();
 
     return Outcome::ok(profile);

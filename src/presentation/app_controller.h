@@ -4,6 +4,7 @@
 #pragma once
 
 #include "application/dashboard.h"
+#include "application/examples.h"
 #include "application/result.h"
 #include "application/transaction.h"
 #include "domain/asset.h"
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -102,6 +104,32 @@ public:
     /// and dataChanged() is emitted, so every screen reloads the household it
     /// now describes. Fails when no profile has that id.
     application::Status setActiveProfile(std::int64_t id);
+
+    /// Every stored profile, oldest id first: what the settings list and the
+    /// rail's switcher draw. Empty when the database is not open.
+    std::vector<application::ProfileSummary> profiles() const;
+
+    /// Creates an empty household and makes it active. It is named so the list
+    /// can tell it apart from the others, and the caller sends the user to
+    /// onboarding, which fills the profile the wizard reviewed.
+    application::Result<domain::Profile> createEmptyProfile();
+
+    /// Copies `sourceId` into a new household called `name` and makes it
+    /// active. The copy shares no row with its source, which is what makes it
+    /// independent, and it is never an example: duplicating an example is how
+    /// the household takes it over, and an adopted household is its own.
+    application::Result<domain::Profile> duplicateProfile(std::int64_t sourceId,
+                                                          const std::string& name);
+
+    /// Creates an example, fills it with the story's figures and makes it
+    /// active, all in one transaction: an example that was half written would
+    /// be a household whose numbers do not add up.
+    application::Result<domain::Profile> createExampleProfile(application::ExampleProfile kind);
+
+    /// Removes the profile and everything recorded under it, and points the
+    /// repositories at the household that takes over. Refuses the last profile:
+    /// a file with no household has nothing to show and nothing to save into.
+    application::Status removeProfile(std::int64_t id);
 
     /// Saves the profile as a whole, which is how settings edits the name and
     /// the jurisdiction: the row is one value, and the use cases only read it.

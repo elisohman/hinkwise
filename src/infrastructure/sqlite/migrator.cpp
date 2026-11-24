@@ -464,6 +464,17 @@ application::Status addProfiles(QSqlDatabase& database)
     return application::Status::success();
 }
 
+/// The schema of version 8: which profiles are examples.
+///
+/// A NOT NULL default of 0 means a file written before the flag existed loads
+/// as a household's own record, which is what every profile in it was: the
+/// examples are something the application adds later, and an old file has none.
+application::Status addExampleFlag(QSqlDatabase& database)
+{
+    return execute(database,
+                   "ALTER TABLE profile ADD COLUMN is_example INTEGER NOT NULL DEFAULT 0");
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -484,7 +495,7 @@ MigrationList schemaMigrations()
     return MigrationList{{1, &createInitialSchema}, {2, &addSavingBreakdown},
                          {3, &addTrackingMode},     {4, &addLoanTerms},
                          {5, &addLoanTerm},         {6, &addThreeDecimalInterestRate},
-                         {7, &addProfiles}};
+                         {7, &addProfiles},         {8, &addExampleFlag}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

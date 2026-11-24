@@ -24,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 7;
+constexpr int kExpectedVersion = 8;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -118,6 +118,15 @@ constexpr const char* kInsertVersionSixProfile =
     "(1, 'Elis', 'SEK', 'building-wealth', 5000, 'SE', 400, 100, 21, 25, 33, "
     "'2026-01-31T12:00:00Z', 'accounting')";
 
+/// The profile's example flag, -1 when the column or the row is missing.
+int exampleFlagOfStoredProfile(QSqlDatabase& connection)
+{
+    QSqlQuery query{connection};
+    if (!query.exec(QStringLiteral("SELECT is_example FROM profile WHERE id = 1")) || !query.next())
+        return -1;
+    return query.value(0).toInt();
+}
+
 QString trackingModeOfStoredProfile(QSqlDatabase& connection)
 {
     QSqlQuery query{connection};
@@ -159,6 +168,7 @@ private slots:
     void versionFourLiabilityComesOutWithoutATerm();
     void versionFiveLiabilityKeepsItsRate();
     void versionSixUpgradesToOneHouseholdWithItsData();
+    void versionSevenProfileLoadsAsNotAnExample();
     void versionSixWithDataButNoProfileIsRefused();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
@@ -207,6 +217,12 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
     // from is gone rather than left beside it.
     QVERIFY(hasColumn(connection, "liability", "interest_100k"));
     QVERIFY(!hasColumn(connection, "liability", "interest_bp"));
+
+    // Version 8 says which profiles are examples. A fresh file has the column
+    // and no profile yet; the wizard's first household reads it as 0, which the
+    // version 7 upgrade test proves for a row that already exists.
+    QVERIFY(hasColumn(connection, "profile", "is_example"));
+    QCOMPARE(exampleFlagOfStoredProfile(connection), -1);
 
     // Version 7 gives every household-owned table an owner column, and the
     // profile itself no longer insists on being the only row.
@@ -678,6 +694,42 @@ void TestMigrator::versionSixUpgradesToOneHouseholdWithItsData()
     QVERIFY(secondHistory.exec(
         QStringLiteral("INSERT INTO phase_history (profile_id, changed_at, phase) VALUES "
                        "(2, '2026-01-31T12:00:00Z', 'building-wealth')")));
+}
+
+/// A version 7 file was written before examples existed, so every profile in it
+/// is the household's own. Upgrading must say so rather than leave the flag
+/// unreadable or guess that a household was an example.
+void TestMigrator::versionSevenProfileLoadsAsNotAnExample()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{8});
+    const std::span<const sqlite::Migration> upToSeven{migrations.data(), migrations.size() - 1};
+
+    const application::Result<int> atSeven = sqlite::applyMigrations(connection, upToSeven);
+    QVERIFY2(atSeven.ok(), atSeven.error().c_str());
+    QCOMPARE(atSeven.value(), 7);
+    QVERIFY(!hasColumn(connection, "profile", "is_example"));
+
+    QSqlQuery insert{connection};
+    QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionSixProfile)),
+             qPrintable(insert.lastError().text()));
+
+    const application::Result<int> atEight = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atEight.ok(), atEight.error().c_str());
+    QCOMPARE(atEight.value(), kExpectedVersion);
+
+    QVERIFY(hasColumn(connection, "profile", "is_example"));
+    QCOMPARE(exampleFlagOfStoredProfile(connection), 0);
+    // The row itself is untouched: the flag is the only thing that arrived.
+    QCOMPARE(trackingModeOfStoredProfile(connection), QStringLiteral("accounting"));
 }
 
 void TestMigrator::versionSixWithDataButNoProfileIsRefused()

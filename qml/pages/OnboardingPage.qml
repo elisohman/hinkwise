@@ -17,6 +17,16 @@ import Hinkwise
 Item {
     id: page
 
+    /// The wizard wrote the household and the shell can take over. Main uses it
+    /// to leave the onboarding it opened for a new profile.
+    signal finished()
+
+    /// Starts the wizard again from the first step, for the profile settings
+    /// has just created and made active.
+    function restart() {
+        wizard.reset();
+    }
+
     readonly property var stepTitles: [
         qsTr("Which currency do you think in?"),
         qsTr("Where are you on the way?"),
@@ -726,10 +736,12 @@ Item {
                     text: wizard.isReview ? qsTr("Create my economy") : qsTr("Next")
                     enabled: wizard.isReview ? wizard.canCreate : wizard.canGoNext
                     onClicked: {
-                        if (wizard.isReview)
-                            wizard.createEconomy();
-                        else
+                        if (wizard.isReview) {
+                            if (wizard.createEconomy())
+                                page.finished();
+                        } else {
                             wizard.next();
+                        }
                     }
                 }
             }
