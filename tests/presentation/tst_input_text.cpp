@@ -26,6 +26,8 @@ private slots:
     void rejectsWhatIsNotAnAmount();
     void refusesOneMinorUnitPastTheMaximum();
     void readsRatesAsBasisPoints();
+    void readsTermsAsMonths();
+    void formatsTermsAsWholeYears();
     void rejectsRatesWithTooManyDecimals_data();
     void rejectsRatesWithTooManyDecimals();
     void formatsWithTheCurrencyCode();
@@ -191,6 +193,41 @@ void TestInputText::readsRatesAsBasisPoints()
     const PercentageInput empty = parsePercentageInput(QString{});
     QVERIFY(!empty.ok);
     QVERIFY(!empty.error.isEmpty());
+}
+
+void TestInputText::readsTermsAsMonths()
+{
+    const TermYearsInput whole = parseTermYearsInput(QStringLiteral("18"));
+    QVERIFY(whole.ok);
+    QCOMPARE(whole.months, 216);
+
+    const TermYearsInput half = parseTermYearsInput(QStringLiteral("18,5"));
+    QVERIFY(half.ok);
+    QCOMPARE(half.months, 222);
+
+    // A stated term shorter than half a month is a month, not "not stated".
+    const TermYearsInput tiny = parseTermYearsInput(QStringLiteral("0,01"));
+    QVERIFY(tiny.ok);
+    QCOMPARE(tiny.months, 1);
+
+    const TermYearsInput words = parseTermYearsInput(QStringLiteral("years"));
+    QVERIFY(!words.ok);
+    QVERIFY(!words.error.isEmpty());
+
+    const TermYearsInput empty = parseTermYearsInput(QString{});
+    QVERIFY(!empty.ok);
+}
+
+void TestInputText::formatsTermsAsWholeYears()
+{
+    QCOMPARE(formatTermYears(0), QString{});
+    QCOMPARE(formatTermYears(216), QStringLiteral("18"));
+    QCOMPARE(formatTermYears(222), QStringLiteral("18,5"));
+
+    // What a field reopens with is read back as the same term.
+    const TermYearsInput parsed = parseTermYearsInput(formatTermYears(222));
+    QVERIFY(parsed.ok);
+    QCOMPARE(parsed.months, 222);
 }
 
 void TestInputText::rejectsRatesWithTooManyDecimals_data()

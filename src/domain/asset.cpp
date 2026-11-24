@@ -20,8 +20,8 @@ using enum Bucket;
 // not spendable on demand.
 constexpr std::array<AssetKindFacts, 10> kFacts{{
     {"Bank account", Buffer, true},
-    {"Fund", Growth, true},
-    {"Equity", Play, true},
+    {"Fund (index or managed)", Growth, true},
+    {"Individual shares", Play, true},
     {"Crypto", Play, true},
     {"Real estate (market value)", Preserve, false},
     {"Pension income", Preserve, false},

@@ -63,6 +63,13 @@ class PlanViewModel : public QObject {
     Q_PROPERTY(QString debtFreeLabel READ debtFreeLabel NOTIFY changed)
     Q_PROPERTY(QString netWorthEndLabel READ netWorthEndLabel NOTIFY changed)
     Q_PROPERTY(QString amortisationNote READ amortisationNote NOTIFY changed)
+    /// What the debt costs over the horizon, and what the household should know
+    /// about the terms behind it.
+    Q_PROPERTY(QString totalInterestLabel READ totalInterestLabel NOTIFY changed)
+    Q_PROPERTY(QString totalFeesLabel READ totalFeesLabel NOTIFY changed)
+    Q_PROPERTY(QString costSummary READ costSummary NOTIFY changed)
+    Q_PROPERTY(QString paymentMismatchNote READ paymentMismatchNote NOTIFY changed)
+    Q_PROPERTY(QString missingTermsNote READ missingTermsNote NOTIFY changed)
     Q_PROPERTY(bool hasTargetLine READ hasTargetLine NOTIFY changed)
     Q_PROPERTY(double targetLineRatio READ targetLineRatio NOTIFY changed)
     Q_PROPERTY(bool hasFiMarker READ hasFiMarker NOTIFY changed)
@@ -123,6 +130,11 @@ public:
     QString debtFreeLabel() const { return m_debtFreeLabel; }
     QString netWorthEndLabel() const { return m_netWorthEndLabel; }
     QString amortisationNote() const { return m_amortisationNote; }
+    QString totalInterestLabel() const { return m_totalInterestLabel; }
+    QString totalFeesLabel() const { return m_totalFeesLabel; }
+    QString costSummary() const { return m_costSummary; }
+    QString paymentMismatchNote() const { return m_paymentMismatchNote; }
+    QString missingTermsNote() const { return m_missingTermsNote; }
     bool hasTargetLine() const { return m_hasTargetLine; }
     double targetLineRatio() const { return m_targetLineRatio; }
     bool hasFiMarker() const { return m_hasFiMarker; }
@@ -201,6 +213,11 @@ private:
     QString m_debtFreeLabel;
     QString m_netWorthEndLabel;
     QString m_amortisationNote;
+    QString m_totalInterestLabel;
+    QString m_totalFeesLabel;
+    QString m_costSummary;
+    QString m_paymentMismatchNote;
+    QString m_missingTermsNote;
     bool m_hasTargetLine = false;
     double m_targetLineRatio = 0.0;
     bool m_hasFiMarker = false;

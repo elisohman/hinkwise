@@ -86,6 +86,13 @@ struct DebtRow {
     int kindIndex = 0;
     QString kindLabel;
     QString rateLabel;
+    int styleIndex = 0;
+    /// The fields as a dialog reopens them: the rate without its unit and the
+    /// term in years, both empty when the loan states nothing.
+    QString rateText;
+    QString paymentText;
+    QString feeText;
+    QString termYearsText;
     QString balanceLabel;
 };
 
@@ -103,6 +110,11 @@ public:
         KindIndexRole,
         KindLabelRole,
         RateLabelRole,
+        StyleIndexRole,
+        RateTextRole,
+        PaymentTextRole,
+        FeeTextRole,
+        TermYearsTextRole,
         BalanceLabelRole,
     };
 
@@ -153,6 +165,10 @@ class AccountsViewModel : public QObject {
     /// the domain's enumeration rather than a number written in QML.
     Q_PROPERTY(int realEstateKindIndex READ realEstateKindIndex CONSTANT)
     Q_PROPERTY(int mortgageKindIndex READ mortgageKindIndex CONSTANT)
+    /// The positions of the two repayment styles, so the dialog names the
+    /// domain's enumeration instead of a number written in QML.
+    Q_PROPERTY(int fixedAmortisationStyleIndex READ fixedAmortisationStyleIndex CONSTANT)
+    Q_PROPERTY(int annuityStyleIndex READ annuityStyleIndex CONSTANT)
 
 public:
     explicit AccountsViewModel(QObject* parent = nullptr);
@@ -185,7 +201,16 @@ public:
     /// keyed by asset id; a missing id is left alone.
     Q_INVOKABLE QString recordMonthBalances(const QVariantMap& balances);
     Q_INVOKABLE QString addDebt(const QString& name, int kindIndex, const QString& rateText,
-                                const QString& balanceText);
+                                int styleIndex, const QString& paymentText, const QString& feeText,
+                                const QString& termYearsText, const QString& balanceText);
+    /// Changes a debt's own terms and leaves its id - and therefore every
+    /// balance recorded against it - where it is. The balance is not part of
+    /// the dialog: it is recorded through the update flow, not re-stated when a
+    /// rate changes.
+    Q_INVOKABLE QString updateDebt(const QString& liabilityId, const QString& name, int kindIndex,
+                                   const QString& rateText, int styleIndex,
+                                   const QString& paymentText, const QString& feeText,
+                                   const QString& termYearsText);
     Q_INVOKABLE QString removeDebt(const QString& liabilityId);
 
     int selectedBucket() const;
@@ -208,6 +233,11 @@ public:
 
     int realEstateKindIndex() const { return static_cast<int>(domain::AssetKind::RealEstate); }
     int mortgageKindIndex() const { return static_cast<int>(domain::LiabilityKind::Mortgage); }
+    int fixedAmortisationStyleIndex() const
+    {
+        return static_cast<int>(domain::RepaymentStyle::FixedAmortisation);
+    }
+    int annuityStyleIndex() const { return static_cast<int>(domain::RepaymentStyle::Annuity); }
 
 signals:
     /// Anything the page renders changed. One signal: a write changes the rows,

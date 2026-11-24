@@ -32,9 +32,9 @@ void TestAsset::defaultBucketAndLiquidity_data()
     QTest::newRow("bank account") << int(AssetKind::BankAccount) << int(Bucket::Buffer) << true
                                   << QStringLiteral("Bank account");
     QTest::newRow("fund") << int(AssetKind::Fund) << int(Bucket::Growth) << true
-                          << QStringLiteral("Fund");
+                          << QStringLiteral("Fund (index or managed)");
     QTest::newRow("equity") << int(AssetKind::Equity) << int(Bucket::Play) << true
-                            << QStringLiteral("Equity");
+                            << QStringLiteral("Individual shares");
     QTest::newRow("crypto") << int(AssetKind::Crypto) << int(Bucket::Play) << true
                             << QStringLiteral("Crypto");
     QTest::newRow("real estate") << int(AssetKind::RealEstate) << int(Bucket::Preserve) << false

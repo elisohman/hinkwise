@@ -20,7 +20,12 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QVariantMap>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <vector>
 
 using namespace hinkwise;
 using namespace hinkwise::presentation;
@@ -44,6 +49,8 @@ private slots:
     void bucketsPageRecordsTheWholeMonth();
     void bucketsPageEditsAndDeletes();
     void bucketsPageAddsAndRemovesADebt();
+    void bucketsPageEditsADebtsTermsAndKeepsItsHistory();
+    void planShowsTheCostOfTheDebt();
     void rejectsWhatTheUseCasesReject();
     void cashflowPageRecordsAndChecksTheMonth();
     void cashflowDraftSurvivesReloadAndDiscard();
@@ -351,7 +358,8 @@ void TestSetupFlow::bucketsPageAddsAndRemovesADebt()
 
     QCOMPARE(accounts.addDebt(QStringLiteral("Mortgage"),
                               static_cast<int>(domain::LiabilityKind::Mortgage),
-                              QStringLiteral("4,5"), QStringLiteral("2000000")),
+                              QStringLiteral("4,5"), accounts.fixedAmortisationStyleIndex(),
+                              QString{}, QString{}, QString{}, QStringLiteral("2000000")),
              QString{});
     QCOMPARE(accounts.debts()->count(), 1);
 
@@ -371,6 +379,132 @@ void TestSetupFlow::bucketsPageAddsAndRemovesADebt()
     QVERIFY(!m_controller->dashboardSnapshot().facts.sheet.netWorth.isNegative());
 }
 
+void TestSetupFlow::bucketsPageEditsADebtsTermsAndKeepsItsHistory()
+{
+    AccountsViewModel accounts;
+    const int annuity = accounts.annuityStyleIndex();
+
+    QCOMPARE(accounts.addDebt(QStringLiteral("Student loan"),
+                              static_cast<int>(domain::LiabilityKind::StudentLoan),
+                              QStringLiteral("2,5"), annuity, QStringLiteral("1200"),
+                              QStringLiteral("25"), QStringLiteral("18"), QStringLiteral("150000")),
+             QString{});
+    QCOMPARE(accounts.debts()->count(), 1);
+
+    const QModelIndex row = accounts.debts()->index(0, 0);
+    const QString id = accounts.debts()->data(row, DebtRowModel::IdRole).toString();
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(accounts.debts()->data(row, DebtRowModel::StyleIndexRole).toInt(), annuity);
+    // The rate reopens without its unit, so the field reads it back unchanged.
+    QCOMPARE(accounts.debts()->data(row, DebtRowModel::RateTextRole).toString(),
+             QStringLiteral("2,50"));
+    QCOMPARE(accounts.debts()->data(row, DebtRowModel::PaymentTextRole).toString(),
+             formatMoneyPlain(domain::Money{120000, domain::Currency::Eur}));
+    QCOMPARE(accounts.debts()->data(row, DebtRowModel::FeeTextRole).toString(),
+             formatMoneyPlain(domain::Money{2500, domain::Currency::Eur}));
+    // The term is entered in years; the model stores months.
+    QCOMPARE(accounts.debts()->data(row, DebtRowModel::TermYearsTextRole).toString(),
+             QStringLiteral("18"));
+
+    // An older balance is the history an edit must not throw away.
+    const domain::YearMonth earlier = AppController::currentMonth().plusMonths(-2);
+    QVERIFY(m_controller
+                ->recordDebtBalance(id.toStdString(), earlier,
+                                    domain::Money{16000000, domain::Currency::Eur})
+                .ok());
+    const auto historyBefore = m_controller->debtHistory(id.toStdString());
+    QCOMPARE(historyBefore.size(), std::size_t{2});
+
+    // Move to a fixed amortisation loan at a new rate. The fee and the term
+    // belong to the annuity and are gone from the fixed loan.
+    QCOMPARE(accounts.updateDebt(id, QStringLiteral("Student loan"),
+                                 static_cast<int>(domain::LiabilityKind::StudentLoan),
+                                 QStringLiteral("3,5"), accounts.fixedAmortisationStyleIndex(),
+                                 QStringLiteral("1500"), QString{}, QString{}),
+             QString{});
+
+    QCOMPARE(accounts.debts()->count(), 1);
+    const QModelIndex updatedRow = accounts.debts()->index(0, 0);
+    QCOMPARE(accounts.debts()->data(updatedRow, DebtRowModel::IdRole).toString(), id);
+    QCOMPARE(accounts.debts()->data(updatedRow, DebtRowModel::StyleIndexRole).toInt(),
+             accounts.fixedAmortisationStyleIndex());
+    QCOMPARE(accounts.debts()->data(updatedRow, DebtRowModel::FeeTextRole).toString(), QString{});
+    QCOMPARE(accounts.debts()->data(updatedRow, DebtRowModel::TermYearsTextRole).toString(),
+             QString{});
+
+    // Even if a value from the hidden annuity fields reached the view model, a
+    // fixed loan ignores it: the style owns which terms exist.
+    QCOMPARE(accounts.updateDebt(id, QStringLiteral("Student loan"),
+                                 static_cast<int>(domain::LiabilityKind::StudentLoan),
+                                 QStringLiteral("3,5"), accounts.fixedAmortisationStyleIndex(),
+                                 QStringLiteral("1500"), QStringLiteral("99"), QStringLiteral("5")),
+             QString{});
+
+    // The id is the same, so every balance recorded against it is still there
+    // and the newest one describes the same loan.
+    QCOMPARE(m_controller->debtHistory(id.toStdString()).size(), historyBefore.size());
+    const std::optional<domain::Money> latest = m_controller->latestDebtBalance(id.toStdString());
+    QVERIFY(latest.has_value());
+    QCOMPARE(latest->minorUnits(), std::int64_t{15000000});
+
+    const std::vector<domain::Liability> liabilities = m_controller->liabilities();
+    const auto found = std::find_if(liabilities.cbegin(), liabilities.cend(),
+                                    [&id](const domain::Liability& liability) {
+                                        return QString::fromStdString(liability.id) == id;
+                                    });
+    QVERIFY(found != liabilities.cend());
+    QCOMPARE(found->style, domain::RepaymentStyle::FixedAmortisation);
+    QVERIFY(found->monthlyFee.isZero());
+    QCOMPARE(found->termMonths, 0);
+
+    QVERIFY(!accounts
+                 .updateDebt(QStringLiteral("gone"), QStringLiteral("Loan"),
+                             static_cast<int>(domain::LiabilityKind::Other), QStringLiteral("4"),
+                             accounts.fixedAmortisationStyleIndex(), QString{}, QString{},
+                             QString{})
+                 .isEmpty());
+
+    QCOMPARE(accounts.removeDebt(id), QString{});
+}
+
+void TestSetupFlow::planShowsTheCostOfTheDebt()
+{
+    AccountsViewModel accounts;
+    QCOMPARE(accounts.addDebt(QStringLiteral("Flat loan"),
+                              static_cast<int>(domain::LiabilityKind::Mortgage),
+                              QStringLiteral("4,5"), accounts.fixedAmortisationStyleIndex(),
+                              QString{}, QString{}, QString{}, QStringLiteral("2000000")),
+             QString{});
+    const QString id =
+        accounts.debts()->data(accounts.debts()->index(0, 0), DebtRowModel::IdRole).toString();
+
+    // A loan with a balance but no terms is named, rather than left as a debt
+    // line that never moves without explanation.
+    PlanViewModel withoutTerms;
+    QVERIFY(withoutTerms.hasDebt());
+    QVERIFY(withoutTerms.missingTermsNote().contains(QStringLiteral("Flat loan")));
+    QVERIFY(withoutTerms.paymentMismatchNote().isEmpty());
+
+    // An annuity with a term and a payment the term does not imply: interest,
+    // fees and the disagreement all become visible.
+    QCOMPARE(accounts.updateDebt(
+                 id, QStringLiteral("Flat loan"), static_cast<int>(domain::LiabilityKind::Mortgage),
+                 QStringLiteral("4,5"), accounts.annuityStyleIndex(), QStringLiteral("5000"),
+                 QStringLiteral("50"), QStringLiteral("20")),
+             QString{});
+
+    PlanViewModel plan;
+    QVERIFY(plan.hasDebt());
+    QVERIFY(plan.missingTermsNote().isEmpty());
+    QVERIFY(!plan.totalInterestLabel().isEmpty());
+    QVERIFY(!plan.totalFeesLabel().isEmpty());
+    QVERIFY(plan.costSummary().startsWith(QStringLiteral("Interest over ")));
+    QVERIFY(plan.costSummary().contains(QStringLiteral("Fees:")));
+    QVERIFY(plan.paymentMismatchNote().startsWith(QStringLiteral("CSN would charge about")));
+
+    QCOMPARE(accounts.removeDebt(id), QString{});
+}
+
 void TestSetupFlow::rejectsWhatTheUseCasesReject()
 {
     AccountsViewModel accounts;
@@ -384,17 +518,20 @@ void TestSetupFlow::rejectsWhatTheUseCasesReject()
     QVERIFY(!accounts.recordValuation(id, QStringLiteral("-100")).isEmpty());
     QVERIFY(!accounts
                  .addDebt(QString{}, static_cast<int>(domain::LiabilityKind::CreditCard),
-                          QStringLiteral("19,9"), QStringLiteral("5000"))
+                          QStringLiteral("19,9"), accounts.fixedAmortisationStyleIndex(), QString{},
+                          QString{}, QString{}, QStringLiteral("5000"))
                  .isEmpty());
     QVERIFY(!accounts
                  .addDebt(QStringLiteral("Card"),
                           static_cast<int>(domain::LiabilityKind::CreditCard),
-                          QStringLiteral("19,9"), QString{})
+                          QStringLiteral("19,9"), accounts.fixedAmortisationStyleIndex(), QString{},
+                          QString{}, QString{}, QString{})
                  .isEmpty());
     QVERIFY(!accounts
                  .addDebt(QStringLiteral("Card"),
                           static_cast<int>(domain::LiabilityKind::CreditCard),
-                          QStringLiteral("19,9,9"), QStringLiteral("5000"))
+                          QStringLiteral("19,9,9"), accounts.fixedAmortisationStyleIndex(),
+                          QString{}, QString{}, QString{}, QStringLiteral("5000"))
                  .isEmpty());
 
     // None of those failures reached the database.
@@ -633,7 +770,8 @@ void TestSetupFlow::updateFlowRecordsBothStepsForOneBackfilledMonth()
              QString{});
     QCOMPARE(accounts.addDebt(QStringLiteral("Update flow loan"),
                               static_cast<int>(domain::LiabilityKind::StudentLoan),
-                              QStringLiteral("2,5"), QStringLiteral("40000")),
+                              QStringLiteral("2,5"), accounts.fixedAmortisationStyleIndex(),
+                              QString{}, QString{}, QString{}, QStringLiteral("40000")),
              QString{});
 
     const auto idOf = [this](const QString& name) {

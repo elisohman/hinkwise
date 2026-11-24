@@ -32,6 +32,11 @@ ProjectionSeries projectionSeriesOf(const domain::ProjectionInput& input)
     if (years.empty())
         return series;
 
+    // The last year carries every cost paid since today, so one reading of it
+    // is the whole horizon's bill.
+    series.interestPaid = years.back().interestPaid;
+    series.feesPaid = years.back().feesPaid;
+
     const domain::Currency currency = years.front().total.currency();
 
     // The axis covers whichever is highest: the household's investable capital,

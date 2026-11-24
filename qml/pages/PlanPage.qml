@@ -646,6 +646,33 @@ Item {
                                     }
                                 }
 
+                                // What the debt costs over the horizon: one line for
+                                // interest and fees, one for a payment the terms
+                                // disagree with, and one naming a loan whose terms
+                                // were never recorded.
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    visible: plan.hasDebt
+                                    spacing: Theme.spaceXs
+
+                                    Text {
+                                        text: plan.costSummary
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontBody
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    Text {
+                                        visible: plan.paymentMismatchNote.length > 0
+                                        text: plan.paymentMismatchNote
+                                        color: Theme.warning
+                                        font.pixelSize: Theme.fontCaption
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+
                                 RowLayout {
                                     Layout.fillWidth: true
                                     visible: plan.debtWithoutAmortisation
@@ -653,16 +680,17 @@ Item {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: plan.amortisationNote
+                                        text: plan.missingTermsNote
+                                        textFormat: Text.PlainText
                                         color: Theme.textSecondary
                                         font.pixelSize: Theme.fontCaption
                                         wrapMode: Text.WordWrap
                                     }
 
                                     PrimaryButton {
-                                        text: qsTr("Cashflow")
+                                        text: qsTr("Accounts")
                                         filled: false
-                                        onClicked: page.navigateRequested(2)
+                                        onClicked: page.navigateRequested(1)
                                     }
                                 }
 

@@ -14,6 +14,7 @@
 #include <QDate>
 #include <QLocale>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <algorithm>
 #include <cstddef>
@@ -54,6 +55,17 @@ bool returnIsStated(domain::Bucket bucket)
 {
     const domain::PercentageRange& range = domain::factsOf(bucket).realReturn;
     return !(range.low.isZero() && range.high.isZero());
+}
+
+/// The loan names as one phrase: "Flat", "Flat and Car", "Flat, Car and Boat".
+QString joinNames(const QStringList& names)
+{
+    if (names.size() <= 1)
+        return names.value(0);
+
+    QStringList head = names;
+    const QString last = head.takeLast();
+    return PlanViewModel::tr("%1 and %2").arg(head.join(PlanViewModel::tr(", ")), last);
 }
 
 } // namespace
@@ -141,6 +153,40 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
                                                       debt.regularPayment, debt.monthlyFee,
                                                       debt.termMonths});
     }
+
+    // What the terms themselves say, separately from what the projection draws
+    // with them: a loan whose balance is positive and whose payment is missing
+    // is one the page has to name, and a term whose implied payment differs from
+    // the recorded one is a disagreement the household can settle.
+    QStringList missingTerms;
+    domain::Money recordedLoanPayment = domain::Money::zero(m_currency);
+    for (const application::DebtInEffect& debt : snapshot.debts) {
+        const bool paymentFollowsFromTerm =
+            debt.style == domain::RepaymentStyle::Annuity && debt.termMonths > 0;
+        if (debt.balance.isPositive() && !debt.regularPayment.isPositive() &&
+            !paymentFollowsFromTerm)
+            missingTerms.append(QString::fromStdString(debt.name));
+        if (paymentFollowsFromTerm && debt.balance.isPositive())
+            recordedLoanPayment += debt.regularPayment;
+    }
+    m_paymentMismatchNote.clear();
+    if (snapshot.paymentDisagrees) {
+        m_paymentMismatchNote =
+            tr("CSN would charge about %1 a month; you recorded %2.")
+                .arg(formatMoney(snapshot.computedLoanPayment), formatMoney(recordedLoanPayment));
+    }
+    m_missingTermsNote.clear();
+    if (!missingTerms.isEmpty()) {
+        const QString names = joinNames(missingTerms);
+        m_missingTermsNote =
+            missingTerms.size() == 1
+                ? tr("%1 has no repayment terms recorded, so the debt is shown as unchanged. "
+                     "Add them in Accounts & buckets.")
+                      .arg(names)
+                : tr("%1 have no repayment terms recorded, so the debt is shown as unchanged. "
+                     "Add them in Accounts & buckets.")
+                      .arg(names);
+    }
     const std::optional<domain::SavingsBreakdown>& split = snapshot.facts.flow.savingSplit;
     // A breakdown in another currency is unusable: all three parts are added to
     // amounts in the profile's currency, so none of them may be mixed in.
@@ -188,6 +234,11 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_assumptions = assumptions;
 
     recompute();
+    // A loan whose terms are missing always has a name, but if the snapshot
+    // somehow carries the flag without the loan, the generic sentence still
+    // says what is wrong rather than leaving the row blank.
+    if (m_missingTermsNote.isEmpty() && snapshot.hasDebtWithoutTerms)
+        m_missingTermsNote = m_amortisationNote;
     emit changed();
 }
 
@@ -277,6 +328,14 @@ void PlanViewModel::recompute()
     m_hasDebt = shown.hasDebt;
     m_debtWithoutAmortisation = m_hasDebt && m_debtWithoutTerms;
     m_debtTodayLabel = shown.debt.isEmpty() ? QString{} : formatMoney(shown.debt.front().value);
+    m_totalInterestLabel = formatMoney(shown.interestPaid);
+    m_totalFeesLabel = shown.feesPaid.isPositive() ? formatMoney(shown.feesPaid) : QString{};
+    m_costSummary =
+        m_totalFeesLabel.isEmpty()
+            ? tr("Interest over %1 years: %2").arg(kHorizonYears).arg(m_totalInterestLabel)
+            : tr("Interest over %1 years: %2 \u00b7 Fees: %3")
+                  .arg(kHorizonYears)
+                  .arg(m_totalInterestLabel, m_totalFeesLabel);
     m_debtFreeLabel.clear();
     if (m_hasDebt && !m_debtWithoutAmortisation) {
         if (baseSeries.yearsToDebtFree < 0)

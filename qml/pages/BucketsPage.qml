@@ -37,6 +37,10 @@ Item {
     property string pendingAccountName: ""
     property string pendingDebtId: ""
     property string pendingDebtName: ""
+    /// The balance the edit dialog shows beside the terms it can change. The
+    /// balance itself is recorded in the update flow and is never rewritten
+    /// here.
+    property string pendingDebtBalanceLabel: ""
     /// A mutation that failed outside a dialog, shown under the account list.
     property string pageError: ""
 
@@ -48,6 +52,36 @@ Item {
         accountError.text = "";
         accountDialog.open();
         accountName.forceActiveFocus();
+    }
+
+    function openDebtDialog(debtId, name, kindIndex, rateText, styleIndex, paymentText, feeText,
+                            termYearsText, balanceLabel) {
+        page.pendingDebtId = debtId;
+        page.pendingDebtName = name;
+        page.pendingDebtBalanceLabel = balanceLabel;
+        debtName.text = name;
+        debtKind.currentIndex = kindIndex;
+        debtRate.text = rateText;
+        debtBalance.text = "";
+        debtPayment.text = paymentText;
+        debtFee.text = feeText;
+        debtTermYears.text = termYearsText;
+        debtStyleGroup.checkedButton = styleIndex === accounts.annuityStyleIndex
+                ? debtStyleAnnuity : debtStyleFixed;
+        debtError.text = "";
+        debtDialog.open();
+        debtName.forceActiveFocus();
+    }
+
+    // A fixed loan has neither an administration fee nor a term: both belong to
+    // an annuity. Clearing them the moment the style changes is what stops a
+    // figure typed under one style reaching the database under the other, and
+    // the save handler passes them as empty as well.
+    function clearFixedAmortisationFields() {
+        if (!debtStyleAnnuity.checked) {
+            debtFee.text = "";
+            debtTermYears.text = "";
+        }
     }
 
     // A row of the "record this month's balances" form. It is a named type so
@@ -93,6 +127,12 @@ Item {
 
     AccountsViewModel {
         id: accounts
+    }
+
+    // The two repayment styles are one choice, so the dialog's radios share a
+    // group rather than relying on whichever parent they happen to sit in.
+    ButtonGroup {
+        id: debtStyleGroup
     }
 
     ColumnLayout {
@@ -269,15 +309,9 @@ Item {
                         PrimaryButton {
                             text: qsTr("Add debt")
                             filled: false
-                            onClicked: {
-                                debtName.text = "";
-                                debtKind.currentIndex = 0;
-                                debtRate.text = "";
-                                debtBalance.text = "";
-                                debtError.text = "";
-                                debtDialog.open();
-                                debtName.forceActiveFocus();
-                            }
+                            onClicked: page.openDebtDialog("", "", 0, "",
+                                                          accounts.fixedAmortisationStyleIndex,
+                                                          "", "", "", "")
                         }
                     }
 
@@ -289,8 +323,14 @@ Item {
 
                             required property string debtId
                             required property string name
+                            required property int kindIndex
                             required property string kindLabel
                             required property string rateLabel
+                            required property int styleIndex
+                            required property string rateText
+                            required property string paymentText
+                            required property string feeText
+                            required property string termYearsText
                             required property string balanceLabel
 
                             Layout.fillWidth: true
@@ -317,17 +357,33 @@ Item {
                                 }
                             }
 
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("%1 · %2").arg(debtRow.kindLabel, debtRow.rateLabel)
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
+                                elide: Text.ElideRight
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.spaceSm
 
-                                Text {
-                                    text: qsTr("%1 · %2").arg(debtRow.kindLabel,
-                                                              debtRow.rateLabel)
-                                    color: Theme.textMuted
-                                    font.pixelSize: Theme.fontCaption
-                                    elide: Text.ElideRight
+                                Item {
                                     Layout.fillWidth: true
+                                }
+
+                                PrimaryButton {
+                                    text: qsTr("Edit")
+                                    filled: false
+                                    onClicked: page.openDebtDialog(debtRow.debtId, debtRow.name,
+                                                                  debtRow.kindIndex,
+                                                                  debtRow.rateText,
+                                                                  debtRow.styleIndex,
+                                                                  debtRow.paymentText,
+                                                                  debtRow.feeText,
+                                                                  debtRow.termYearsText,
+                                                                  debtRow.balanceLabel)
                                 }
 
                                 PrimaryButton {
@@ -648,6 +704,20 @@ Item {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                 }
+
+                Text {
+                    text: accountKind.currentIndex >= 0 && accountBucket.currentIndex >= 0
+                          ? qsTr("A %1 usually goes in %2. Move it if your situation is "
+                                 + "different - the bucket is what the model counts, and "
+                                 + "this is yours to set.")
+                                .arg(accounts.assetKindLabels[accountKind.currentIndex])
+                                .arg(accounts.bucketLabels[accountBucket.currentIndex])
+                          : ""
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontCaption
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
             }
 
             FormRow {
@@ -929,11 +999,13 @@ Item {
 
         parent: Overlay.overlay
         anchors.centerIn: parent
-        width: Math.min(440, parent ? parent.width - 2 * Theme.spaceLg : 440)
+        width: Math.min(480, parent ? parent.width - 2 * Theme.spaceLg : 480)
         modal: true
         focus: true
         padding: Theme.spaceLg
         closePolicy: Popup.CloseOnEscape
+
+        readonly property bool editing: page.pendingDebtId.length > 0
 
         Overlay.modal: Rectangle {
             color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.72)
@@ -950,11 +1022,15 @@ Item {
             spacing: Theme.spaceMd
 
             Text {
-                text: qsTr("Add debt")
+                text: debtDialog.editing
+                      ? qsTr("Edit %1").arg(page.pendingDebtName)
+                      : qsTr("Add a debt")
+                textFormat: Text.PlainText
                 color: Theme.textPrimary
                 font.pixelSize: Theme.fontTitle
                 font.weight: Font.DemiBold
                 Layout.fillWidth: true
+                elide: Text.ElideRight
             }
 
             Text {
@@ -967,74 +1043,201 @@ Item {
                 wrapMode: Text.WordWrap
             }
 
-            FormRow {
-                label: qsTr("Name")
+            // The form is taller than a 600 px window once both styles show
+            // their own fields, so it scrolls while the title and the buttons
+            // stay where they are.
+            ScrollView {
+                id: debtFormScroll
 
-                TextField {
-                    id: debtName
-
-                    Layout.fillWidth: true
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontBody
-                    selectionColor: Theme.buffer
-                    selectedTextColor: Theme.background
-
-                    background: Rectangle {
-                        implicitHeight: 34
-                        radius: Theme.radiusSmall
-                        color: Theme.background
-                        border.width: 1
-                        border.color: parent.activeFocus ? Theme.textSecondary : Theme.border
-                    }
-                }
-            }
-
-            FormRow {
-                label: qsTr("Kind")
-
-                ChoiceField {
-                    id: debtKind
-
-                    Layout.fillWidth: true
-                    model: accounts.liabilityKindLabels
-                }
-
-                Text {
-                    visible: debtKind.currentIndex === accounts.mortgageKindIndex
-                    text: qsTr("The outstanding loan, alongside the property at its "
-                         + "market value.")
-                    color: Theme.textMuted
-                    font.pixelSize: Theme.fontCaption
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-            }
-
-            RowLayout {
                 Layout.fillWidth: true
-                spacing: Theme.spaceSm
+                Layout.fillHeight: true
+                Layout.preferredHeight: Math.min(360, debtForm.implicitHeight)
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                FormRow {
-                    label: qsTr("Interest rate")
-                    hint: "%"
+                ColumnLayout {
+                    id: debtForm
 
-                    MoneyField {
-                        id: debtRate
+                    width: debtFormScroll.availableWidth
+                    spacing: Theme.spaceMd
 
-                        unit: "%"
-                        placeholder: qsTr("4,5")
+                    FormRow {
+                        label: qsTr("Name")
+
+                        TextField {
+                            id: debtName
+
+                            Layout.fillWidth: true
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontBody
+                            selectionColor: Theme.buffer
+                            selectedTextColor: Theme.background
+
+                            background: Rectangle {
+                                implicitHeight: 34
+                                radius: Theme.radiusSmall
+                                color: Theme.background
+                                border.width: 1
+                                border.color: parent.activeFocus ? Theme.textSecondary
+                                                                 : Theme.border
+                            }
+                        }
                     }
-                }
 
-                FormRow {
-                    label: qsTr("Current balance")
-                    hint: accounts.currencyCode
+                    FormRow {
+                        label: qsTr("Kind")
 
-                    MoneyField {
-                        id: debtBalance
+                        ChoiceField {
+                            id: debtKind
 
-                        unit: accounts.currencyCode
-                        placeholder: qsTr("0")
+                            Layout.fillWidth: true
+                            model: accounts.liabilityKindLabels
+                        }
+
+                        Text {
+                            visible: debtKind.currentIndex === accounts.mortgageKindIndex
+                            text: qsTr("The outstanding loan, alongside the property at "
+                                 + "its market value.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spaceSm
+
+                        FormRow {
+                            label: qsTr("Interest rate")
+                            hint: "%"
+
+                            MoneyField {
+                                id: debtRate
+
+                                unit: "%"
+                                placeholder: qsTr("4,5")
+                            }
+                        }
+
+                        FormRow {
+                            visible: !debtDialog.editing
+                            label: qsTr("Current balance")
+                            hint: accounts.currencyCode
+
+                            MoneyField {
+                                id: debtBalance
+
+                                unit: accounts.currencyCode
+                                placeholder: qsTr("0")
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: debtDialog.editing
+                        text: qsTr("Current balance: %1. It is recorded in the update "
+                             + "flow, not here.").arg(page.pendingDebtBalanceLabel)
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontCaption
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+
+                    FormRow {
+                        label: qsTr("Repayment style")
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.spaceSm
+
+                            ChoiceCard {
+                                id: debtStyleFixed
+
+                                Layout.fillWidth: true
+                                ButtonGroup.group: debtStyleGroup
+                                checked: true
+                                label: qsTr("Fixed amortisation")
+                                description: qsTr("You repay a set amount each month, "
+                                                   + "interest on top.")
+                                onCheckedChanged: {
+                                    if (checked)
+                                        page.clearFixedAmortisationFields();
+                                }
+                            }
+
+                            ChoiceCard {
+                                id: debtStyleAnnuity
+
+                                Layout.fillWidth: true
+                                ButtonGroup.group: debtStyleGroup
+                                label: qsTr("Annuity")
+                                description: qsTr("You pay a set amount each month that "
+                                                   + "covers interest, fees and "
+                                                   + "amortisation, so the split shifts "
+                                                   + "over time.")
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: debtStyleAnnuity.checked ? qsTr("Monthly payment")
+                                                        : qsTr("Monthly amortisation")
+                        hint: accounts.currencyCode
+
+                        MoneyField {
+                            id: debtPayment
+
+                            unit: accounts.currencyCode
+                            placeholder: qsTr("0")
+                        }
+                    }
+
+                    FormRow {
+                        visible: debtStyleAnnuity.checked
+                        label: qsTr("Monthly fee")
+                        hint: accounts.currencyCode
+
+                        MoneyField {
+                            id: debtFee
+
+                            unit: accounts.currencyCode
+                            placeholder: qsTr("0")
+                        }
+
+                        Text {
+                            text: qsTr("Administration fee, if your lender charges one.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    FormRow {
+                        visible: debtStyleAnnuity.checked
+                        label: qsTr("Term")
+                        hint: qsTr("Years")
+
+                        MoneyField {
+                            id: debtTermYears
+
+                            unit: qsTr("Years")
+                            placeholder: qsTr("18")
+                        }
+
+                        Text {
+                            text: qsTr("What is left to repay, in years. CSN states "
+                                 + "this; entering it lets hinkwise recalculate the "
+                                 + "payment each January the way CSN does. Empty "
+                                 + "means not stated.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
             }
@@ -1066,10 +1269,21 @@ Item {
                 }
 
                 PrimaryButton {
-                    text: qsTr("Add")
+                    text: debtDialog.editing ? qsTr("Save") : qsTr("Add")
                     onClicked: {
-                        const failure = accounts.addDebt(debtName.text, debtKind.currentIndex,
-                                                         debtRate.text, debtBalance.text);
+                        const annuity = debtStyleAnnuity.checked;
+                        const styleIndex = annuity ? accounts.annuityStyleIndex
+                                                   : accounts.fixedAmortisationStyleIndex;
+                        const fee = annuity ? debtFee.text : "";
+                        const term = annuity ? debtTermYears.text : "";
+                        const failure = debtDialog.editing
+                                ? accounts.updateDebt(page.pendingDebtId, debtName.text,
+                                                      debtKind.currentIndex, debtRate.text,
+                                                      styleIndex, debtPayment.text, fee, term)
+                                : accounts.addDebt(debtName.text, debtKind.currentIndex,
+                                                   debtRate.text, styleIndex,
+                                                   debtPayment.text, fee, term,
+                                                   debtBalance.text);
                         if (failure.length > 0) {
                             debtError.text = failure;
                             return;

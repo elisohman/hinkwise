@@ -57,6 +57,7 @@ private slots:
     void hasNoTargetWhenNoneIsStated();
     void refusesToDrawAnEmptyProjection();
     void carriesTheDebtAndNetWorthAlongTheHorizon();
+    void carriesWhatTheDebtCostsOverTheHorizon();
     void reachesBelowZeroWhenDebtOutrunsTheCapital();
     void keepsNetWorthOnTheAxisAboveTheBands();
     void leavesTheDebtOutWhenNoneIsRecorded();
@@ -174,6 +175,25 @@ void TestProjectionSeries::carriesTheDebtAndNetWorthAlongTheHorizon()
     QVERIFY(series.netWorth.back().ratio > series.netWorth.front().ratio);
     // Nothing sits below zero here, so the axis still starts at the bottom.
     QCOMPARE(series.zeroRatio, 0.0);
+}
+
+void TestProjectionSeries::carriesWhatTheDebtCostsOverTheHorizon()
+{
+    // A five-year annuity with a 25 kr monthly fee: what the horizon cost is the
+    // last year's cumulative totals, so the page can state the bill without
+    // adding the years up itself.
+    domain::ProjectionInput projection = input();
+    projection.years = 5;
+    projection.loans = {domain::LoanTerms{sek(5000000), domain::Percentage::fromBasisPoints(450),
+                                          domain::RepaymentStyle::Annuity, sek(300000), sek(2500),
+                                          60}};
+
+    const ProjectionSeries series = projectionSeriesOf(projection);
+
+    QVERIFY(series.valid);
+    QVERIFY(series.interestPaid.isPositive());
+    QVERIFY(series.feesPaid.isPositive());
+    QCOMPARE(series.feesPaid.minorUnits(), qint64{150000});
 }
 
 void TestProjectionSeries::reachesBelowZeroWhenDebtOutrunsTheCapital()

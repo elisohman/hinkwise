@@ -30,6 +30,10 @@ QString formatMoneyPlain(const domain::Money& amount);
 /// "4,50 %" - an interest rate in the user's own notation.
 QString formatPercentage(domain::Percentage percentage);
 
+/// The rate without the percent sign, so that text can be put back into a
+/// field and read by parsePercentageInput() unchanged.
+QString formatPercentagePlain(domain::Percentage percentage);
+
 /// A month in the user's own notation, in the format the caller asks for:
 /// "October 2026" for a sentence, "Oct" for an axis. Every screen names a
 /// month the same way, so two pages cannot spell the same month differently.
@@ -68,5 +72,22 @@ struct PercentageInput {
 /// Reads a rate in percent with the same rules as money: "4,5" is 4.50 %,
 /// stored as basis points.
 PercentageInput parsePercentageInput(const QString& text);
+
+/// A string that has been read as a loan term in years.
+struct TermYearsInput {
+    bool ok = false;
+    /// The term in whole months, rounded to the nearest month.
+    int months = 0;
+    QString error;
+};
+
+/// Reads the years left on a loan, with the same separator rules as money, and
+/// turns them into the whole months the model stores. "18,5" is 222 months.
+TermYearsInput parseTermYearsInput(const QString& text);
+
+/// The months a loan has left as whole years for a field: "18" or "18,5".
+/// Zero months, which means the term was never stated, formats as an empty
+/// string so a field with nothing recorded reopens empty.
+QString formatTermYears(int months);
 
 } // namespace hinkwise::presentation

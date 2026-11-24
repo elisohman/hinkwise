@@ -218,6 +218,12 @@ QString formatPercentage(domain::Percentage percentage)
         locale.toString(static_cast<double>(percentage.basisPoints()) / 100.0, 'f', 2));
 }
 
+QString formatPercentagePlain(domain::Percentage percentage)
+{
+    const QLocale locale;
+    return locale.toString(static_cast<double>(percentage.basisPoints()) / 100.0, 'f', 2);
+}
+
 QString formatMonth(domain::YearMonth month, const QString& format)
 {
     const QDate date{month.year(), static_cast<int>(month.month()), 1};
@@ -256,6 +262,50 @@ PercentageInput parsePercentageInput(const QString& text)
     result.value = domain::Percentage::fromBasisPoints(static_cast<std::int32_t>(reading.units));
     result.label = formatPercentage(result.value);
     return result;
+}
+
+TermYearsInput parseTermYearsInput(const QString& text)
+{
+    const NumberReading reading = readNumber(text, 2);
+    if (reading.error != NumberError::None) {
+        if (reading.error == NumberError::Empty)
+            return {false, 0, message("Enter the years left, or leave the field empty.")};
+        if (reading.error == NumberError::NotANumber)
+            return {false, 0, message("\"%1\" is not a number of years.").arg(text.trimmed())};
+        return {false, 0, errorFor(reading.error, text.trimmed(), 2, false)};
+    }
+
+    // Years are stored as months. The product by twelve is checked before it is
+    // taken, because readNumber() accepts amounts up to the int64 limit and a
+    // term that large is broken input rather than a long loan.
+    if (reading.units > (std::numeric_limits<std::int64_t>::max() - 50) / 12)
+        return {false, 0, errorFor(NumberError::TooLarge, {}, 2, false)};
+    std::int64_t months = (reading.units * 12 + 50) / 100;
+    // A stated term shorter than half a month is still a term; rounding it away
+    // would silently turn it into "not stated".
+    if (months == 0 && reading.units > 0)
+        months = 1;
+    if (months > std::numeric_limits<int>::max())
+        return {false, 0, errorFor(NumberError::TooLarge, {}, 2, false)};
+
+    return {true, static_cast<int>(months), {}};
+}
+
+QString formatTermYears(int months)
+{
+    if (months <= 0)
+        return {};
+
+    const std::int64_t hundredths = (static_cast<std::int64_t>(months) * 100 + 6) / 12;
+    const std::int64_t whole = hundredths / 100;
+    const int fraction = static_cast<int>(hundredths % 100);
+    if (fraction == 0)
+        return QString::number(whole);
+
+    QString fractionText = QString::number(fraction).rightJustified(2, QLatin1Char('0'));
+    if (fraction % 10 == 0)
+        fractionText.chop(1);
+    return QString::number(whole) + QLocale{}.decimalPoint() + fractionText;
 }
 
 } // namespace hinkwise::presentation

@@ -70,6 +70,11 @@ struct ProjectionSeries {
     /// Where zero sits on the axis. Above the bottom only when debt outruns
     /// everything owned, which is where the net-worth line lives.
     double zeroRatio = 0.0;
+    /// What the loans cost over the whole horizon: the last year's cumulative
+    /// interest and administration fees. Both are zero when the household
+    /// records no debt, and fees stay zero for every style but an annuity.
+    domain::Money interestPaid{};
+    domain::Money feesPaid{};
     /// False when there is nothing to draw: no years, or every figure is zero.
     bool valid = false;
 };
