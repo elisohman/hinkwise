@@ -29,6 +29,11 @@ struct LoanTerms {
     Money regularPayment{};
     /// MONTHLY, Annuity only. A cost, never principal.
     Money monthlyFee{};
+    /// Months the loan still has to run, zero when the loan states none. An
+    /// annuity that states a term is not repaid on one payment fixed for its
+    /// whole life: the term is what holds still and the payment is recalculated
+    /// every year, which is what the term is here for.
+    int termMonths = 0;
 };
 
 /// What a projection needs: the four buckets as they stand today, what is
@@ -79,7 +84,10 @@ struct ProjectionInput {
     /// monthly payment. Empty is a household that records no debt, which is a
     /// debt of zero rather than an invented paydown. A loan whose payment is
     /// zero is simulated without a paydown too: terms that were never recorded
-    /// must not look like a loan being cleared.
+    /// must not look like a loan being cleared. A loan that states a term is
+    /// the exception - an annuity is then repaid on the payment its term and
+    /// rate imply, recalculated once a year, and its recorded payment is only
+    /// what the household last saw. See project().
     std::vector<LoanTerms> loans;
     /// Number of yearly steps. A negative value is treated as zero.
     int years = 30;
@@ -106,6 +114,13 @@ struct ProjectionYear {
     Money interestPaid{};
     /// Administration fees paid so far, cumulative. Annuity loans only.
     Money feesPaid{};
+    /// The monthly payment every loan is charged at during this year, added up:
+    /// the recorded payment for a fixed amortisation loan (its principal part)
+    /// and for an annuity with no term, the recalculated one for an annuity
+    /// that states a term - interest, fee and principal together. A loan that is
+    /// already cleared contributes nothing, so this is what the household would
+    /// actually be asked for this year.
+    Money loanPayment{};
     /// True in a year where an annuity's monthly payment does not cover its
     /// interest and fee, so its balance cannot fall. The balance is kept flat
     /// rather than grown forever, and this flag is how the interface can say the
@@ -125,6 +140,20 @@ struct ProjectionYear {
 /// Yearly steps from today, inclusive of today: `years + 1` rows, never fewer
 /// than one.
 std::vector<ProjectionYear> project(const ProjectionInput& input);
+
+/// The monthly payment CSN would charge on `balance` with `months` left to run
+/// at `annualRate`, and zero when there is nothing to amortise or no month to
+/// amortise it over.
+///
+/// The repayment part is the annuity factor: r / (1 - (1 + r)^-n) with r the
+/// rate one month is charged at, which is what CSN recalculates each January
+/// from what is left to repay and how long the loan still has to run. The
+/// administration fee is added to it, so this is one amount covering interest,
+/// fee and amortisation together - and the principal is then exactly the
+/// annuity principal, which is what keeps the loan on its term instead of
+/// letting the fee stretch it.
+Money annuityPayment(const Money& balance, Percentage annualRate, int months,
+                     const Money& monthlyFee);
 
 /// The first year in which the total reaches fiTarget, or nullopt when it never
 /// does within the horizon. Zero when the household is already funded today,

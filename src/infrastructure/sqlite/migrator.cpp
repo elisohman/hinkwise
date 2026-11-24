@@ -171,6 +171,19 @@ application::Status addLoanTerms(QSqlDatabase& database)
     return application::Status::success();
 }
 
+/// The schema of version 5: how long a loan still has to run.
+///
+/// One ALTER TABLE with a NOT NULL default, so a file that already holds a loan
+/// comes out of the migration saying it states no term. That is not the same as
+/// a loan with no time left: with no term the plan keeps using the payment the
+/// household recorded, exactly as before, and an annuity that states a term is
+/// the one that gets recalculated each January.
+application::Status addLoanTerm(QSqlDatabase& database)
+{
+    return execute(database,
+                   "ALTER TABLE liability ADD COLUMN term_months INTEGER NOT NULL DEFAULT 0");
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -191,7 +204,8 @@ MigrationList schemaMigrations()
     return MigrationList{{1, &createInitialSchema},
                          {2, &addSavingBreakdown},
                          {3, &addTrackingMode},
-                         {4, &addLoanTerms}};
+                         {4, &addLoanTerms},
+                         {5, &addLoanTerm}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

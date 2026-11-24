@@ -50,15 +50,22 @@ struct Liability {
     /// MONTHLY, Annuity only: an administration fee charged each month, a cost
     /// and never principal. Zero for every other style.
     Money monthlyFee{};
+    /// Months the loan still has to run from today. Zero means "not stated",
+    /// which keeps the recorded regularPayment in force rather than replacing
+    /// it with one the term implies. A Swedish student loan's term is the part
+    /// that does not move: CSN keeps it and recalculates the payment each
+    /// January, so the term is what a loan that recalculates is described by.
+    /// Only an annuity reads it.
+    int termMonths = 0;
 };
 
 /// A new debt. Throws std::invalid_argument when the id or the name is empty,
-/// the rate is negative, the payment or the fee is negative, or a fee is set on
-/// a style that has no fee.
+/// the rate is negative, the payment or the fee is negative, the term is
+/// negative, or a fee is set on a style that has no fee.
 Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
                         Percentage interestRate,
                         RepaymentStyle style = RepaymentStyle::FixedAmortisation,
-                        Money regularPayment = {}, Money monthlyFee = {});
+                        Money regularPayment = {}, Money monthlyFee = {}, int termMonths = 0);
 
 /// The model's framing, not a moral judgement: debt priced above a typical
 /// mortgage rate costs more than the mortgage it competes with and should be

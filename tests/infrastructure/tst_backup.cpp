@@ -58,7 +58,7 @@ json::BackupData fullyPopulated()
     data.liabilities = {domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
                                               domain::Percentage::fromBasisPoints(420),
                                               domain::RepaymentStyle::Annuity, sek(1750000),
-                                              sek(5000))};
+                                              sek(5000), 240)};
 
     domain::PlannedExpense roof;
     roof.id = "roof";
@@ -131,6 +131,7 @@ private slots:
     void acceptsAProfileWrittenBeforeTrackingModeExisted();
     void rejectsUnknownTrackingMode();
     void acceptsALiabilityWrittenBeforeTermsExisted();
+    void rejectsANegativeTerm();
     void rejectsUnknownRepaymentStyle();
 };
 
@@ -174,6 +175,7 @@ void TestBackup::roundTripIsLossless()
              static_cast<int>(domain::RepaymentStyle::Annuity));
     QCOMPARE(data.liabilities[0].regularPayment.minorUnits(), qint64(1750000));
     QCOMPARE(data.liabilities[0].monthlyFee.minorUnits(), qint64(5000));
+    QCOMPARE(data.liabilities[0].termMonths, 240);
 
     QCOMPARE(data.plannedExpenses.size(), std::size_t(1));
     QCOMPARE(data.plannedExpenses[0].amount.minorUnits(), qint64(25000000));
@@ -388,6 +390,7 @@ void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
     mortgage.remove(QStringLiteral("repaymentStyle"));
     mortgage.remove(QStringLiteral("regularPayment"));
     mortgage.remove(QStringLiteral("monthlyFee"));
+    mortgage.remove(QStringLiteral("termMonths"));
     liabilities.replace(0, mortgage);
     root.insert(QStringLiteral("liabilities"), liabilities);
 
@@ -397,6 +400,25 @@ void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
              static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
     QVERIFY(parsed.value().liabilities[0].regularPayment.isZero());
     QVERIFY(parsed.value().liabilities[0].monthlyFee.isZero());
+    // The term arrived with the recalculation: a file without one states no
+    // term, so its recorded payment stays in force.
+    QCOMPARE(parsed.value().liabilities[0].termMonths, 0);
+}
+
+/// A term is a count of months, and a count below zero is a file that cannot be
+/// read rather than a loan with no time left.
+void TestBackup::rejectsANegativeTerm()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject mortgage = liabilities.at(0).toObject();
+    mortgage.insert(QStringLiteral("termMonths"), -1);
+    liabilities.replace(0, mortgage);
+    root.insert(QStringLiteral("liabilities"), liabilities);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY(!parsed.ok());
+    QVERIFY(parsed.error().find("termMonths") != std::string::npos);
 }
 
 /// A style that is there and says something unrecognised is a different

@@ -248,7 +248,7 @@ void TestRepositories::liabilityRoundTrip()
     const domain::Liability mortgage =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
                               domain::Percentage::fromBasisPoints(425),
-                              domain::RepaymentStyle::Annuity, sek(1500000), sek(5000));
+                              domain::RepaymentStyle::Annuity, sek(1500000), sek(5000), 240);
     QVERIFY(liabilities.upsert(mortgage).ok());
 
     const application::Result<std::vector<domain::Liability>> all = liabilities.all();
@@ -265,6 +265,7 @@ void TestRepositories::liabilityRoundTrip()
              static_cast<int>(domain::RepaymentStyle::Annuity));
     QCOMPARE(all.value()[0].regularPayment.minorUnits(), qint64(1500000));
     QCOMPARE(all.value()[0].monthlyFee.minorUnits(), qint64(5000));
+    QCOMPARE(all.value()[0].termMonths, 240);
 
     const domain::Liability repriced =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
@@ -280,6 +281,7 @@ void TestRepositories::liabilityRoundTrip()
              static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
     QCOMPARE(reloaded.value()[0].regularPayment.minorUnits(), qint64(0));
     QCOMPARE(reloaded.value()[0].monthlyFee.minorUnits(), qint64(0));
+    QCOMPARE(reloaded.value()[0].termMonths, 0);
 }
 
 void TestRepositories::plannedExpenseRoundTrip()

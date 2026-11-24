@@ -10,7 +10,7 @@ namespace hinkwise::domain {
 
 Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
                         Percentage interestRate, RepaymentStyle style, Money regularPayment,
-                        Money monthlyFee)
+                        Money monthlyFee, int termMonths)
 {
     if (id.empty())
         throw std::invalid_argument{"makeLiability: id must not be empty"};
@@ -22,6 +22,11 @@ Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
         throw std::invalid_argument{"makeLiability: regular payment must not be negative"};
     if (monthlyFee.isNegative())
         throw std::invalid_argument{"makeLiability: monthly fee must not be negative"};
+    // A term is a count of months left, so its absence is a zero and not a
+    // negative. On a style that has no term the value is ignored: rejecting it
+    // would make changing a loan's style have to clear the term first.
+    if (termMonths < 0)
+        throw std::invalid_argument{"makeLiability: term must not be negative"};
     if (!monthlyFee.isZero() && style != RepaymentStyle::Annuity)
         throw std::invalid_argument{"makeLiability: a monthly fee belongs to an annuity"};
 
@@ -33,6 +38,7 @@ Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
     liability.style = style;
     liability.regularPayment = regularPayment;
     liability.monthlyFee = monthlyFee;
+    liability.termMonths = termMonths;
     return liability;
 }
 

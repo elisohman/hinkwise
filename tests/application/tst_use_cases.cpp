@@ -509,6 +509,13 @@ void TestUseCases::updateLiabilityRejectsInvalidTerms()
     loan.monthlyFee = sek(5000);
     QVERIFY(!updateLiability(liabilities, loan).ok());
 
+    // A term is a count of months left: below zero is not a loan with no time
+    // left but a broken figure, and it must not reach the store.
+    loan = makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                         Percentage::fromBasisPoints(150), RepaymentStyle::Annuity, sek(150000));
+    loan.termMonths = -1;
+    QVERIFY(!updateLiability(liabilities, loan).ok());
+
     QVERIFY(liabilities.stored.empty());
 }
 

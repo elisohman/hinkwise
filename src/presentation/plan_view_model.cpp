@@ -132,12 +132,14 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     // follows from their terms instead of from an aggregate amortisation. A
     // loan whose payment is zero keeps its balance flat: that is what "no terms
     // recorded yet" looks like to the model, and the page says so rather than
-    // drawing a paydown nobody entered.
+    // drawing a paydown nobody entered. A loan that also records a term is the
+    // exception: its payment is recalculated from the term every year.
     m_baseInput.loans.clear();
     m_baseInput.loans.reserve(snapshot.debts.size());
     for (const application::DebtInEffect& debt : snapshot.debts) {
         m_baseInput.loans.push_back(domain::LoanTerms{debt.balance, debt.interestRate, debt.style,
-                                                      debt.regularPayment, debt.monthlyFee});
+                                                      debt.regularPayment, debt.monthlyFee,
+                                                      debt.termMonths});
     }
     const std::optional<domain::SavingsBreakdown>& split = snapshot.facts.flow.savingSplit;
     // A breakdown in another currency is unusable: all three parts are added to

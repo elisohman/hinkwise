@@ -25,6 +25,8 @@ Status validateLiability(const domain::Liability& liability)
         return Status::err("A liability's regular payment cannot be negative.");
     if (liability.monthlyFee.isNegative())
         return Status::err("A liability's monthly fee cannot be negative.");
+    if (liability.termMonths < 0)
+        return Status::err("A liability's remaining term cannot be negative.");
     if (!liability.monthlyFee.isZero() && liability.style != domain::RepaymentStyle::Annuity)
         return Status::err("A monthly fee belongs to an annuity.");
     return Status::success();

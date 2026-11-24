@@ -390,6 +390,7 @@ private slots:
     void flowLaterThanTheSnapshotMonthIsNotPartOfIt();
     void totalBadLoansSumsOnlyDebtsAboveTheBenchmark();
     void debtsCarryTheirTermsAndLatestBalance();
+    void aTermCarriesThePaymentItImplies();
 
     void monthsSinceCountsWholeMonths();
     void accountingFreshnessTreatsAMissedMonthAsAHole();
@@ -650,6 +651,85 @@ void TestDashboard::debtsCarryTheirTermsAndLatestBalance()
     for (Liability& liability : paid.liabilities.stored)
         liability.regularPayment = sek(100000);
     QVERIFY(!paid.build(kSnapshotMonth).hasDebtWithoutTerms);
+}
+
+void TestDashboard::aTermCarriesThePaymentItImplies()
+{
+    // A student loan with a year left and no interest: the payment its term
+    // implies is the balance divided by twelve, 1 000 kr a month. The recorded
+    // payment varies below; the term does not.
+    const auto householdWith = [](qint64 recordedPayment, qint64 monthlyFee = 0) {
+        FakeHousehold household;
+        populate(household);
+        household.liabilities.stored.push_back(
+            makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, Percentage{},
+                          RepaymentStyle::Annuity, sek(recordedPayment), sek(monthlyFee), 12));
+        household.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
+        return household.build(kSnapshotMonth);
+    };
+
+    const auto csnOf = [](const DashboardSnapshot& snapshot) -> const DebtInEffect& {
+        for (const DebtInEffect& debt : snapshot.debts) {
+            if (debt.id == "csn")
+                return debt;
+        }
+        return snapshot.debts.front();
+    };
+
+    // Only a term recorded: nothing to disagree with, but the payment the term
+    // implies is there for the page to state, and it travels with the debt so
+    // the projection can recalculate it.
+    const DashboardSnapshot termOnly = householdWith(0);
+    QCOMPARE(ore(termOnly.computedLoanPayment), qint64(100000));
+    QVERIFY(!termOnly.paymentDisagrees);
+    QCOMPARE(csnOf(termOnly).termMonths, 12);
+    // A term is a way of stating the repayment, so a loan that has one is not a
+    // loan whose terms are missing even though no payment was typed beside it.
+    FakeHousehold termWithoutPayment;
+    termWithoutPayment.profiles.stored = sampleProfile();
+    termWithoutPayment.liabilities.stored.push_back(
+        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan, Percentage{},
+                      RepaymentStyle::Annuity, sek(0), sek(0), 12));
+    termWithoutPayment.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
+    QVERIFY(!termWithoutPayment.build(kSnapshotMonth).hasDebtWithoutTerms);
+
+    // One per cent apart is a payment rounded to whole kronor, not two figures
+    // that contradict each other.
+    const DashboardSnapshot close = householdWith(101000);
+    QVERIFY(!close.paymentDisagrees);
+    QCOMPARE(ore(close.computedLoanPayment), qint64(100000));
+
+    // Ten per cent apart is worth saying. Neither figure is overwritten: the
+    // snapshot carries the computed one and the recorded one beside it.
+    const DashboardSnapshot apart = householdWith(110000);
+    QVERIFY(apart.paymentDisagrees);
+    QCOMPARE(ore(apart.computedLoanPayment), qint64(100000));
+    QCOMPARE(ore(csnOf(apart).regularPayment), qint64(110000));
+
+    // The fee is part of the one amount CSN charges, so it is in the computed
+    // payment: 1 000 kr of principal plus a 50 kr fee is 1 050 kr, and a payment
+    // recorded as 1 050 kr agrees with it. Comparing the fee-free 1 000 with the
+    // recorded figure would report a disagreement that is not there.
+    const DashboardSnapshot withFee = householdWith(105000, 5000);
+    QCOMPARE(ore(withFee.computedLoanPayment), qint64(105000));
+    QVERIFY(!withFee.paymentDisagrees);
+
+    // A fee does not blur a real disagreement either: 1 150 kr recorded against
+    // the 1 050 kr the terms imply is nearly ten per cent apart.
+    QVERIFY(householdWith(115000, 5000).paymentDisagrees);
+
+    // Only a payment recorded: no term, so nothing was implied and nothing is
+    // recalculated. That is the state a file written before terms existed is in.
+    FakeHousehold paymentOnly;
+    populate(paymentOnly);
+    paymentOnly.liabilities.stored.push_back(makeLiability("csn", "Student loan",
+                                                           LiabilityKind::StudentLoan, Percentage{},
+                                                           RepaymentStyle::Annuity, sek(110000)));
+    paymentOnly.debtBalances.upsert("csn", kSnapshotMonth, sek(1200000));
+
+    const DashboardSnapshot withoutTerm = paymentOnly.build(kSnapshotMonth);
+    QVERIFY(!withoutTerm.paymentDisagrees);
+    QCOMPARE(ore(withoutTerm.computedLoanPayment), qint64(0));
 }
 
 void TestDashboard::monthsSinceCountsWholeMonths()

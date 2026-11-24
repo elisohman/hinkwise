@@ -41,6 +41,9 @@ private slots:
     void makeLiabilityRejectsANegativePayment();
     void makeLiabilityRejectsANegativeFee();
     void makeLiabilityRejectsAFeeOnFixedAmortisation();
+    void makeLiabilityKeepsARemainingTerm();
+    void makeLiabilityRejectsANegativeTerm();
+    void aTermOnAFixedAmortisationLoanIsNotAnError();
     void zeroRateIsAllowed();
     void isBadLoanAtTheBoundary();
     void isBadLoanComparesStrictly();
@@ -121,6 +124,43 @@ void TestLiability::makeLiabilityRejectsAFeeOnFixedAmortisation()
                              makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
                                            fourAndAHalfPercent(), RepaymentStyle::FixedAmortisation,
                                            sek(300000), sek(5000)));
+}
+
+void TestLiability::makeLiabilityKeepsARemainingTerm()
+{
+    // A student loan is described by the months it still has to run: CSN keeps
+    // the term and recalculates what it asks for, so the term is the fact worth
+    // recording.
+    const Liability loan = makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                                         Percentage::fromBasisPoints(150), RepaymentStyle::Annuity,
+                                         sek(150000), sek(5000), 96);
+    QCOMPARE(loan.termMonths, 96);
+
+    // Not stated is the default state and not a term of no months.
+    const Liability untold =
+        makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                      Percentage::fromBasisPoints(150), RepaymentStyle::Annuity, sek(150000));
+    QCOMPARE(untold.termMonths, 0);
+}
+
+void TestLiability::makeLiabilityRejectsANegativeTerm()
+{
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
+                             makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                                           Percentage::fromBasisPoints(150),
+                                           RepaymentStyle::Annuity, sek(150000), sek(0), -1));
+}
+
+void TestLiability::aTermOnAFixedAmortisationLoanIsNotAnError()
+{
+    // Changing a loan's style must not require clearing its term first, and the
+    // term of a loan that repays a recorded principal means nothing: the model
+    // ignores it rather than refusing the row.
+    const Liability mortgage =
+        makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage, fourAndAHalfPercent(),
+                      RepaymentStyle::FixedAmortisation, sek(300000), sek(0), 240);
+    QCOMPARE(mortgage.termMonths, 240);
+    QCOMPARE(static_cast<int>(mortgage.style), static_cast<int>(RepaymentStyle::FixedAmortisation));
 }
 
 void TestLiability::zeroRateIsAllowed()

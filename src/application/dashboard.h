@@ -77,6 +77,10 @@ struct DebtInEffect {
     domain::RepaymentStyle style = domain::RepaymentStyle::FixedAmortisation;
     domain::Money regularPayment{};
     domain::Money monthlyFee{};
+    /// Months the loan still has to run, zero when it states none. An annuity
+    /// with a term is repaid on the payment the term implies, recalculated each
+    /// year, rather than on the payment recorded beside it.
+    int termMonths = 0;
     domain::Money balance{};
 };
 
@@ -100,6 +104,17 @@ struct DashboardSnapshot {
     /// projection keeps its balance flat. The page says the terms are missing
     /// rather than leaving a debt that never falls unexplained.
     bool hasDebtWithoutTerms = false;
+    /// The payment the terms imply for the loans that state a term, added up in
+    /// the profile's currency: what CSN would charge this year. Zero when no
+    /// loan states a term, because then nothing was implied to compare.
+    domain::Money computedLoanPayment{};
+    /// True when a loan states both a term and a monthly payment, and the
+    /// payment the term implies differs from the recorded one by more than five
+    /// per cent. The two are equally the household's own figures, so neither is
+    /// overwritten: the page can say they disagree instead of quietly using one
+    /// of them. False when only one of the two is recorded, because there is
+    /// nothing yet to disagree with.
+    bool paymentDisagrees = false;
     /// False until the household has been created. The other fields are then
     /// zero and the screen shows its empty state.
     bool hasProfile = false;

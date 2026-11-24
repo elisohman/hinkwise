@@ -109,6 +109,7 @@ QJsonObject liabilityToJson(const domain::Liability& liability)
     put(object, "repaymentStyle", storageKeyText(domain::storageKey(liability.style)));
     put(object, "regularPayment", moneyToJson(liability.regularPayment));
     put(object, "monthlyFee", moneyToJson(liability.monthlyFee));
+    put(object, "termMonths", liability.termMonths);
     return object;
 }
 
@@ -497,6 +498,19 @@ application::Result<domain::Liability> liabilityFromJson(const QJsonValue& value
         if (!fee.ok())
             return Outcome::err(fee.error());
         liability.monthlyFee = fee.value();
+    }
+
+    // A backup written before the term existed has no key for it. Absence means
+    // the loan states no term, which keeps its recorded payment in force rather
+    // than inventing a recalculation the household never asked for.
+    const QJsonValue termValue = object.value().value(key("termMonths"));
+    if (!termValue.isUndefined()) {
+        const application::Result<int> term = requireInt(object.value(), "termMonths", context);
+        if (!term.ok())
+            return Outcome::err(term.error());
+        if (term.value() < 0)
+            return Outcome::err(context + ": 'termMonths' cannot be negative");
+        liability.termMonths = term.value();
     }
 
     return Outcome::ok(liability);

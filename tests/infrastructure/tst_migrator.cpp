@@ -24,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 4;
+constexpr int kExpectedVersion = 5;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -67,6 +67,13 @@ constexpr std::array<const char*, 3> kLoanTermsColumns{
     "regular_payment_minor",
     "monthly_fee_minor",
 };
+
+/// The liability row a version 4 file holds: the schema before a loan could
+/// state how long it still has to run.
+constexpr const char* kInsertVersionFourLiability =
+    "INSERT INTO liability (id, name, kind, interest_bp, repayment_style, "
+    "regular_payment_minor, monthly_fee_minor, archived) VALUES "
+    "('csn', 'Student loan', 'student-loan', 150, 'annuity', 150000, 5000, 0)";
 
 /// The liability row a version 3 file holds: the schema before the repayment
 /// terms existed.
@@ -121,6 +128,7 @@ private slots:
     void versionOneUpgradesAndKeepsItsRows();
     void versionTwoProfileComesOutAsPlanning();
     void versionThreeLiabilityComesOutWithoutTerms();
+    void versionFourLiabilityComesOutWithoutATerm();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
@@ -160,6 +168,9 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
     // And the loan terms, which a fresh file has room for too.
     for (const char* column : kLoanTermsColumns)
         QVERIFY(hasColumn(connection, "liability", column));
+
+    // So is the remaining term, whose default is the loan that states none.
+    QVERIFY(hasColumn(connection, "liability", "term_months"));
 }
 
 /// A file written by the release that only knew schema version 1 has months in
@@ -339,6 +350,63 @@ void TestMigrator::versionThreeLiabilityComesOutWithoutTerms()
     QVERIFY(select.next());
     QCOMPARE(select.value(0).toString(), QStringLiteral("annuity"));
     QCOMPARE(select.value(1).toLongLong(), qint64(1750000));
+}
+
+/// A version 4 file can already hold a loan that records its payments. Upgrading
+/// has to give it a term column, and the only defensible value is zero: with no
+/// term the plan keeps using the payment the household recorded, exactly as the
+/// file was written. The row's terms must survive untouched.
+void TestMigrator::versionFourLiabilityComesOutWithoutATerm()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{5});
+    const std::span<const sqlite::Migration> upToVersionFour{migrations.data(), 4};
+
+    const application::Result<int> atFour = sqlite::applyMigrations(connection, upToVersionFour);
+    QVERIFY2(atFour.ok(), atFour.error().c_str());
+    QCOMPARE(atFour.value(), 4);
+    QVERIFY(!hasColumn(connection, "liability", "term_months"));
+
+    QSqlQuery insert{connection};
+    QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionFourLiability)),
+             qPrintable(insert.lastError().text()));
+
+    const application::Result<int> atFive = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atFive.ok(), atFive.error().c_str());
+    QCOMPARE(atFive.value(), kExpectedVersion);
+    QVERIFY(hasColumn(connection, "liability", "term_months"));
+
+    QSqlQuery select{connection};
+    QVERIFY(select.exec(QStringLiteral("SELECT name, interest_bp, repayment_style, "
+                                       "regular_payment_minor, monthly_fee_minor, term_months "
+                                       "FROM liability WHERE id = 'csn'")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toString(), QStringLiteral("Student loan"));
+    QCOMPARE(select.value(1).toInt(), 150);
+    QCOMPARE(select.value(2).toString(), QStringLiteral("annuity"));
+    QCOMPARE(select.value(3).toLongLong(), qint64(150000));
+    QCOMPARE(select.value(4).toLongLong(), qint64(5000));
+    QCOMPARE(select.value(5).toInt(), 0);
+
+    // Running the migrator again leaves a term that was recorded after the
+    // upgrade alone, which is what makes the upgrade safe on every start.
+    QSqlQuery chose{connection};
+    QVERIFY(chose.exec(QStringLiteral("UPDATE liability SET term_months = 96 WHERE id = 'csn'")));
+    const application::Result<int> again = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(again.ok(), again.error().c_str());
+    QCOMPARE(again.value(), kExpectedVersion);
+    select.finish();
+    QVERIFY(select.exec(QStringLiteral("SELECT term_months FROM liability WHERE id = 'csn'")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toInt(), 96);
 }
 
 void TestMigrator::migratingTwiceChangesNothing()

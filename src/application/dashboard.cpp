@@ -5,6 +5,7 @@
 
 #include "domain/jurisdiction.h"
 #include "domain/phase.h"
+#include "domain/projection.h"
 #include "domain/rules.h"
 #include "domain/targets.h"
 
@@ -80,6 +81,22 @@ Money mortgageTotalOf(std::span<const domain::Debt> debts, domain::Currency curr
             total += debt.balance;
     }
     return total;
+}
+
+/// Whether a loan's recorded payment and the payment its term implies are far
+/// enough apart to be worth saying so: more than five per cent of the recorded
+/// one, so a rounding difference or a payment the household rounded to whole
+/// kronor stays quiet. Either side missing is not a disagreement - there is
+/// nothing to compare against.
+bool paymentDisagrees(const Money& computed, const Money& recorded)
+{
+    if (!computed.isPositive() || !recorded.isPositive())
+        return false;
+
+    const std::int64_t difference = computed.minorUnits() >= recorded.minorUnits()
+                                        ? computed.minorUnits() - recorded.minorUnits()
+                                        : recorded.minorUnits() - computed.minorUnits();
+    return difference * 100 > recorded.minorUnits() * 5;
 }
 
 /// The later of two recorded months, ignoring whichever of them is absent.
@@ -186,6 +203,11 @@ Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRep
 
     const domain::Currency currency = snapshot.profile.baseCurrency;
     const Money zero = Money::zero(currency);
+    // A household whose loans state no term has nothing implied to compare, and
+    // the amount still has to be in the profile's currency rather than SEK by
+    // default.
+    snapshot.computedLoanPayment = zero;
+    snapshot.paymentDisagrees = false;
 
     // The flow is optional. Without it the household has no expenses, every
     // target resolves to zero and the rules say what is missing.
@@ -260,9 +282,29 @@ Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRep
             snapshot.debts.push_back(DebtInEffect{
                 liability.id, liability.name, liability.kind, liability.interestRate,
                 liability.style, Money{liability.regularPayment.minorUnits(), currency},
-                Money{liability.monthlyFee.minorUnits(), currency}, balance});
-            if (balance.isPositive() && !liability.regularPayment.isPositive())
+                Money{liability.monthlyFee.minorUnits(), currency}, liability.termMonths, balance});
+            // A term is a way of stating the payment too, so a loan that has one
+            // is not a loan whose terms are missing.
+            const bool paymentFollowsFromTerm =
+                liability.style == domain::RepaymentStyle::Annuity && liability.termMonths > 0;
+            if (balance.isPositive() && !liability.regularPayment.isPositive() &&
+                !paymentFollowsFromTerm)
                 snapshot.hasDebtWithoutTerms = true;
+
+            // What the loan's term implies for the year ahead, computed the same
+            // way the projection computes its first year - one function, so the
+            // page and the curve cannot disagree about what CSN would charge.
+            // The fee is part of what CSN charges, so it belongs in the payment
+            // compared with the one the household recorded.
+            if (!paymentFollowsFromTerm || !balance.isPositive())
+                continue;
+
+            const Money computed =
+                domain::annuityPayment(balance, liability.interestRate, liability.termMonths,
+                                       Money{liability.monthlyFee.minorUnits(), currency});
+            snapshot.computedLoanPayment += computed;
+            if (paymentDisagrees(computed, Money{liability.regularPayment.minorUnits(), currency}))
+                snapshot.paymentDisagrees = true;
         }
     }
 

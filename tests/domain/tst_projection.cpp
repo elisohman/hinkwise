@@ -63,6 +63,20 @@ LoanTerms annuityLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment,
                      RepaymentStyle::Annuity, sek(monthlyPayment), sek(monthlyFee)};
 }
 
+/// A student loan on CSN's terms: the household records how long the loan still
+/// has to run, and the payment follows from that rather than being entered. No
+/// payment is recorded beside the term, so nothing here can be read as the
+/// household having fixed one.
+LoanTerms termAnnuityLoan(qint64 balance, int annualRateBp, int termMonths, qint64 monthlyFee = 0)
+{
+    return LoanTerms{sek(balance),
+                     Percentage::fromBasisPoints(annualRateBp),
+                     RepaymentStyle::Annuity,
+                     sek(0),
+                     sek(monthlyFee),
+                     termMonths};
+}
+
 } // namespace
 
 class TestProjection : public QObject {
@@ -93,6 +107,13 @@ private slots:
     void interestAccruesAndIsReported();
     void feesAccrueForAnAnnuity();
     void zeroRateLoansClearExactly();
+    void annuityPaymentIsTheAnnuityFactor();
+    void aTermAnnuityClearsExactlyAtTheEndOfItsTerm();
+    void aTermAnnuityHoldsOnePaymentForTheWholeYear();
+    void aTermAnnuityRecalculatesEachJanuaryFromWhatIsLeft();
+    void aZeroRateTermAnnuityDividesTheBalanceOverTheTerm();
+    void aTermAnnuityWithAFeeStillEndsOnItsTerm();
+    void aTermOnAFixedAmortisationLoanIsIgnored();
     void netWorthIsTheTotalMinusDebt();
     void netWorthCountsOtherAssets();
     void noOtherAssetsChangesNothing();
@@ -565,6 +586,186 @@ void TestProjection::zeroRateLoansClearExactly()
         QCOMPARE(ore(years[1].feesPaid), qint64(0));
         QVERIFY(!years[1].loanNeverRepaid);
     }
+}
+
+void TestProjection::annuityPaymentIsTheAnnuityFactor()
+{
+    // One month is the factor in closed form: the balance plus that month's
+    // interest, because there is no month left to spread anything over.
+    QCOMPARE(ore(annuityPayment(sek(1000000), Percentage::fromBasisPoints(1200), 1, sek(0))),
+             qint64(1010000));
+
+    // Nothing to amortise, or no month to amortise it in, is nothing to pay.
+    QCOMPARE(ore(annuityPayment(sek(0), Percentage::fromBasisPoints(1200), 12, sek(0))), qint64(0));
+    QCOMPARE(ore(annuityPayment(sek(1000000), Percentage::fromBasisPoints(1200), 0, sek(0))),
+             qint64(0));
+
+    // A negative rate is broken input rather than a rebate, so the loan is
+    // divided by its term as if it carried no interest at all.
+    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage::fromBasisPoints(-100), 12, sek(0))),
+             qint64(100000));
+
+    // The fee is part of the one amount CSN asks for, so it is added to the
+    // amortisation rather than taken out of it: 1 000 kr of principal plus a
+    // 50 kr fee is 1 050 kr, and the principal still falls by 1 000.
+    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage{}, 12, sek(5000))), qint64(105000));
+
+    // A negative fee is broken input, not a discount on the payment.
+    QCOMPARE(ore(annuityPayment(sek(1200000), Percentage{}, 12, sek(-5000))), qint64(100000));
+}
+
+void TestProjection::aTermAnnuityClearsExactlyAtTheEndOfItsTerm()
+{
+    // 100 000 kr at 2 % with three years left to run: the shape of CSN's loan.
+    // The term is what holds still, so the loan must run the whole of it rather
+    // than being paid off when the first year's payment happens to reach zero.
+    ProjectionInput input = emptyInput();
+    input.years = 4;
+    input.loans = {termAnnuityLoan(10000000, 200, 36)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QVERIFY(years[1].debt.isPositive());
+    QVERIFY(years[2].debt.isPositive());
+    // With a year to go, less than a year of payments is left: the schedule is
+    // on its term, not ahead of it or behind it.
+    QVERIFY(years[2].debt < years[2].loanPayment.scaledBy(Percentage::fromBasisPoints(120000)));
+    // The last month of the term clears what rounding left behind, so the
+    // balance is exactly zero at the end of the term rather than a payment of
+    // residue later.
+    QCOMPARE(ore(years[3].debt), qint64(0));
+    QCOMPARE(ore(years[4].debt), qint64(0));
+    QVERIFY(!years[3].loanNeverRepaid);
+    // Nothing is owed, so nothing is charged: the year the loan ends is the
+    // last one with a payment in force.
+    QCOMPARE(ore(years[4].loanPayment), qint64(0));
+}
+
+void TestProjection::aTermAnnuityHoldsOnePaymentForTheWholeYear()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.loans = {termAnnuityLoan(10000000, 200, 36)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    // The payment CSN asks for in January is the one it asks for in December.
+    QCOMPARE(ore(years[0].loanPayment), ore(years[1].loanPayment));
+    QVERIFY(years[1].loanPayment.isPositive());
+
+    // The whole year at that one payment: every krona of the balance that fell
+    // is twelve payments less that year's interest and fee, so no month was
+    // charged at a rate of its own.
+    QCOMPARE(ore(years[0].debt) - ore(years[1].debt),
+             12 * ore(years[1].loanPayment) - ore(years[1].interestPaid) - ore(years[1].feesPaid));
+}
+
+void TestProjection::aTermAnnuityRecalculatesEachJanuaryFromWhatIsLeft()
+{
+    // A five-year term the projection does not outlast, so every year is a
+    // January recalculation and not a payoff. The recorded payment is a figure
+    // of its own, and the projection must not simply carry it forward.
+    ProjectionInput input = emptyInput();
+    input.years = 3;
+    input.loans = {LoanTerms{sek(10000000), Percentage::fromBasisPoints(200),
+                             RepaymentStyle::Annuity, sek(1000), sek(0), 60}};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    // Year two's payment is the annuity factor of the balance the first year
+    // left and the months it left, computed here from the two figures the
+    // projection reports rather than read back from it.
+    const Money expected =
+        annuityPayment(years[1].debt, Percentage::fromBasisPoints(200), 60 - 12, sek(0));
+    QCOMPARE(ore(years[2].loanPayment), ore(expected));
+    QVERIFY(years[2].loanPayment.isPositive());
+
+    // Not the recorded 10 kr, which the term overrules.
+    QVERIFY(ore(years[1].loanPayment) > qint64(100000));
+
+    // With the rate held constant the recalculation lands on very nearly the
+    // same payment every January: the balance and the months left fall in step,
+    // so the difference is rounding and nothing more. A real CSN payment does
+    // fall year on year, because CSN rounds the payment up to whole kronor and
+    // resets the rate each year - see renewPayments() for why this projection
+    // states that limit instead of simulating it.
+    const std::int64_t step = ore(years[2].loanPayment) - ore(years[1].loanPayment);
+    QVERIFY(step <= 100 && step >= -100);
+}
+
+void TestProjection::aZeroRateTermAnnuityDividesTheBalanceOverTheTerm()
+{
+    // With no interest the annuity factor is the balance divided by the months
+    // left, which is the one case the payment can be written down exactly.
+    ProjectionInput oneYear = emptyInput();
+    oneYear.years = 1;
+    oneYear.loans = {termAnnuityLoan(1200000, 0, 12)};
+
+    const std::vector<ProjectionYear> oneYearPlan = project(oneYear);
+    QCOMPARE(ore(oneYearPlan[0].loanPayment), qint64(100000));
+    QCOMPARE(ore(oneYearPlan[1].debt), qint64(0));
+    QCOMPARE(ore(oneYearPlan[1].interestPaid), qint64(0));
+
+    // The same balance over two years is half the payment a month and half the
+    // balance still owed after the first one.
+    ProjectionInput twoYears = emptyInput();
+    twoYears.years = 1;
+    twoYears.loans = {termAnnuityLoan(1200000, 0, 24)};
+
+    const std::vector<ProjectionYear> twoYearPlan = project(twoYears);
+    QCOMPARE(ore(twoYearPlan[0].loanPayment), qint64(50000));
+    QCOMPARE(ore(twoYearPlan[1].debt), qint64(600000));
+}
+
+void TestProjection::aTermAnnuityWithAFeeStillEndsOnItsTerm()
+{
+    // 100 000 kr at 2 % over three years with a 50 kr administration fee. The
+    // fee is inside the payment and never principal, so the principal part is
+    // still the annuity factor and the loan still ends with the term rather
+    // than a fee's width behind it.
+    ProjectionInput input = emptyInput();
+    input.years = 4;
+    input.loans = {termAnnuityLoan(10000000, 200, 36, 5000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QVERIFY(years[2].debt.isPositive());
+    QCOMPARE(ore(years[3].debt), qint64(0));
+    QVERIFY(!years[1].loanNeverRepaid);
+
+    // The fee is a cost of its own, reported apart from the interest: three
+    // years of 50 kr a month.
+    QVERIFY(years[3].interestPaid.isPositive());
+    QCOMPARE(ore(years[3].feesPaid), qint64(36 * 5000));
+
+    // The payment is the fee plus the amortisation, and the principal that
+    // falls over the first year is the year's payments less interest and fee.
+    QVERIFY(years[1].loanPayment > sek(5000));
+    QCOMPARE(ore(years[0].debt) - ore(years[1].debt),
+             12 * ore(years[1].loanPayment) - ore(years[1].interestPaid) - ore(years[1].feesPaid));
+}
+
+void TestProjection::aTermOnAFixedAmortisationLoanIsIgnored()
+{
+    // A term belongs to an annuity: a mortgage repays the principal it records,
+    // and a term beside it is not a second way of reading the same loan.
+    ProjectionInput withTerm = emptyInput();
+    withTerm.years = 3;
+    withTerm.loans = {LoanTerms{sek(3000000), Percentage::fromBasisPoints(0),
+                                RepaymentStyle::FixedAmortisation, sek(100000), sek(0), 12}};
+
+    ProjectionInput withoutTerm = withTerm;
+    withoutTerm.loans = {fixedLoan(3000000, 0, 100000)};
+
+    const std::vector<ProjectionYear> termYears = project(withTerm);
+    const std::vector<ProjectionYear> plainYears = project(withoutTerm);
+
+    for (std::size_t year = 0; year < termYears.size(); ++year) {
+        QCOMPARE(ore(termYears[year].debt), ore(plainYears[year].debt));
+        QCOMPARE(ore(termYears[year].loanPayment), ore(plainYears[year].loanPayment));
+    }
+    // The payment in force is the recorded principal, not a recalculation.
+    QCOMPARE(ore(termYears[0].loanPayment), qint64(100000));
 }
 
 void TestProjection::netWorthIsTheTotalMinusDebt()

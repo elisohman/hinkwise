@@ -5,6 +5,7 @@
 
 #include "bucket.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -60,11 +61,24 @@ Money monthlyInterest(const Money& balance, Percentage annualRate)
     return Money{adjusted / divisor, balance.currency()};
 }
 
-/// One loan while the projection runs: its terms and the balance left after the
-/// months simulated so far.
+/// The rate one month is charged at, as the fraction the annuity factor needs.
+double monthlyRateOf(Percentage annualRate)
+{
+    return static_cast<double>(annualRate.basisPoints()) /
+           static_cast<double>(basisPointsInWhole * monthsPerYear);
+}
+
+/// One loan while the projection runs: its terms, the balance left after the
+/// months simulated so far, and the payment the current year is charged at.
 struct LoanState {
     LoanTerms terms;
     Money balance;
+    /// Months of the loan's term not yet simulated. Zero for a loan that states
+    /// no term, which is never counted down.
+    int monthsRemaining = 0;
+    /// The payment in force. The recorded one unless the loan is an annuity
+    /// with a term, in which case renewPayments() recalculates it.
+    Money paymentInForce{};
 };
 
 std::vector<LoanState> statesOf(const std::vector<LoanTerms>& loans)
@@ -76,9 +90,35 @@ std::vector<LoanState> statesOf(const std::vector<LoanTerms>& loans)
         // starts where a repaid loan does.
         const Money balance =
             terms.balance.isNegative() ? Money::zero(terms.balance.currency()) : terms.balance;
-        states.push_back(LoanState{terms, balance});
+        const bool termCounts = terms.style == RepaymentStyle::Annuity && terms.termMonths > 0;
+        states.push_back(
+            LoanState{terms, balance, termCounts ? terms.termMonths : 0, terms.regularPayment});
     }
     return states;
+}
+
+/// Recalculates the payment of every loan whose repayment is set by a term.
+///
+/// A Swedish student loan is an annuity whose payment CSN holds for one
+/// calendar year and recalculates each January from the balance left, the
+/// months left and the rate. The payment is therefore recomputed here - once,
+/// at the first month of every projection year - and held for that year's
+/// twelve months. A loan with no term keeps the payment it was recorded with.
+///
+/// With one rate held for the whole projection the recalculation returns very
+/// nearly the same payment every January, because the balance and the months
+/// left fall in step. A real CSN payment does fall year on year: CSN rounds it
+/// up to whole kronor, so the loan amortises a little faster than the schedule,
+/// and it resets the rate each year. Neither is modelled here, and pretending
+/// otherwise would be a worse answer than stating it.
+void renewPayments(std::vector<LoanState>& loans)
+{
+    for (LoanState& loan : loans) {
+        if (loan.terms.style != RepaymentStyle::Annuity || loan.terms.termMonths <= 0)
+            continue;
+        loan.paymentInForce = annuityPayment(loan.balance, loan.terms.annualRate,
+                                             loan.monthsRemaining, loan.terms.monthlyFee);
+    }
 }
 
 /// What one simulated year cost and cleared.
@@ -93,7 +133,7 @@ struct YearRepayment {
 /// FixedAmortisation: the recorded payment is principal, so the whole of it
 /// comes off the balance and the interest is a separate cost.
 ///
-/// Annuity: the recorded payment is everything, so the principal is whatever is
+/// Annuity: the payment in force is everything, so the principal is whatever is
 /// left after interest and the administration fee. As the balance falls the
 /// interest share falls with it and the principal share rises, which is exactly
 /// the behaviour a yearly approximation gets wrong.
@@ -101,7 +141,9 @@ struct YearRepayment {
 /// An annuity whose payment does not cover interest plus fee cannot reduce its
 /// balance. Growing it forever would turn one broken figure into a debt that
 /// swallows the projection, so the balance is kept flat and the year is flagged
-/// for the interface to explain.
+/// for the interface to explain. A flat balance does not consume the term
+/// either: nothing is being amortised, so there is no month of the loan's life
+/// to count down.
 void repayOneMonth(LoanState& loan, YearRepayment& year)
 {
     if (!loan.balance.isPositive())
@@ -115,14 +157,21 @@ void repayOneMonth(LoanState& loan, YearRepayment& year)
                                                              : loan.terms.monthlyFee;
         year.feesPaid += fee;
         const Money cost = interest + fee;
-        if (loan.terms.regularPayment <= cost) {
+        // The last month of a term clears what is left rather than paying an
+        // annuity factor over no months at all. Rounding can leave an öre or
+        // two behind, which is cleared here rather than carried as a debt.
+        const bool finalMonth = loan.terms.termMonths > 0 && loan.monthsRemaining <= 1;
+        const Money payment = finalMonth ? loan.balance + cost : loan.paymentInForce;
+        if (payment <= cost) {
             year.loanNeverRepaid = true;
             return;
         }
 
-        const Money principal = loan.terms.regularPayment - cost;
+        const Money principal = payment - cost;
         loan.balance = loan.balance <= principal ? Money::zero(loan.balance.currency())
                                                  : loan.balance - principal;
+        if (loan.monthsRemaining > 0)
+            --loan.monthsRemaining;
         return;
     }
 
@@ -134,6 +183,18 @@ void repayOneMonth(LoanState& loan, YearRepayment& year)
     loan.balance = loan.balance <= loan.terms.regularPayment
                        ? Money::zero(loan.balance.currency())
                        : loan.balance - loan.terms.regularPayment;
+}
+
+/// The monthly payments the household is charged this year, added up. A loan
+/// that is already repaid, or that states no payment, is charged nothing.
+Money totalPayment(const std::vector<LoanState>& loans, Currency currency)
+{
+    Money total = Money::zero(currency);
+    for (const LoanState& loan : loans) {
+        if (loan.balance.isPositive() && loan.paymentInForce.isPositive())
+            total += loan.paymentInForce;
+    }
+    return total;
 }
 
 Money totalBalance(const std::vector<LoanState>& loans, Currency currency)
@@ -170,6 +231,35 @@ void fillDerived(ProjectionYear& year, const ProjectionInput& input)
 
 } // namespace
 
+Money annuityPayment(const Money& balance, Percentage annualRate, int months,
+                     const Money& monthlyFee)
+{
+    if (!balance.isPositive() || months <= 0)
+        return Money::zero(balance.currency());
+
+    // Never negative: a rate that is negative is broken input rather than a
+    // rebate, and a loan with no interest simply divides the balance.
+    const double rate = annualRate.isNegative() ? 0.0 : monthlyRateOf(annualRate);
+    const double principal = static_cast<double>(balance.minorUnits());
+    double payment = 0.0;
+    if (rate == 0.0) {
+        payment = principal / static_cast<double>(months);
+    } else {
+        // The one place the domain computes in floating point: (1 + r)^-n has
+        // no exact integer form. The result is rounded to minor units on the
+        // next line and never stored as a double, so the balance stays exact
+        // and only the payment carries a sub-öre decision.
+        const double factor = rate / (1.0 - std::pow(1.0 + rate, -months));
+        payment = principal * factor;
+    }
+
+    const Money amortisation{static_cast<std::int64_t>(std::llround(payment)), balance.currency()};
+    // A fee is a cost, never principal, and a negative one is broken input.
+    if (monthlyFee.isNegative())
+        return amortisation;
+    return amortisation + monthlyFee;
+}
+
 std::vector<ProjectionYear> project(const ProjectionInput& input)
 {
     // A negative horizon is a caller bug, not a household state. Treating it as
@@ -181,6 +271,7 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     std::vector<ProjectionYear> years;
     years.reserve(static_cast<std::size_t>(steps) + 1);
     std::vector<LoanState> loans = statesOf(input.loans);
+    renewPayments(loans);
 
     Money interestPaid = Money::zero(currency);
     Money feesPaid = Money::zero(currency);
@@ -191,6 +282,7 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     today.debt = totalBalance(loans, currency);
     today.interestPaid = interestPaid;
     today.feesPaid = feesPaid;
+    today.loanPayment = totalPayment(loans, currency);
     today.otherAssets = input.startingOtherAssets;
     fillDerived(today, input);
     years.push_back(today);
@@ -205,6 +297,14 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
             const Money growth = previous.scaledBy(input.expectedRealReturn[index]);
             year.perBucket[index] = previous + growth + input.annualContributions[index];
         }
+
+        // January: a loan whose payment follows from its term is recalculated
+        // from the balance left and the months left, and the payment is then
+        // held for the whole year - the part of CSN's behaviour that a payment
+        // fixed for the whole term gets wrong, because it pays the loan off
+        // early and absorbs a rate change in the wrong place.
+        renewPayments(loans);
+        year.loanPayment = totalPayment(loans, currency);
 
         // A year of repayment is twelve repayments, because an annuity's split
         // between interest and principal changes every month as its balance
