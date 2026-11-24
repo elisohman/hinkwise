@@ -159,8 +159,12 @@ private:
     bool m_hasProfile = false;
     domain::Currency m_currency = domain::Currency::Sek;
     domain::ProjectionInput m_baseInput;
-    domain::Money m_monthlySaving;
-    domain::Money m_annualSaving;
+    /// The monthly amount that actually reaches the buckets this month: the
+    /// part the recorded split sends to the buffer and the investable buckets.
+    /// With no split it is the whole recorded saving. Amortisation is never in
+    /// it: that krona becomes housing equity, and the projection already lets it
+    /// shrink the debt.
+    domain::Money m_monthlyInvestable;
     int m_contributionBucket = -1;
     domain::Money m_extraMonthly;
     QString m_extraSavingError;

@@ -49,6 +49,7 @@ private slots:
     void refusesToDrawAnEmptyProjection();
     void carriesTheDebtAndNetWorthAlongTheHorizon();
     void reachesBelowZeroWhenDebtOutrunsTheCapital();
+    void keepsNetWorthOnTheAxisAboveTheBands();
     void leavesTheDebtOutWhenNoneIsRecorded();
 };
 
@@ -200,6 +201,27 @@ void TestProjectionSeries::reachesBelowZeroWhenDebtOutrunsTheCapital()
     QVERIFY(series.yTicks.front().value.minorUnits() < 0);
     QCOMPARE(series.yTicks.front().ratio, 0.0);
     QCOMPARE(series.yTicks.back().ratio, 1.0);
+}
+
+void TestProjectionSeries::keepsNetWorthOnTheAxisAboveTheBands()
+{
+    // A household with a 400 000 kr flat against 100 000 kr of capital: net
+    // worth counts the flat, so it is the highest figure on the chart and the
+    // axis has to reach it. A line clamped to the rim would draw a household
+    // that owns a flat as though it owned the bands alone.
+    domain::ProjectionInput projection = input();
+    projection.startingOtherAssets = sek(40000000);
+    projection.otherAssetsRealReturn = domain::Percentage::fromBasisPoints(250);
+
+    const ProjectionSeries series = projectionSeriesOf(projection);
+
+    QVERIFY(series.valid);
+    QVERIFY(series.netWorth.front().value > series.debt.front().value);
+    QVERIFY(series.netWorth.front().ratio > series.bands.front().playTop);
+    QVERIFY(series.netWorth.front().ratio < 1.0);
+    QVERIFY(series.yTicks.back().value >= series.netWorth.front().value);
+    // Nothing sits below zero, so the axis still starts at the bottom.
+    QCOMPARE(series.zeroRatio, 0.0);
 }
 
 void TestProjectionSeries::leavesTheDebtOutWhenNoneIsRecorded()

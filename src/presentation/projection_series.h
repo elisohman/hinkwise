@@ -47,9 +47,11 @@ struct ProjectionPoint {
 /// does not reach it within the horizon.
 struct ProjectionSeries {
     QVector<ProjectionBand> bands;
-    /// The debt line and the line it crosses: total minus debt. Both use the
-    /// same axis as the bands, so the year the capital overtakes the loan is a
-    /// crossing on screen and not a figure to compare by eye.
+    /// The debt line and the line it crosses: net worth, meaning everything
+    /// owned - the bands, the housing and the pensions - less every debt. Both
+    /// use the same axis as the bands, so the year the household's worth
+    /// overtakes the loan is a crossing on screen and not a figure to compare
+    /// by eye.
     QVector<ProjectionPoint> debt;
     QVector<ProjectionPoint> netWorth;
     QVector<ProjectionTick> yTicks;
@@ -66,7 +68,7 @@ struct ProjectionSeries {
     /// or when the household records no debt.
     int yearsToDebtFree = -1;
     /// Where zero sits on the axis. Above the bottom only when debt outruns
-    /// investable capital, which is where the net-worth line lives.
+    /// everything owned, which is where the net-worth line lives.
     double zeroRatio = 0.0;
     /// False when there is nothing to draw: no years, or every figure is zero.
     bool valid = false;

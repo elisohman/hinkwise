@@ -56,13 +56,14 @@ Money afterOneYearsAmortisation(const Money& debt, const Money& annualAmortisati
 
 /// Fills the derived figures of a row: the total, the debt and the two ratios
 /// the model headlines. Called for every row, so today is measured the same way
-/// as any projected year. Net worth is the total minus the debt; the ratios
-/// deliberately still read the total alone, because a mortgage does not make
-/// investable capital last longer.
+/// as any projected year. Net worth counts both asset families, because the
+/// debt it subtracts is secured on both: a mortgage sits on a house the total
+/// never held. The ratios deliberately still read the total alone, because a
+/// mortgage does not make investable capital last longer.
 void fillDerived(ProjectionYear& year, const ProjectionInput& input)
 {
     year.total = sumOf(year.perBucket);
-    year.netWorth = year.total - year.debt;
+    year.netWorth = year.total + year.otherAssets - year.debt;
     year.yearsOfFreedom = ratioOf(year.total, input.annualExpenses);
     year.fiProgress = ratioOf(year.total, input.fiTarget);
 }
@@ -86,6 +87,7 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     // floored the same way every later year is.
     today.debt = input.startingDebt.isNegative() ? Money::zero(input.startingDebt.currency())
                                                  : input.startingDebt;
+    today.otherAssets = input.startingOtherAssets;
     fillDerived(today, input);
     years.push_back(today);
 
@@ -101,6 +103,11 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
         }
 
         year.debt = afterOneYearsAmortisation(years.back().debt, input.annualAmortisation);
+        // Nothing is added to the other assets: the saving the household
+        // records is already all in the buckets or in the amortisation, and
+        // counting it here as well would grow the same krona twice.
+        const Money otherSoFar = years.back().otherAssets;
+        year.otherAssets = otherSoFar + otherSoFar.scaledBy(input.otherAssetsRealReturn);
         fillDerived(year, input);
         years.push_back(year);
     }

@@ -72,6 +72,10 @@ private slots:
     void aRepaidMortgageReadsZeroFromItsYearOnwards();
     void amortisationThatIsZeroOrNegativeLeavesDebtFlat();
     void netWorthIsTheTotalMinusDebt();
+    void netWorthCountsOtherAssets();
+    void noOtherAssetsChangesNothing();
+    void otherAssetsCompoundAtTheGivenRealReturn();
+    void amortisationReachesNoInvestableCapital();
     void debtDoesNotChangeYearsOfFreedom();
     void noDebtLeavesNetWorthEqualToTheTotal();
 };
@@ -403,6 +407,115 @@ void TestProjection::netWorthIsTheTotalMinusDebt()
     QCOMPARE(ore(years[2].total), qint64(12000000));
     QCOMPARE(ore(years[2].debt), qint64(3000000));
     QCOMPARE(ore(years[2].netWorth), qint64(9000000));
+}
+
+void TestProjection::netWorthCountsOtherAssets()
+{
+    // A household with 100 000 kr of capital, the 2 000 000 kr flat the loan is
+    // secured on and a 1 500 000 kr mortgage. Net worth has to count the flat,
+    // or the mortgage alone would make the household look poorer than it is.
+    ProjectionInput input = emptyInput();
+    input.years = 5;
+    input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000);
+    input.startingOtherAssets = sek(200000000);
+    input.otherAssetsRealReturn = Percentage::fromBasisPoints(250);
+    input.startingDebt = sek(150000000);
+    input.annualAmortisation = sek(1200000);
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years.front().otherAssets), qint64(200000000));
+    for (const ProjectionYear& year : years)
+        QCOMPARE(ore(year.netWorth), ore(year.total) + ore(year.otherAssets) - ore(year.debt));
+
+    // Today: 100 000 kr of capital plus 2 000 000 kr of housing less the loan.
+    QCOMPARE(ore(years.front().netWorth), qint64(60000000));
+    // The total stays investable capital: a flat is not spendable, so it never
+    // joins the buckets and never moves the ratios.
+    QCOMPARE(ore(years.back().total), qint64(10000000));
+}
+
+void TestProjection::noOtherAssetsChangesNothing()
+{
+    // A household that owns no housing and has no pension promises: the second
+    // asset family is empty, so net worth is what it always was, and a return
+    // set for it multiplies nothing.
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000);
+    input.annualContributions[indexOf(Bucket::Growth)] = sek(1000000);
+    input.otherAssetsRealReturn = Percentage::fromBasisPoints(250);
+    input.startingDebt = sek(4000000);
+    input.annualAmortisation = sek(500000);
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    for (const ProjectionYear& year : years) {
+        QCOMPARE(ore(year.otherAssets), qint64(0));
+        QCOMPARE(ore(year.netWorth), ore(year.total) - ore(year.debt));
+    }
+}
+
+void TestProjection::otherAssetsCompoundAtTheGivenRealReturn()
+{
+    // 100 000 kr at the middle of the preserve band, 2.5 % real: the same growth
+    // the buckets get, applied to the family that is not in them.
+    ProjectionInput input = emptyInput();
+    input.years = 3;
+    input.startingOtherAssets = sek(10000000);
+    input.otherAssetsRealReturn = Percentage::fromBasisPoints(250);
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[0].otherAssets), qint64(10000000));
+    QCOMPARE(ore(years[1].otherAssets), qint64(10250000));
+    QCOMPARE(ore(years[2].otherAssets), qint64(10506250));
+    QCOMPARE(ore(years[3].otherAssets), qint64(10768906));
+
+    // Nothing is ever added to it: a saving is capital or it is amortisation,
+    // and neither arrives here.
+    ProjectionInput saving = input;
+    saving.annualContributions[indexOf(Bucket::Buffer)] = sek(1200000);
+    const std::vector<ProjectionYear> withSaving = project(saving);
+    for (std::size_t year = 0; year < years.size(); ++year)
+        QCOMPARE(ore(withSaving[year].otherAssets), ore(years[year].otherAssets));
+}
+
+void TestProjection::amortisationReachesNoInvestableCapital()
+{
+    // A month whose whole saving goes to the loan: nothing reaches the buffer or
+    // the investing buckets, and the debt is the only figure that moves. The
+    // saving is not counted twice - once as a contribution and once as a
+    // repayment - because amortisation turns a loan into housing equity, and
+    // housing is not investable capital.
+    ProjectionInput allToTheLoan = emptyInput();
+    allToTheLoan.years = 3;
+    allToTheLoan.startingBalances[indexOf(Bucket::Preserve)] = sek(10000000);
+    allToTheLoan.startingDebt = sek(5000000);       // 50 000 kr
+    allToTheLoan.annualAmortisation = sek(1200000); // 1 000 kr a month
+
+    const std::vector<ProjectionYear> amortised = project(allToTheLoan);
+
+    for (const ProjectionYear& year : amortised)
+        QCOMPARE(ore(year.total), qint64(10000000));
+    QCOMPARE(ore(amortised[1].debt), qint64(3800000));
+    QCOMPARE(ore(amortised[3].debt), qint64(1400000));
+
+    // Half the month to the buffer and half to the loan: 1 000 kr a month is
+    // 12 000 kr a year of capital and 12 000 kr a year of repayment, and the two
+    // move on their own sides of the household's position.
+    ProjectionInput halfToTheBuffer = allToTheLoan;
+    halfToTheBuffer.annualContributions[indexOf(Bucket::Buffer)] = sek(1200000);
+
+    const std::vector<ProjectionYear> split = project(halfToTheBuffer);
+
+    QCOMPARE(ore(split[1].total), qint64(11200000));
+    QCOMPARE(ore(split[3].total), qint64(13600000));
+    QCOMPARE(ore(split[1].debt), qint64(3800000));
+    QCOMPARE(ore(split[3].debt), qint64(1400000));
+    // Capital and debt part company by the same amount every year, so the
+    // household is never counted as paying the loan with money it still has.
+    QCOMPARE(ore(split[3].netWorth) - ore(split[0].netWorth), qint64(3600000) + qint64(3600000));
 }
 
 void TestProjection::debtDoesNotChangeYearsOfFreedom()

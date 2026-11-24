@@ -13,12 +13,23 @@
 namespace hinkwise::domain {
 
 /// What a projection needs: the four buckets as they stand today, what is
-/// added to them each year, the two yardsticks the model measures progress
-/// against, and the debt those buckets sit beside.
+/// added to them each year, the assets that are not in them, the two yardsticks
+/// the model measures progress against, and the debt those families sit beside.
 ///
 /// Every return here is REAL. There is no inflation figure to supply and none
 /// is applied, so a projection speaks in today's money throughout and the one
 /// thing a household cannot predict stays out of the arithmetic.
+///
+/// The two asset families are projected separately on purpose. Investable
+/// capital - the buckets - is what a household can live off, so it carries the
+/// model's per-bucket returns and the yearly saving. Housing and pension
+/// promises are wealth it cannot spend, so they are not in the buckets at all;
+/// leaving them out of net worth too would report a mortgaged household as
+/// poorer than it is, because the mortgage is secured on a house the buckets
+/// never held. They therefore travel in `otherAssets`, at one conservative real
+/// return, and only the sum of both families less the debt is net worth. The
+/// yards-of-freedom and FI figures still read the buckets alone: a flat does
+/// not make capital last longer.
 struct ProjectionInput {
     /// Indexed by Bucket. Investable capital only: the household's holdings
     /// with housing and the four pension kinds left out, exactly the assets
@@ -31,6 +42,14 @@ struct ProjectionInput {
     /// Indexed by Bucket, per year. Negative values are legal and expected:
     /// the model's band for the buffer includes a -1 % real return.
     std::array<Percentage, 4> expectedRealReturn{};
+    /// Everything the household owns that is NOT investable capital: housing
+    /// and the four pension kinds, exactly the BalanceSheet::totalAssets that
+    /// BalanceSheet::headlineAssets leaves out. Kept apart from the buckets
+    /// because it is projected apart; the struct comment says why.
+    Money startingOtherAssets{};
+    /// Per year, real, for startingOtherAssets. Nothing is added to it: a paid
+    /// loan turns into housing equity rather than into a contribution here.
+    Percentage otherAssetsRealReturn{};
     /// For years of freedom.
     Money annualExpenses{};
     /// The FI target to measure progress against. May be zero, which means the
@@ -54,12 +73,15 @@ struct ProjectionYear {
     /// Indexed by Bucket.
     std::array<Money, 4> perBucket{};
     Money total{};
+    /// The non-investable assets, grown at the real return they were given.
+    /// Never part of total: the buckets and these grow on separate rates.
+    Money otherAssets{};
     /// What is left to repay. Falls by the annual amortisation, never below
     /// zero; a zero or negative amortisation leaves it where it is.
     Money debt{};
-    /// Total minus debt. The buckets are investable capital only, so this is
-    /// what the household would have left of that capital if it cleared its
-    /// debts.
+    /// Everything owned less everything owed: total + otherAssets - debt.
+    /// Neither the total nor the debt alone is net worth, because the debt is
+    /// secured on what sits in otherAssets.
     Money netWorth{};
     /// Total over annual expenses; 10 000 bp == one year of freedom.
     Percentage yearsOfFreedom{};

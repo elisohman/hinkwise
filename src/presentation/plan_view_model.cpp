@@ -40,6 +40,10 @@ QString percentRangeLabel(const domain::PercentageRange& range)
 /// band it states. Play states no expectation at all, which is not the same as
 /// zero, so it is reported as such rather than as a percentage the model never
 /// claimed.
+///
+/// The same midpoint is what the non-investable assets are projected at: a flat
+/// and a pension promise are not spendable capital, but they are not static
+/// either, and Preserve is the band the model keeps value in.
 domain::Percentage returnUsedFor(domain::Bucket bucket)
 {
     return domain::interpolate(domain::factsOf(bucket).realReturn,
@@ -106,11 +110,18 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     // What the projection starts from, and what is added to it each year. The
     // starting balances are investable capital: housing and pension promises
     // are left out, the same exclusion the cautious headline uses, so a
-    // household that owns a flat does not look funded in year zero. The saving
-    // figure is last month's, kept flat for the whole horizon: the page says
-    // so, because pretending a household's saving rises with its income would
-    // be a forecast dressed as arithmetic.
+    // household that owns a flat does not look funded in year zero. Those
+    // holdings are not dropped, though: they start otherAssets, so net worth
+    // still counts the house a mortgage is secured on. The saving figure is
+    // last month's, kept flat for the whole horizon: the page says so, because
+    // pretending a household's saving rises with its income would be a forecast
+    // dressed as arithmetic.
     m_baseInput.startingBalances = snapshot.facts.sheet.investablePerBucket;
+    m_baseInput.startingOtherAssets =
+        snapshot.facts.sheet.totalAssets.currency() == m_currency
+            ? snapshot.facts.sheet.totalAssets - snapshot.facts.sheet.headlineAssets
+            : domain::Money::zero(m_currency);
+    m_baseInput.otherAssetsRealReturn = returnUsedFor(domain::Bucket::Preserve);
     m_baseInput.annualExpenses = snapshot.metrics.annualExpenses;
     m_baseInput.fiTarget = snapshot.metrics.fiTargetDefault;
     m_baseInput.years = kHorizonYears;
@@ -125,8 +136,13 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
                                    ? snapshot.facts.sheet.totalLiabilities
                                    : domain::Money::zero(m_currency);
     const std::optional<domain::SavingsBreakdown>& split = snapshot.facts.flow.savingSplit;
+    // A breakdown in another currency is unusable: all three parts are added to
+    // amounts in the profile's currency, so none of them may be mixed in.
+    const bool splitKnown = split.has_value() && split->toBuffer.currency() == m_currency &&
+                            split->toInvesting.currency() == m_currency &&
+                            split->toAmortisation.currency() == m_currency;
     m_baseInput.annualAmortisation =
-        split.has_value() && split->toAmortisation.currency() == m_currency
+        splitKnown
             ? split->toAmortisation.scaledBy(domain::Percentage::fromBasisPoints(kMonthsPerYear))
             : domain::Money::zero(m_currency);
     for (const domain::Bucket bucket : domain::allBuckets()) {
@@ -137,10 +153,15 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
         m_baseInput.annualContributions[index] = domain::Money::zero(m_currency);
     }
 
-    m_monthlySaving = snapshot.facts.flow.saving.currency() == m_currency
-                          ? snapshot.facts.flow.saving
-                          : domain::Money::zero(m_currency);
-    m_annualSaving = m_monthlySaving.scaledBy(domain::Percentage::fromBasisPoints(kMonthsPerYear));
+    // What reaches the buckets. A recorded split says how much of the month's
+    // saving stayed investable and how much went to the loan; only the first
+    // part is capital, because the second turns into housing equity and the
+    // projection already lets it shrink the debt. Using the whole saving here
+    // as well would grow the buckets and the equity on the same krona.
+    const domain::Money saving = snapshot.facts.flow.saving.currency() == m_currency
+                                     ? snapshot.facts.flow.saving
+                                     : domain::Money::zero(m_currency);
+    m_monthlyInvestable = splitKnown ? split->toBuffer + split->toInvesting : saving;
     m_contributionBucket = snapshot.rebalance.nextContribution.has_value()
                                ? static_cast<int>(*snapshot.rebalance.nextContribution)
                                : -1;
@@ -174,7 +195,7 @@ domain::ProjectionInput PlanViewModel::inputWith(domain::Money extraMonthly) con
     if (m_contributionBucket < 0)
         return input;
 
-    const domain::Money monthly = m_monthlySaving + extraMonthly;
+    const domain::Money monthly = m_monthlyInvestable + extraMonthly;
     input.annualContributions[static_cast<std::size_t>(m_contributionBucket)] =
         monthly.scaledBy(domain::Percentage::fromBasisPoints(kMonthsPerYear));
     return input;
@@ -288,7 +309,7 @@ void PlanViewModel::recompute()
         }
     }
 
-    const domain::Money monthly = m_monthlySaving + m_extraMonthly;
+    const domain::Money monthly = m_monthlyInvestable + m_extraMonthly;
     if (m_contributionBucket < 0) {
         m_chartCaption =
             tr("No new saving is added: in this phase the buckets are drawn down, not filled.");

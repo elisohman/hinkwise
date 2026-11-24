@@ -34,16 +34,19 @@ ProjectionSeries projectionSeriesOf(const domain::ProjectionInput& input)
 
     const domain::Currency currency = years.front().total.currency();
 
-    // The axis covers whichever is higher, the household's own fortune, the
-    // debt it carries or the target it is measured against, so both the target
-    // line and the falling loan are always on screen. Below zero it reaches
-    // down to the lowest net worth, because a mortgage larger than the
-    // investable capital puts net worth there, and a line drawn off the chart
-    // is not a line the household can read.
+    // The axis covers whichever is highest: the household's investable capital,
+    // its net worth, the debt it carries or the target it is measured against.
+    // Net worth belongs in that list because it counts the house and the
+    // pensions as well, so it can stand above the bands; the target line and the
+    // falling loan belong in it so they are on screen at all. Below zero the
+    // axis reaches down to the lowest net worth, because a mortgage larger than
+    // everything owned puts net worth there, and a line drawn off the chart is
+    // not a line the household can read.
     std::int64_t highest = input.fiTarget.minorUnits();
     std::int64_t lowest = 0;
     for (const domain::ProjectionYear& year : years) {
         highest = std::max(highest, year.total.minorUnits());
+        highest = std::max(highest, year.netWorth.minorUnits());
         highest = std::max(highest, year.debt.minorUnits());
         lowest = std::min(lowest, year.netWorth.minorUnits());
     }

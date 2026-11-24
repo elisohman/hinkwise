@@ -171,9 +171,10 @@ Item {
             }
 
             // The loan falling, dashed so it reads as a balance being paid off
-            // rather than as a fifth bucket. Net worth is where the total ends
-            // up once the debt is subtracted, so the crossing says more than
-            // either line alone.
+            // rather than as a fifth bucket. Net worth is what everything owned
+            // comes to once every debt is subtracted - the bands, but also the
+            // house and the pensions - so the crossing says more than either
+            // line alone.
             Shape {
                 anchors.fill: parent
                 visible: chart.hasDebt && chart.debtSeries.length > 1
@@ -613,8 +614,8 @@ Item {
                                         Layout.fillWidth: true
                                         label: qsTr("Net worth at the end")
                                         value: plan.netWorthEndLabel
-                                        note: qsTr("In %1 years: investable capital minus debt")
-                                                  .arg(plan.horizonYears)
+                                        note: qsTr("In %1 years: everything owned less everything "
+                                             + "owed").arg(plan.horizonYears)
                                     }
                                 }
 
@@ -704,6 +705,17 @@ Item {
                                     Item {
                                         Layout.fillWidth: true
                                     }
+                                }
+
+                                Text {
+                                    text: qsTr("The bands are investable capital only: the house "
+                                         + "and the pensions count in net worth, not in spendable "
+                                         + "money. The debt falls by the amortisation recorded in "
+                                         + "cashflow.")
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontCaption
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
                                 }
 
                                 Text {
