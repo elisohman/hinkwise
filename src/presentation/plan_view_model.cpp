@@ -146,13 +146,7 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     // recorded yet" looks like to the model, and the page says so rather than
     // drawing a paydown nobody entered. A loan that also records a term is the
     // exception: its payment is recalculated from the term every year.
-    m_baseInput.loans.clear();
-    m_baseInput.loans.reserve(snapshot.debts.size());
-    for (const application::DebtInEffect& debt : snapshot.debts) {
-        m_baseInput.loans.push_back(domain::LoanTerms{debt.balance, debt.interestRate, debt.style,
-                                                      debt.regularPayment, debt.monthlyFee,
-                                                      debt.termMonths});
-    }
+    m_baseInput.loans = application::loanTermsOf(snapshot.debts);
 
     // What the terms themselves say, separately from what the projection draws
     // with them: a loan whose balance is positive and whose payment is missing

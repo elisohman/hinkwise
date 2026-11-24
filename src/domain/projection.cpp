@@ -131,7 +131,20 @@ struct YearRepayment {
     bool loanNeverRepaid = false;
 };
 
-/// Repays one loan for one month, adding what it cost to the year's totals.
+/// What one simulated month of a loan cost and cleared.
+struct MonthRepayment {
+    /// Interest charged, a cost and never principal.
+    Money interestPaid;
+    /// The administration fee charged. Annuity loans only.
+    Money feesPaid;
+    /// The principal the month took off the balance.
+    Money principal;
+    /// True when the payment did not even cover interest and fee, so no
+    /// principal could be paid.
+    bool neverRepaid = false;
+};
+
+/// Repays one loan for one month, returning what it cost and cleared.
 ///
 /// FixedAmortisation: the recorded payment is principal, so the whole of it
 /// comes off the balance and the interest is a separate cost.
@@ -143,49 +156,57 @@ struct YearRepayment {
 ///
 /// An annuity whose payment does not cover interest plus fee cannot reduce its
 /// balance. Growing it forever would turn one broken figure into a debt that
-/// swallows the projection, so the balance is kept flat and the year is flagged
+/// swallows the projection, so the balance is kept flat and the month is flagged
 /// for the interface to explain. A flat balance does not consume the term
 /// either: nothing is being amortised, so there is no month of the loan's life
 /// to count down.
-void repayOneMonth(LoanState& loan, YearRepayment& year)
+///
+/// Every month of the projection is repaid here, and firstMonthPrincipal() reads
+/// this same month off a copy of one loan's terms, so what the interface calls
+/// amortisation is what the plan subtracts.
+MonthRepayment repayOneMonth(LoanState& loan)
 {
+    const Currency currency = loan.balance.currency();
+    MonthRepayment month{Money::zero(currency), Money::zero(currency), Money::zero(currency)};
     if (!loan.balance.isPositive())
-        return;
+        return month;
 
-    const Money interest = monthlyInterest(loan.balance, loan.terms.annualRate);
-    year.interestPaid += interest;
+    month.interestPaid = monthlyInterest(loan.balance, loan.terms.annualRate);
 
     if (loan.terms.style == RepaymentStyle::Annuity) {
-        const Money fee = loan.terms.monthlyFee.isNegative() ? Money::zero(loan.balance.currency())
-                                                             : loan.terms.monthlyFee;
-        year.feesPaid += fee;
-        const Money cost = interest + fee;
+        const Money fee =
+            loan.terms.monthlyFee.isNegative() ? Money::zero(currency) : loan.terms.monthlyFee;
+        month.feesPaid = fee;
+        const Money cost = month.interestPaid + fee;
         // The last month of a term clears what is left rather than paying an
         // annuity factor over no months at all. Rounding can leave an öre or
         // two behind, which is cleared here rather than carried as a debt.
         const bool finalMonth = loan.terms.termMonths > 0 && loan.monthsRemaining <= 1;
         const Money payment = finalMonth ? loan.balance + cost : loan.paymentInForce;
         if (payment <= cost) {
-            year.loanNeverRepaid = true;
-            return;
+            month.neverRepaid = true;
+            return month;
         }
 
-        const Money principal = payment - cost;
-        loan.balance = loan.balance <= principal ? Money::zero(loan.balance.currency())
-                                                 : loan.balance - principal;
+        month.principal = payment - cost;
+        loan.balance = loan.balance <= month.principal ? Money::zero(currency)
+                                                       : loan.balance - month.principal;
         if (loan.monthsRemaining > 0)
             --loan.monthsRemaining;
-        return;
+        return month;
     }
 
     // No payment recorded is zero here, and a negative one is broken input:
     // neither may turn the loan into a growing balance.
     if (!loan.terms.regularPayment.isPositive())
-        return;
+        return month;
 
+    month.principal =
+        loan.balance <= loan.terms.regularPayment ? loan.balance : loan.terms.regularPayment;
     loan.balance = loan.balance <= loan.terms.regularPayment
-                       ? Money::zero(loan.balance.currency())
+                       ? Money::zero(currency)
                        : loan.balance - loan.terms.regularPayment;
+    return month;
 }
 
 /// The monthly payments the household is charged this year, added up. A loan
@@ -314,8 +335,12 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
         // falls. The cumulative costs grow with it.
         YearRepayment repayment{Money::zero(currency), Money::zero(currency), false};
         for (int month = 0; month < monthsPerYear; ++month) {
-            for (LoanState& loan : loans)
-                repayOneMonth(loan, repayment);
+            for (LoanState& loan : loans) {
+                const MonthRepayment repaid = repayOneMonth(loan);
+                repayment.interestPaid += repaid.interestPaid;
+                repayment.feesPaid += repaid.feesPaid;
+                repayment.loanNeverRepaid = repayment.loanNeverRepaid || repaid.neverRepaid;
+            }
         }
         interestPaid += repayment.interestPaid;
         feesPaid += repayment.feesPaid;
@@ -334,6 +359,31 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     }
 
     return years;
+}
+
+Money firstMonthPrincipal(const LoanTerms& terms)
+{
+    // The projection's own first month, on a copy: statesOf(), the January
+    // recalculation and repayOneMonth() are the ones project() runs, so this is
+    // the month before the first year's other eleven rather than a second
+    // reading of the terms that could drift from it.
+    std::vector<LoanState> loans = statesOf(std::vector<LoanTerms>{terms});
+    renewPayments(loans);
+    return repayOneMonth(loans.front()).principal;
+}
+
+Money totalMonthlyPrincipal(const std::vector<LoanTerms>& loans)
+{
+    if (loans.empty())
+        return Money{};
+
+    // One unit, because a household's loans are stated in the profile's
+    // currency; Money refuses to add two, which is the programming error this
+    // would be.
+    Money total = Money::zero(loans.front().balance.currency());
+    for (const LoanTerms& terms : loans)
+        total += firstMonthPrincipal(terms);
+    return total;
 }
 
 std::optional<int> yearsToTarget(const ProjectionInput& input)

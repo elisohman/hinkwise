@@ -104,6 +104,11 @@ private slots:
     void zeroYearsYieldsTodayOnly();
     void negativeHorizonYieldsTodayOnly();
     void aFixedAmortisationLoanFallsLinearlyAndStopsAtZero();
+    void firstMonthPrincipalOfAFixedLoanIsItsPayment();
+    void firstMonthPrincipalOfAnAnnuityIsWhatIsLeftAfterCost();
+    void firstMonthPrincipalOfATermAnnuityFollowsTheTerm();
+    void firstMonthPrincipalIsZeroWhenNothingIsRepaid();
+    void totalMonthlyPrincipalIsTheLoansAddedUp();
     void aLoanThatIsClearedStaysAtZero();
     void aZeroPaymentLeavesTheDebtFlat();
     void annuityPrincipalShareRisesAsTheBalanceFalls();
@@ -407,6 +412,95 @@ void TestProjection::aFixedAmortisationLoanFallsLinearlyAndStopsAtZero()
     ProjectionInput negative = emptyInput();
     negative.loans = {fixedLoan(-1000000, 0, 100000)};
     QCOMPARE(ore(project(negative).front().debt), qint64(0));
+}
+
+void TestProjection::firstMonthPrincipalOfAFixedLoanIsItsPayment()
+{
+    // A fixed amortisation loan repays its recorded payment, so its first month
+    // and every month after it clear the same amount.
+    const LoanTerms loan = fixedLoan(5000000, 0, 100000);
+    QCOMPARE(ore(firstMonthPrincipal(loan)), qint64(100000));
+
+    // The plan draws with that same arithmetic: a year of this loan is twelve
+    // of the months the cashflow page is shown.
+    ProjectionInput input = emptyInput();
+    input.loans = {loan};
+    QCOMPARE(ore(project(input)[1].debt), qint64(5000000) - 12 * ore(firstMonthPrincipal(loan)));
+
+    // The last payment clears what is left rather than overpaying the loan.
+    QCOMPARE(ore(firstMonthPrincipal(fixedLoan(50000, 0, 100000))), qint64(50000));
+}
+
+void TestProjection::firstMonthPrincipalOfAnAnnuityIsWhatIsLeftAfterCost()
+{
+    // 100 000 kr at 12 % costs 1 000 kr in interest in the first month, so a
+    // 1 500 kr payment repays 500 kr of principal and the rest is the cost of
+    // holding the debt.
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(10000000, 1200, 150000))), qint64(50000));
+
+    // The fee is a cost beside the interest and comes off the payment first.
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(10000000, 1200, 150000, 10000))), qint64(40000));
+
+    // A zero-rate loan has no cost to cover, so the whole payment is principal.
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(120000, 0, 10000))), qint64(10000));
+
+    // As the balance falls the interest share falls with it, so the first month
+    // is the smallest principal of the year rather than the average.
+    ProjectionInput input = emptyInput();
+    input.loans = {annuityLoan(10000000, 1200, 150000)};
+    const std::vector<ProjectionYear> years = project(input);
+    const Money yearOfPrincipal = years[0].debt - years[1].debt;
+    QVERIFY(firstMonthPrincipal(input.loans.front()) < yearOfPrincipal);
+}
+
+void TestProjection::firstMonthPrincipalOfATermAnnuityFollowsTheTerm()
+{
+    // A loan that states a term is charged the payment its term implies, not the
+    // zero recorded beside it: 12 000 kr over 120 months at no rate is 100 kr.
+    QCOMPARE(ore(firstMonthPrincipal(termAnnuityLoan(1200000, 0, 120))), qint64(10000));
+
+    // With interest the payment covers the rate first, so the principal is the
+    // annuity payment less the interest - the same month the projection runs.
+    const LoanTerms loan = termAnnuityLoan(1200000, 1200, 120);
+    const Money payment = annuityPayment(sek(1200000), rateOfBasisPoints(1200), 120, sek(0));
+    QCOMPARE(ore(firstMonthPrincipal(loan)), ore(payment) - qint64(12000));
+}
+
+void TestProjection::firstMonthPrincipalIsZeroWhenNothingIsRepaid()
+{
+    // A payment that does not cover interest and fee cannot amortise anything,
+    // and neither can one that only just covers them.
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(10000000, 1200, 100000, 10000))), qint64(0));
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(10000000, 1200, 100000))), qint64(0));
+
+    // A cleared loan has nothing left to repay, and a negative balance is not a
+    // debt the model can reason about.
+    QCOMPARE(ore(firstMonthPrincipal(fixedLoan(0, 0, 100000))), qint64(0));
+    QCOMPARE(ore(firstMonthPrincipal(fixedLoan(-1000000, 0, 100000))), qint64(0));
+
+    // Terms that were never recorded repay nothing: a missing payment is not an
+    // invented paydown.
+    QCOMPARE(ore(firstMonthPrincipal(fixedLoan(5000000, 0, 0))), qint64(0));
+    QCOMPARE(ore(firstMonthPrincipal(annuityLoan(5000000, 0, 0))), qint64(0));
+}
+
+void TestProjection::totalMonthlyPrincipalIsTheLoansAddedUp()
+{
+    // Each loan amortises on its own terms and the household's figure is the two
+    // of them added up: 1 000 kr of principal on the mortgage and 500 kr on the
+    // student loan.
+    const std::vector<LoanTerms> loans = {fixedLoan(5000000, 0, 100000),
+                                          annuityLoan(10000000, 1200, 150000)};
+    QCOMPARE(ore(totalMonthlyPrincipal(loans)), qint64(150000));
+
+    // A loan that clears nothing adds nothing, rather than a negative principal
+    // that would pay the other loan down.
+    const std::vector<LoanTerms> underServiced = {fixedLoan(5000000, 0, 100000),
+                                                  annuityLoan(10000000, 1200, 100000)};
+    QCOMPARE(ore(totalMonthlyPrincipal(underServiced)), qint64(100000));
+
+    // No loans at all is no amortisation, not an invented one.
+    QCOMPARE(ore(totalMonthlyPrincipal({})), qint64(0));
 }
 
 void TestProjection::aLoanThatIsClearedStaysAtZero()

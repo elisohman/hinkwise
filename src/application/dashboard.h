@@ -11,6 +11,7 @@
 #include "domain/money.h"
 #include "domain/percentage.h"
 #include "domain/profile.h"
+#include "domain/projection.h"
 #include "domain/rebalance.h"
 #include "domain/year_month.h"
 #include "ports.h"
@@ -83,6 +84,12 @@ struct DebtInEffect {
     int termMonths = 0;
     domain::Money balance{};
 };
+
+/// The projection's own view of the household's loans: one LoanTerms per debt,
+/// in the currency the balances are already stated in. The plan projects with
+/// these, and the cashflow page derives its amortisation from them, so the
+/// terms a loan is measured with are the terms it is projected with.
+std::vector<domain::LoanTerms> loanTermsOf(std::span<const DebtInEffect> debts);
 
 /// Everything a dashboard screen shows, in one value.
 ///

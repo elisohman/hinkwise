@@ -155,6 +155,31 @@ std::vector<ProjectionYear> project(const ProjectionInput& input);
 Money annuityPayment(const Money& balance, InterestRate annualRate, int months,
                      const Money& monthlyFee);
 
+/// The principal `terms` repays in the first month of a projection: what the
+/// loan takes off its own balance when the first simulated month is charged at
+/// today's balance.
+///
+/// This is the projection's own arithmetic rather than a formula beside it: the
+/// first month of project() is simulated on a copy of the terms and the
+/// principal is read off that month, so a loan amortises in the interface
+/// exactly as it amortises in the plan. FixedAmortisation repays its recorded
+/// payment, capped at what is left; an annuity repays whatever the payment
+/// leaves after interest and fee, and nothing at all when the payment does not
+/// cover them. A loan that states a term is charged the payment its balance,
+/// rate and remaining months imply - the one January would give it - rather
+/// than the payment recorded beside the term.
+///
+/// A loan with nothing left to repay, a payment that is not positive, or a
+/// payment that clears nothing answers zero, which is what the plan draws for
+/// it too.
+Money firstMonthPrincipal(const LoanTerms& terms);
+
+/// Every loan's first-month principal added up: what the household's repayment
+/// plan clears in one month at today's balances, in the unit the loans are
+/// stated in. Zero when no loan is recorded - and that is the figure the
+/// cashflow page shows instead of asking for the amortisation a second time.
+Money totalMonthlyPrincipal(const std::vector<LoanTerms>& loans);
+
 /// The first year in which the total reaches fiTarget, or nullopt when it never
 /// does within the horizon. Zero when the household is already funded today,
 /// which is also the answer for a zero target: a target of nothing costs

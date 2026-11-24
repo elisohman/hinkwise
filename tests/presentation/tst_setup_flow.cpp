@@ -55,6 +55,7 @@ private slots:
     void cashflowPageRecordsAndChecksTheMonth();
     void cashflowDraftSurvivesReloadAndDiscard();
     void cashflowSavingSplitValidatesAndSaves();
+    void cashflowDerivesAmortisationFromTheLoanTerms();
     void dashboardLeadsWithTheBufferPoint();
     void planPageProjectsTheHousehold();
     void planDoesNotCountTheHouseAsSpendable();
@@ -607,6 +608,12 @@ void TestSetupFlow::cashflowSavingSplitValidatesAndSaves()
 {
     CashflowViewModel cashflow;
     QCOMPARE(cashflow.savingText(), formatMoneyPlain(domain::Money{300000, domain::Currency::Eur}));
+
+    // No loan states repayment terms, so there is nothing to derive an
+    // amortisation from and the three parts stay the household's own.
+    QVERIFY(!cashflow.amortisationIsDerived());
+    QCOMPARE(cashflow.amortisationFromLoans(),
+             formatMoneyPlain(domain::Money{0, domain::Currency::Eur}));
     QVERIFY(cashflow.savingSplitValid());
 
     // One part alone is not a split: the three are all present or all absent.
@@ -664,6 +671,96 @@ void TestSetupFlow::cashflowSavingSplitValidatesAndSaves()
     QVERIFY(cashflow.savingSplitValid());
     QCOMPARE(cashflow.bufferSplitText(),
              formatMoneyPlain(domain::Money{100000, domain::Currency::Eur}));
+}
+
+void TestSetupFlow::cashflowDerivesAmortisationFromTheLoanTerms()
+{
+    // A loan that repays 3 000 kr of principal a month is the month's
+    // amortisation. The page shows what the terms repay instead of asking for
+    // the same money a second time.
+    AccountsViewModel accounts;
+    QCOMPARE(accounts.addDebt(
+                 QStringLiteral("Mortgage"), static_cast<int>(domain::LiabilityKind::Mortgage),
+                 QStringLiteral("4,5"), accounts.fixedAmortisationStyleIndex(),
+                 QStringLiteral("3000"), QString{}, QString{}, QStringLiteral("2000000")),
+             QString{});
+    const QString id =
+        accounts.debts()->data(accounts.debts()->index(0, 0), DebtRowModel::IdRole).toString();
+    QVERIFY(!id.isEmpty());
+
+    CashflowViewModel cashflow;
+    QVERIFY(cashflow.amortisationIsDerived());
+    QCOMPARE(cashflow.amortisationFromLoans(),
+             formatMoneyPlain(domain::Money{300000, domain::Currency::Eur}));
+
+    // 6 000 kr of saving, of which the loan terms already place 3 000: the
+    // buffer and the investments have to fill the rest between them.
+    cashflow.setIncomeText(QStringLiteral("30000"));
+    cashflow.setNeedsText(QStringLiteral("18000"));
+    cashflow.setWantsText(QStringLiteral("6000"));
+    cashflow.setSavingText(QStringLiteral("6000"));
+
+    // Adding the typed buffer and investments up alone leaves the amortisation
+    // unplaced, which is what the month would have said before.
+    cashflow.setBufferSplitText(QStringLiteral("2000"));
+    cashflow.setInvestingSplitText(QStringLiteral("1000"));
+    QVERIFY(cashflow.savingSplitValid());
+
+    cashflow.setInvestingSplitText(QStringLiteral("500"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("left to place")));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
+
+    cashflow.setInvestingSplitText(QStringLiteral("2000"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("too much")));
+
+    // The helper places the rest, with the loans' amortisation already spoken
+    // for: 6 000 less 2 000 of buffer and 3 000 of repayment is 1 000.
+    cashflow.setInvestingSplitText(QString{});
+    QVERIFY(cashflow.savingSplitCanFill());
+    cashflow.fillSavingSplitRemainder();
+    QCOMPARE(cashflow.investingSplitText(),
+             formatMoneyPlain(domain::Money{100000, domain::Currency::Eur}));
+    QCOMPARE(cashflow.saveMonth(), QString{});
+
+    // The stored split is the household's two parts and the loans' principal,
+    // and it adds up to the saving total.
+    const application::DashboardSnapshot saved = m_controller->dashboardSnapshot();
+    QCOMPARE(saved.facts.flow.saving.minorUnits(), std::int64_t{600000});
+    QVERIFY(saved.facts.flow.savingSplit.has_value());
+    QCOMPARE(saved.facts.flow.savingSplit->toBuffer.minorUnits(), std::int64_t{200000});
+    QCOMPARE(saved.facts.flow.savingSplit->toInvesting.minorUnits(), std::int64_t{100000});
+    QCOMPARE(saved.facts.flow.savingSplit->toAmortisation.minorUnits(), std::int64_t{300000});
+    QCOMPARE(saved.facts.flow.savingSplit->total().minorUnits(), std::int64_t{600000});
+
+    // A saving total below what the loan terms repay cannot be split by the
+    // model at all: one of the two figures is wrong, and the page says so
+    // instead of writing a breakdown that contradicts the loans.
+    cashflow.setSavingText(QStringLiteral("2000"));
+    QVERIFY(!cashflow.savingSplitValid());
+    QVERIFY(cashflow.savingSplitError().contains(QStringLiteral("loan terms")));
+    QVERIFY(!cashflow.saveMonth().isEmpty());
+
+    // A month that says nothing about the division keeps saying nothing: with
+    // both fields empty the split is absent rather than a split of zeros.
+    cashflow.setSavingText(QStringLiteral("6000"));
+    cashflow.setBufferSplitText(QString{});
+    cashflow.setInvestingSplitText(QString{});
+    QVERIFY(cashflow.savingSplitValid());
+    QCOMPARE(cashflow.saveMonth(), QString{});
+    QVERIFY(!m_controller->dashboardSnapshot().facts.flow.savingSplit.has_value());
+
+    // Removing the loan leaves nothing to derive from, and the month is the
+    // household's own three parts again.
+    QCOMPARE(accounts.removeDebt(id), QString{});
+    cashflow.reload();
+    QVERIFY(!cashflow.amortisationIsDerived());
+    cashflow.setBufferSplitText(QStringLiteral("2000"));
+    cashflow.setInvestingSplitText(QStringLiteral("1000"));
+    cashflow.setAmortisationSplitText(QStringLiteral("3000"));
+    QVERIFY(cashflow.savingSplitValid());
+    QCOMPARE(cashflow.saveMonth(), QString{});
 }
 
 void TestSetupFlow::dashboardLeadsWithTheBufferPoint()

@@ -36,7 +36,11 @@ ColumnLayout {
             bufferSplitField.text = root.model.bufferSplitText;
         if (investingSplitField.text !== root.model.investingSplitText)
             investingSplitField.text = root.model.investingSplitText;
-        if (amortisationSplitField.text !== root.model.amortisationSplitText)
+        // The amortisation field follows the loans when they state terms, and
+        // that binding is the model's: the draft only owns the amount a
+        // household types when there is nothing to derive from.
+        if (!root.model.amortisationIsDerived
+                && amortisationSplitField.text !== root.model.amortisationSplitText)
             amortisationSplitField.text = root.model.amortisationSplitText;
     }
 
@@ -136,9 +140,14 @@ ColumnLayout {
         }
 
         Text {
-            text: qsTr("Optional. If you split it, all three have to add up "
-                 + "to the saving total; leave all three empty if you only know "
-                 + "the total.")
+            text: root.model.amortisationIsDerived
+                  ? qsTr("Optional. Your loan terms already say what goes to "
+                       + "amortisation, so the buffer and the investments you "
+                       + "enter have to add up to the rest of the saving; leave "
+                       + "them empty if you only know the total.")
+                  : qsTr("Optional. If you split it, all three have to add up "
+                       + "to the saving total; leave all three empty if you only "
+                       + "know the total.")
             color: Theme.textSecondary
             font.pixelSize: Theme.fontCaption
             Layout.fillWidth: true
@@ -180,6 +189,7 @@ ColumnLayout {
             FormRow {
                 Layout.fillWidth: true
                 label: qsTr("To debt amortisation")
+                hint: root.model.amortisationIsDerived ? qsTr("From your loan terms") : ""
 
                 MoneyField {
                     id: amortisationSplitField
@@ -187,7 +197,18 @@ ColumnLayout {
                     text: root.model.amortisationSplitText
                     placeholder: qsTr("Optional")
                     unit: root.model.currencyCode
+                    visible: !root.model.amortisationIsDerived
                     onEdited: (value) => root.model.amortisationSplitText = value
+                }
+
+                // What the loans repay this month, shown where the household
+                // used to type it: one figure, entered with the loan terms it
+                // belongs to.
+                MoneyField {
+                    visible: root.model.amortisationIsDerived
+                    readOnly: true
+                    text: root.model.amortisationFromLoans
+                    unit: root.model.currencyCode
                 }
             }
         }

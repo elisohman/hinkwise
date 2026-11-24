@@ -185,6 +185,17 @@ Money totalBadLoans(std::span<const domain::Debt> debts)
     return domain::badLoanTotal(debts, kMortgageBenchmark);
 }
 
+std::vector<domain::LoanTerms> loanTermsOf(std::span<const DebtInEffect> debts)
+{
+    std::vector<domain::LoanTerms> loans;
+    loans.reserve(debts.size());
+    for (const DebtInEffect& debt : debts) {
+        loans.push_back(domain::LoanTerms{debt.balance, debt.interestRate, debt.style,
+                                          debt.regularPayment, debt.monthlyFee, debt.termMonths});
+    }
+    return loans;
+}
+
 Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRepository& assets,
                                          ILiabilityRepository& liabilities,
                                          IDebtBalanceRepository& debtBalances,

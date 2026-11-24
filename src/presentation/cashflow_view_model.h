@@ -109,6 +109,17 @@ class CashflowViewModel : public QObject {
                    changed)
     Q_PROPERTY(QString amortisationSplitText READ amortisationSplitText WRITE
                    setAmortisationSplitText NOTIFY changed)
+    /// The amortisation the loan terms repay in a month, formatted for the
+    /// read-only field. The loan terms are the one place amortisation comes
+    /// from, so this is what the month is split with whenever a loan states
+    /// them; it is what the household would otherwise have to type a second
+    /// time, and the two could disagree.
+    Q_PROPERTY(QString amortisationFromLoans READ amortisationFromLoans NOTIFY changed)
+    /// True when at least one loan states the terms its repayment follows from,
+    /// so the amortisation is read from the loans instead of typed. False is a
+    /// household with no repayment terms recorded: there is nothing to derive
+    /// from, and the field stays the household's own.
+    Q_PROPERTY(bool amortisationIsDerived READ amortisationIsDerived NOTIFY changed)
     Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
     Q_PROPERTY(bool savingSplitValid READ savingSplitValid NOTIFY changed)
     Q_PROPERTY(QString savingSplitError READ savingSplitError NOTIFY changed)
@@ -166,7 +177,8 @@ public:
 
     /// Records the current month from the draft the page edits. An empty field
     /// means zero, and the whole month is refused when income cannot cover what
-    /// is entered, or when a saving breakdown is present but does not add up.
+    /// is entered, when a saving breakdown does not add up, or when the loan
+    /// terms repay more in a month than the saving records.
     Q_INVOKABLE QString saveMonth();
 
     /// Puts the saving total that is not already broken down into the
@@ -195,6 +207,8 @@ public:
     QString bufferSplitText() const { return m_bufferSplitText; }
     QString investingSplitText() const { return m_investingSplitText; }
     QString amortisationSplitText() const { return m_amortisationSplitText; }
+    QString amortisationFromLoans() const;
+    bool amortisationIsDerived() const { return m_amortisationIsDerived; }
     bool dirty() const;
     bool savingSplitValid() const;
     QString savingSplitError() const;
@@ -256,6 +270,10 @@ private:
     void applySelection(const QVector<FlowMonth>& months);
     QString monthLabel(domain::YearMonth month, const QString& format) const;
     bool anySavingSplitText() const;
+    /// The amortisation part of the split as it stands: the loans' own
+    /// repayment when they state terms, otherwise the amount the household
+    /// typed. False only when that typed amount cannot be read.
+    bool splitAmortisation(domain::Money* amortisation) const;
 
     bool m_hasProfile = false;
     domain::Currency m_currency = domain::Currency::Sek;
@@ -275,6 +293,11 @@ private:
     QString m_bufferSplitText;
     QString m_investingSplitText;
     QString m_amortisationSplitText;
+    /// What the loans repay in a month, and whether that is where the split's
+    /// amortisation comes from. Refreshed with every reload, because the terms
+    /// live in the debt rows, not in this draft.
+    domain::Money m_amortisationFromLoans{};
+    bool m_amortisationIsDerived = false;
     QString m_storedIncomeText;
     QString m_storedNeedsText;
     QString m_storedWantsText;

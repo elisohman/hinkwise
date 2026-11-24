@@ -20,6 +20,10 @@ ColumnLayout {
     property string error: ""
     /// The unit the value is in, shown inside the field: "SEK", "%".
     property string unit: ""
+    /// True for a field the household cannot type in: the value is shown and
+    /// set by the view model alone, which is how a figure derived from
+    /// elsewhere is displayed instead of asked for again.
+    property bool readOnly: false
 
     signal edited(string text)
 
@@ -32,7 +36,8 @@ ColumnLayout {
         Layout.fillWidth: true
         placeholderText: root.placeholder
         placeholderTextColor: Theme.textMuted
-        color: Theme.textPrimary
+        readOnly: root.readOnly
+        color: root.readOnly ? Theme.textSecondary : Theme.textPrimary
         selectionColor: Theme.buffer
         selectedTextColor: Theme.background
         font.pixelSize: Theme.fontBody

@@ -4,6 +4,7 @@
 #include "cashflow_view_model.h"
 
 #include "app_controller.h"
+#include "domain/projection.h"
 #include "input_text.h"
 
 #include <QDate>
@@ -43,28 +44,67 @@ bool readOptionalMoney(const QString& text, domain::Currency currency, domain::M
     return true;
 }
 
-/// What the three breakdown fields say. `any` is false when all three are
-/// empty, which is a month with no breakdown rather than a broken one. When
-/// `any` is true, `problem` is empty only when all three are present and add
-/// up to `saving`.
+/// True when a loan states the terms its repayment follows from: something left
+/// to repay and either a recorded payment or a term that states one. A loan
+/// without them cannot supply an amortisation, which is why a household with
+/// only such loans keeps typing its own rather than being shown a derived zero.
+bool loanStatesTerms(const domain::LoanTerms& terms)
+{
+    const bool paymentFollowsFromTerm =
+        terms.style == domain::RepaymentStyle::Annuity && terms.termMonths > 0;
+    return terms.balance.isPositive() &&
+           (terms.regularPayment.isPositive() || paymentFollowsFromTerm);
+}
+
+/// What the breakdown fields say once the amortisation is in place. `split` is
+/// what a month can be written with; `problem` is the sentence that stops it,
+/// empty when there is nothing to say. A month where nothing was typed about
+/// the division is left with no split at all: absent is not a split of zeros.
 struct SplitReading {
-    bool any = false;
     bool ok = true;
     std::optional<domain::SavingsBreakdown> split;
     QString problem;
 };
 
-SplitReading readSavingSplit(const QString& bufferText, const QString& investingText,
+/// Reads the breakdown the month is saved with.
+///
+/// With `amortisationDerived` the amortisation is the loans' own repayment and
+/// the text in that field is not read at all: the field is a display, and the
+/// household only says where the buffer and the investments went. Without it
+/// the three parts are the household's own, all present or all absent.
+///
+/// The two ways a month can fail are kept apart because they need different
+/// sentences: the parts not adding up to the saving total is a division problem
+/// ("left to place", "too much"), while a repayment plan that costs more in a
+/// month than the whole saving cannot be divided at all - one of the two figures
+/// is wrong, and saying so is more useful than naming a remainder.
+SplitReading readSavingSplit(bool amortisationDerived, const domain::Money& derivedAmortisation,
+                             const QString& bufferText, const QString& investingText,
                              const QString& amortisationText, const domain::Money& saving)
 {
     SplitReading reading;
-    reading.any = !bufferText.trimmed().isEmpty() || !investingText.trimmed().isEmpty() ||
-                  !amortisationText.trimmed().isEmpty();
-    if (!reading.any)
+    // The amortisation field is a display when the loans supply the figure, so
+    // its text says nothing about what the household has filled in - and a
+    // month left untouched must not be validated against a value nobody typed.
+    const bool anyTyped = !bufferText.trimmed().isEmpty() || !investingText.trimmed().isEmpty() ||
+                          (!amortisationDerived && !amortisationText.trimmed().isEmpty());
+
+    if (amortisationDerived && saving < derivedAmortisation) {
+        reading.ok = false;
+        reading.problem = CashflowViewModel::tr(
+                              "The loan terms repay %1 a month, which is more than the %2 this "
+                              "month's saving records. Either the saving total or the loan terms "
+                              "are wrong.")
+                              .arg(formatMoney(derivedAmortisation), formatMoney(saving));
+        return reading;
+    }
+
+    if (!anyTyped)
         return reading;
 
-    if (bufferText.trimmed().isEmpty() || investingText.trimmed().isEmpty() ||
-        amortisationText.trimmed().isEmpty()) {
+    if (!amortisationDerived &&
+        (bufferText.trimmed().isEmpty() || investingText.trimmed().isEmpty() ||
+         amortisationText.trimmed().isEmpty())) {
         reading.ok = false;
         reading.problem = CashflowViewModel::tr("Fill all three, or leave all three empty.");
         return reading;
@@ -78,16 +118,24 @@ SplitReading readSavingSplit(const QString& bufferText, const QString& investing
         return {};
     };
 
-    domain::SavingsBreakdown split;
-    split.toBuffer = domain::Money::zero(saving.currency());
-    split.toInvesting = domain::Money::zero(saving.currency());
-    split.toAmortisation = domain::Money::zero(saving.currency());
+    const domain::Money zero = domain::Money::zero(saving.currency());
+    domain::SavingsBreakdown split{zero, zero, zero};
 
     for (const auto& entry :
          {std::pair<const QString*, domain::Money*>{&bufferText, &split.toBuffer},
-          {&investingText, &split.toInvesting},
-          {&amortisationText, &split.toAmortisation}}) {
+          {&investingText, &split.toInvesting}}) {
         const QString error = read(*entry.first, entry.second);
+        if (!error.isEmpty()) {
+            reading.ok = false;
+            reading.problem = error;
+            return reading;
+        }
+    }
+
+    if (amortisationDerived) {
+        split.toAmortisation = derivedAmortisation;
+    } else {
+        const QString error = read(amortisationText, &split.toAmortisation);
         if (!error.isEmpty()) {
             reading.ok = false;
             reading.problem = error;
@@ -210,6 +258,15 @@ void CashflowViewModel::reloadFromStore(bool keepDraft)
         controller != nullptr ? controller->dashboardSnapshot() : application::DashboardSnapshot{};
     m_hasProfile = snapshot.hasProfile;
     m_currency = snapshot.profile.baseCurrency;
+
+    // The loan terms are where amortisation comes from, so the month's split
+    // reads them rather than asking the household to enter the same money
+    // twice. Refreshed on every reload because the terms live in the debt rows,
+    // which this draft does not edit.
+    const std::vector<domain::LoanTerms> loans = application::loanTermsOf(snapshot.debts);
+    m_amortisationIsDerived = std::any_of(loans.cbegin(), loans.cend(), loanStatesTerms);
+    m_amortisationFromLoans =
+        loans.empty() ? domain::Money::zero(m_currency) : domain::totalMonthlyPrincipal(loans);
 
     const domain::YearMonth current = AppController::currentMonth();
     m_currentMonthLabel = formatMonth(current, QStringLiteral("MMMM yyyy"));
@@ -475,11 +532,14 @@ QString CashflowViewModel::saveMonth()
         }
     }
 
-    // A breakdown is optional, but once one field is filled all three are and
-    // they have to add up to the saving total. The repository also refuses a
-    // split that does not, so this check is what lets the page explain why.
-    const SplitReading split = readSavingSplit(m_bufferSplitText, m_investingSplitText,
-                                               m_amortisationSplitText, flow.saving);
+    // A breakdown is optional, but once it is being written it has to add up to
+    // the saving total - with the amortisation the loan terms repay, when they
+    // state terms, in place of anything typed. The repository also refuses a
+    // split that does not add up, so this check is what lets the page explain
+    // why.
+    const SplitReading split =
+        readSavingSplit(m_amortisationIsDerived, m_amortisationFromLoans, m_bufferSplitText,
+                        m_investingSplitText, m_amortisationSplitText, flow.saving);
     if (!split.ok) {
         m_saveError = split.problem;
         emit changed();
@@ -537,6 +597,11 @@ void CashflowViewModel::discardMonth()
     emit changed();
 }
 
+QString CashflowViewModel::amortisationFromLoans() const
+{
+    return formatMoneyPlain(m_amortisationFromLoans);
+}
+
 void CashflowViewModel::fillSavingSplitRemainder()
 {
     if (!m_investingSplitText.trimmed().isEmpty())
@@ -547,7 +612,7 @@ void CashflowViewModel::fillSavingSplitRemainder()
     domain::Money amortisation{};
     if (!readOptionalMoney(m_savingText, m_currency, &saving) ||
         !readOptionalMoney(m_bufferSplitText, m_currency, &buffer) ||
-        !readOptionalMoney(m_amortisationSplitText, m_currency, &amortisation))
+        !splitAmortisation(&amortisation))
         return;
 
     const domain::Money remainder = saving - buffer - amortisation;
@@ -556,6 +621,15 @@ void CashflowViewModel::fillSavingSplitRemainder()
 
     m_investingSplitText = formatMoneyPlain(remainder);
     emit changed();
+}
+
+bool CashflowViewModel::splitAmortisation(domain::Money* amortisation) const
+{
+    if (m_amortisationIsDerived) {
+        *amortisation = m_amortisationFromLoans;
+        return true;
+    }
+    return readOptionalMoney(m_amortisationSplitText, m_currency, amortisation);
 }
 
 bool CashflowViewModel::dirty() const
@@ -575,14 +649,20 @@ bool CashflowViewModel::anySavingSplitText() const
 
 QString CashflowViewModel::savingSplitError() const
 {
-    if (!anySavingSplitText())
+    // Nothing typed about the division is a month that has not been filled in
+    // yet, not a broken one. With loan terms on record the saving total is
+    // compared against them too, but only once the household has entered one:
+    // an empty field is not yet a figure that can contradict the loans.
+    const bool derivedCheckDue = m_amortisationIsDerived && !m_savingText.trimmed().isEmpty();
+    if (!anySavingSplitText() && !derivedCheckDue)
         return {};
 
     domain::Money saving{};
     if (!readOptionalMoney(m_savingText, m_currency, &saving))
         return tr("Enter a saving amount that can be read before splitting it.");
 
-    return readSavingSplit(m_bufferSplitText, m_investingSplitText, m_amortisationSplitText, saving)
+    return readSavingSplit(m_amortisationIsDerived, m_amortisationFromLoans, m_bufferSplitText,
+                           m_investingSplitText, m_amortisationSplitText, saving)
         .problem;
 }
 
@@ -595,10 +675,13 @@ bool CashflowViewModel::savingSplitCanFill() const
 {
     // Filling the remainder is only offered once a part is known and while
     // investments is the field nobody has filled in yet; otherwise the action
-    // would overwrite an amount the household already entered.
+    // would overwrite an amount the household already entered. With loan terms
+    // on record the amortisation is always known, so the buffer alone is the
+    // part that has to be typed.
     if (!m_investingSplitText.trimmed().isEmpty())
         return false;
-    if (m_bufferSplitText.trimmed().isEmpty() && m_amortisationSplitText.trimmed().isEmpty())
+    if (!m_amortisationIsDerived && m_bufferSplitText.trimmed().isEmpty() &&
+        m_amortisationSplitText.trimmed().isEmpty())
         return false;
 
     domain::Money saving{};
@@ -606,7 +689,7 @@ bool CashflowViewModel::savingSplitCanFill() const
     domain::Money amortisation{};
     if (!readOptionalMoney(m_savingText, m_currency, &saving) ||
         !readOptionalMoney(m_bufferSplitText, m_currency, &buffer) ||
-        !readOptionalMoney(m_amortisationSplitText, m_currency, &amortisation))
+        !splitAmortisation(&amortisation))
         return false;
 
     const domain::Money remainder = saving - buffer - amortisation;
