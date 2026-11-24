@@ -4,6 +4,7 @@
 #include "presentation/app_controller.h"
 
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QString>
@@ -24,6 +25,17 @@ int main(int argc, char* argv[])
     // Must match the installed .desktop file basename so that Wayland
     // compositors (niri) associate the window with the right app id.
     QGuiApplication::setDesktopFileName(QStringLiteral("io.github.elisohman.hinkwise"));
+
+    // Qt's Wayland text-input-v3 client logs a warning every time focus leaves a
+    // text field while the compositor reports no focused surface. It fires on
+    // every dialog dismissal, carries no action for us, and is a Qt-side
+    // diagnostic rather than anything hinkwise does wrong - so it is filtered.
+    // Deliberately narrow: qt.qpa.services stays visible, because a failure to
+    // reach the desktop portal there can mean file dialogs are degraded. An
+    // explicit QT_LOGGING_RULES always wins, so the noise can be brought back
+    // for diagnosis.
+    if (qEnvironmentVariableIsEmpty("QT_LOGGING_RULES"))
+        QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.wayland.textinput.warning=false"));
 
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
