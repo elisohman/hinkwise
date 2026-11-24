@@ -8,16 +8,35 @@
 #include "percentage.h"
 #include "phase.h"
 
+#include <cstdint>
 #include <string>
 
 namespace hinkwise::domain {
 
-/// The household's own declarations: who they are, which currency they think
-/// in, where they are on the journey, and which tax constants apply.
+/// How the household keeps its record, and therefore what an old month means.
 ///
-/// Everything else in the program is derived from these five fields, which is
-/// why the profile is a value: it is read at startup, edited as a unit, and
-/// stored as one row.
+/// Accounting is bookkeeping: every month is written down, and a month that was
+/// missed is a hole in the record to be filled. Planning is a standing budget:
+/// the inputs are assumptions that stay true until something real changes - the
+/// salary, a new debt, a large investment - so a figure from last spring is
+/// expected rather than neglected.
+///
+/// The two are the same data. A budget is simply the most recent recorded
+/// month; the mode decides how the application talks about its age.
+enum class TrackingMode : std::uint8_t {
+    Accounting = 0,
+    Planning = 1,
+};
+
+const char* labelOf(TrackingMode mode);
+
+/// The household's own declarations: who they are, which currency they think
+/// in, where they are on the journey, which tax constants apply, and how they
+/// keep their record.
+///
+/// Everything else in the program is derived from these fields, which is why the
+/// profile is a value: it is read at startup, edited as a unit, and stored as
+/// one row.
 struct Profile {
     std::string displayName;
     Currency baseCurrency = Currency::Sek;
@@ -26,6 +45,10 @@ struct Profile {
     /// 100 % bold.
     Percentage riskTolerance{Percentage::fromBasisPoints(5000)};
     Jurisdiction jurisdiction{};
+    /// Planning by default: most households do not sit down with their
+    /// balances every month, and a fresh household greeted with staleness
+    /// warnings on its second day would be told off for a choice it never made.
+    TrackingMode trackingMode = TrackingMode::Planning;
 };
 
 } // namespace hinkwise::domain

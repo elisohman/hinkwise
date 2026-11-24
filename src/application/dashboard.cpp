@@ -8,6 +8,7 @@
 #include "domain/rules.h"
 #include "domain/targets.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -81,19 +82,68 @@ Money mortgageTotalOf(std::span<const domain::Debt> debts, domain::Currency curr
     return total;
 }
 
+/// The later of two recorded months, ignoring whichever of them is absent.
+std::optional<domain::YearMonth> laterOf(std::optional<domain::YearMonth> first,
+                                         std::optional<domain::YearMonth> second)
+{
+    if (!first)
+        return second;
+    if (!second)
+        return first;
+    return *second < *first ? first : second;
+}
+
+/// Shared by both modes: the pair is only as good as its older half, and
+/// "nothing recorded" outranks every age.
+InputFreshness freshnessWithin(std::optional<int> monthsSinceBalance,
+                               std::optional<int> monthsSinceFlow, int freshWithin,
+                               int ageingWithin)
+{
+    if (!monthsSinceBalance || !monthsSinceFlow)
+        return InputFreshness::Missing;
+
+    const int oldest = std::max(*monthsSinceBalance, *monthsSinceFlow);
+    if (oldest <= freshWithin)
+        return InputFreshness::Fresh;
+    if (oldest <= ageingWithin)
+        return InputFreshness::Ageing;
+    return InputFreshness::Stale;
+}
+
 } // namespace
+
+std::optional<int> monthsSince(std::optional<domain::YearMonth> then, domain::YearMonth now)
+{
+    if (!then)
+        return std::nullopt;
+    return static_cast<int>(domain::YearMonth::monthsBetween(*then, now));
+}
+
+InputFreshness freshnessOf(domain::TrackingMode mode, std::optional<int> monthsSinceBalance,
+                           std::optional<int> monthsSinceFlow)
+{
+    switch (mode) {
+    case domain::TrackingMode::Accounting:
+        return freshnessWithin(monthsSinceBalance, monthsSinceFlow, 1, 2);
+    case domain::TrackingMode::Planning:
+        return freshnessWithin(monthsSinceBalance, monthsSinceFlow, 6, 12);
+    }
+    return InputFreshness::Missing;
+}
 
 Money totalBadLoans(std::span<const domain::Debt> debts)
 {
     return domain::badLoanTotal(debts, kMortgageBenchmark);
 }
 
-DashboardSnapshot buildDashboard(IProfileRepository& profiles, IAssetRepository& assets,
-                                 ILiabilityRepository& liabilities,
-                                 IDebtBalanceRepository& debtBalances,
-                                 IValuationRepository& valuations, IMonthFlowRepository& flows,
-                                 domain::YearMonth forMonth)
+Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRepository& assets,
+                                         ILiabilityRepository& liabilities,
+                                         IDebtBalanceRepository& debtBalances,
+                                         IValuationRepository& valuations,
+                                         IMonthFlowRepository& flows, domain::YearMonth forMonth)
 {
+    using Outcome = Result<DashboardSnapshot>;
+
     DashboardSnapshot snapshot;
 
     const Result<std::optional<domain::Profile>> loadedProfile = profiles.load();
@@ -109,14 +159,40 @@ DashboardSnapshot buildDashboard(IProfileRepository& profiles, IAssetRepository&
     // target resolves to zero and the rules say what is missing.
     snapshot.facts.flow = domain::MonthFlow{zero, zero, zero, zero};
     const Result<std::vector<MonthFlowRecord>> recentFlows = flows.recent(1);
-    if (recentFlows.ok() && !recentFlows.value().empty() &&
-        !(forMonth < recentFlows.value().front().month)) {
-        const domain::MonthFlow& latest = recentFlows.value().front().flow;
-        if (latest.income.currency() == currency) {
-            snapshot.facts.flow = latest;
-            snapshot.hasFlow = true;
+    // The newest recorded month is also what tells the household how old its
+    // expenses are, so a failure here is a failure of the snapshot, not a month
+    // that quietly becomes "never recorded".
+    if (!recentFlows.ok())
+        return Outcome::err(recentFlows.error());
+    if (!recentFlows.value().empty()) {
+        snapshot.latestFlowMonth = recentFlows.value().front().month;
+        if (!(forMonth < recentFlows.value().front().month)) {
+            const domain::MonthFlow& latest = recentFlows.value().front().flow;
+            if (latest.income.currency() == currency) {
+                snapshot.facts.flow = latest;
+                snapshot.hasFlow = true;
+            }
         }
     }
+
+    const Result<std::optional<domain::YearMonth>> latestValuationMonth =
+        valuations.mostRecentMonth();
+    if (!latestValuationMonth.ok())
+        return Outcome::err(latestValuationMonth.error());
+
+    const Result<std::optional<domain::YearMonth>> latestDebtBalanceMonth =
+        debtBalances.mostRecentMonth();
+    if (!latestDebtBalanceMonth.ok())
+        return Outcome::err(latestDebtBalanceMonth.error());
+
+    // Balances are valued one holding at a time, so "when were the inputs last
+    // recorded" is the more recent of the two sides of the sheet.
+    snapshot.latestBalanceMonth =
+        laterOf(latestValuationMonth.value(), latestDebtBalanceMonth.value());
+    snapshot.monthsSinceFlow = monthsSince(snapshot.latestFlowMonth, forMonth);
+    snapshot.monthsSinceBalance = monthsSince(snapshot.latestBalanceMonth, forMonth);
+    snapshot.freshness = freshnessOf(snapshot.profile.trackingMode, snapshot.monthsSinceBalance,
+                                     snapshot.monthsSinceFlow);
 
     // The results stay alive to the end of the function because Holding and
     // Debt point at the assets and liabilities inside them.
@@ -179,7 +255,7 @@ DashboardSnapshot buildDashboard(IProfileRepository& profiles, IAssetRepository&
     rebalanceInput.monthlySurplus = surplusOf(snapshot.facts.flow);
     snapshot.rebalance = domain::planRebalance(rebalanceInput);
 
-    return snapshot;
+    return Outcome::ok(std::move(snapshot));
 }
 
 } // namespace hinkwise::application

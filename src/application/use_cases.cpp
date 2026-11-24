@@ -37,6 +37,17 @@ Status recordValuation(IValuationRepository& valuations, std::string_view assetI
     return valuations.upsert(assetId, month, balance);
 }
 
+Status recordDebtBalance(IDebtBalanceRepository& debtBalances, std::string_view liabilityId,
+                         domain::YearMonth month, domain::Money balance)
+{
+    if (liabilityId.empty())
+        return Status::err("A debt balance needs a debt.");
+    if (balance.isNegative())
+        return Status::err("A debt balance cannot be negative.");
+
+    return debtBalances.upsert(liabilityId, month, balance);
+}
+
 Status addAsset(IAssetRepository& assets, const domain::Asset& asset)
 {
     if (asset.id.empty() || asset.name.empty())

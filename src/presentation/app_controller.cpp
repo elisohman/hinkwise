@@ -161,8 +161,14 @@ application::DashboardSnapshot AppController::dashboardSnapshot() const
     if (!m_profiles)
         return application::DashboardSnapshot{};
 
-    return application::buildDashboard(*m_profiles, *m_assets, *m_liabilities, *m_debtBalances,
-                                       *m_valuations, *m_flows, currentMonth());
+    const application::Result<application::DashboardSnapshot> built =
+        application::buildDashboard(*m_profiles, *m_assets, *m_liabilities, *m_debtBalances,
+                                    *m_valuations, *m_flows, currentMonth());
+    // buildDashboard() only fails when it cannot read when the inputs were last
+    // recorded. The screens are not built around that error yet, so it leaves
+    // the empty household rather than a snapshot claiming to be fresh; the
+    // empty state is a visible prompt to record something instead.
+    return built.ok() ? built.value() : application::DashboardSnapshot{};
 }
 
 std::optional<domain::Profile> AppController::profile() const
@@ -483,16 +489,9 @@ application::Status AppController::recordValuation(std::string_view assetId,
 application::Status AppController::recordDebtBalance(std::string_view liabilityId,
                                                      domain::YearMonth month, domain::Money balance)
 {
-    // The application layer has a use case for a valuation but not yet for a
-    // debt balance, so the two checks recordValuation() makes are made here
-    // rather than skipped. Move them into the use case when it arrives.
     if (!m_debtBalances)
         return application::Status::err(toStd(tr("The database is not open.")));
-    if (liabilityId.empty())
-        return application::Status::err(toStd(tr("A debt balance needs a debt.")));
-    if (balance.isNegative())
-        return application::Status::err(toStd(tr("A debt balance cannot be negative.")));
-    return report(m_debtBalances->upsert(liabilityId, month, balance));
+    return report(application::recordDebtBalance(*m_debtBalances, liabilityId, month, balance));
 }
 
 } // namespace hinkwise::presentation

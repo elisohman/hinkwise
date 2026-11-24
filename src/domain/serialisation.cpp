@@ -73,6 +73,11 @@ constexpr std::array<StorageKey<Bucket>, 4> kBucketKeys{{
     {"play", Bucket::Play},
 }};
 
+constexpr std::array<StorageKey<TrackingMode>, 2> kTrackingModeKeys{{
+    {"accounting", TrackingMode::Accounting},
+    {"planning", TrackingMode::Planning},
+}};
+
 constexpr std::array kCurrencies{Currency::Sek, Currency::Eur, Currency::Usd};
 
 } // namespace
@@ -129,6 +134,16 @@ const char* storageKey(Bucket bucket)
 std::optional<Bucket> bucketFromStorageKey(std::string_view key)
 {
     return valueOf(kBucketKeys, key);
+}
+
+const char* storageKey(TrackingMode mode)
+{
+    return keyOf(kTrackingModeKeys, mode);
+}
+
+std::optional<TrackingMode> trackingModeFromStorageKey(std::string_view key)
+{
+    return valueOf(kTrackingModeKeys, key);
 }
 
 } // namespace hinkwise::domain

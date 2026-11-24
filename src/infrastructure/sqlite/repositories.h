@@ -75,6 +75,7 @@ public:
     latest(std::string_view assetId) const override;
     application::Result<std::vector<application::MoneyPoint>>
     history(std::string_view assetId) const override;
+    application::Result<std::optional<domain::YearMonth>> mostRecentMonth() const override;
     application::Status upsert(std::string_view assetId, domain::YearMonth month,
                                domain::Money balance) override;
 
@@ -92,6 +93,7 @@ public:
     latest(std::string_view liabilityId) const override;
     application::Result<std::vector<application::MoneyPoint>>
     history(std::string_view liabilityId) const override;
+    application::Result<std::optional<domain::YearMonth>> mostRecentMonth() const override;
     application::Status upsert(std::string_view liabilityId, domain::YearMonth month,
                                domain::Money balance) override;
 

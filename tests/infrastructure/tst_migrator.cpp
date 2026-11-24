@@ -24,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 2;
+constexpr int kExpectedVersion = 3;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -61,6 +61,24 @@ constexpr std::array<const char*, 3> kSavingBreakdownColumns{
     "saving_amort_minor",
 };
 
+/// The profile row a version 2 file holds: the schema before tracking_mode
+/// existed.
+constexpr const char* kInsertVersionTwoProfile =
+    "INSERT INTO profile (id, display_name, base_currency, phase, risk_tolerance_bp, "
+    "jurisdiction_id, safe_withdrawal_bp, capital_tax_bp, fi_multiplier_low, "
+    "fi_multiplier_default, fi_multiplier_high, created_at) VALUES "
+    "(1, 'Elis', 'SEK', 'building-wealth', 5000, 'SE', 400, 100, 21, 25, 33, "
+    "'2026-01-31T12:00:00Z')";
+
+QString trackingModeOfStoredProfile(QSqlDatabase& connection)
+{
+    QSqlQuery query{connection};
+    if (!query.exec(QStringLiteral("SELECT tracking_mode FROM profile WHERE id = 1")) ||
+        !query.next())
+        return QString{};
+    return query.value(0).toString();
+}
+
 /// A migration that is allowed to run.
 application::Status createProbeTable(QSqlDatabase& database)
 {
@@ -88,6 +106,7 @@ class TestMigrator : public QObject {
 private slots:
     void freshFileMigratesToTheExpectedVersion();
     void versionOneUpgradesAndKeepsItsRows();
+    void versionTwoProfileComesOutAsPlanning();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
@@ -119,6 +138,10 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
     // The saving breakdown arrived in version 2 and is part of a fresh file.
     for (const char* column : kSavingBreakdownColumns)
         QVERIFY(hasColumn(connection, "month_flow", column));
+
+    // So did the tracking mode, whose default is the mode a household is in
+    // before it has chosen one.
+    QVERIFY(hasColumn(connection, "profile", "tracking_mode"));
 }
 
 /// A file written by the release that only knew schema version 1 has months in
@@ -185,6 +208,60 @@ void TestMigrator::versionOneUpgradesAndKeepsItsRows()
     QVERIFY(hasColumn(connection, "month_flow", "saving_buffer_minor"));
 }
 
+/// A version 2 file can already hold a household. Upgrading has to give that
+/// one a tracking mode, and the only defensible value is Planning: Accounting
+/// would turn its next quiet month into a gap it never agreed to keep.
+void TestMigrator::versionTwoProfileComesOutAsPlanning()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{3});
+    const std::span<const sqlite::Migration> upToVersionTwo{migrations.data(), 2};
+
+    const application::Result<int> atTwo = sqlite::applyMigrations(connection, upToVersionTwo);
+    QVERIFY2(atTwo.ok(), atTwo.error().c_str());
+    QCOMPARE(atTwo.value(), 2);
+    QVERIFY(!hasColumn(connection, "profile", "tracking_mode"));
+
+    QSqlQuery insert{connection};
+    QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionTwoProfile)),
+             qPrintable(insert.lastError().text()));
+
+    const application::Result<int> atThree = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atThree.ok(), atThree.error().c_str());
+    QCOMPARE(atThree.value(), kExpectedVersion);
+
+    QVERIFY(hasColumn(connection, "profile", "tracking_mode"));
+
+    // The household that was already there has a mode now, and it is the one
+    // that reads its figures as a standing assumption.
+    QCOMPARE(trackingModeOfStoredProfile(connection), QStringLiteral("planning"));
+
+    // The rest of the row is untouched.
+    QSqlQuery select{connection};
+    QVERIFY(select.exec(QStringLiteral("SELECT display_name, base_currency FROM profile")));
+    QVERIFY(select.next());
+    QCOMPARE(select.value(0).toString(), QStringLiteral("Elis"));
+    QCOMPARE(select.value(1).toString(), QStringLiteral("SEK"));
+
+    // And a second run leaves the chosen mode alone rather than resetting it,
+    // which is what makes the upgrade safe to repeat on every start.
+    QSqlQuery chose{connection};
+    QVERIFY(
+        chose.exec(QStringLiteral("UPDATE profile SET tracking_mode = 'accounting' WHERE id = 1")));
+    const application::Result<int> again = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(again.ok(), again.error().c_str());
+    QCOMPARE(again.value(), kExpectedVersion);
+    QCOMPARE(trackingModeOfStoredProfile(connection), QStringLiteral("accounting"));
+}
+
 void TestMigrator::migratingTwiceChangesNothing()
 {
     QTemporaryDir directory;
@@ -232,8 +309,10 @@ void TestMigrator::newerSchemaIsRefused()
 
     const application::Status migrated = database.migrate();
     QVERIFY(!migrated.ok());
-    QVERIFY(migrated.error().find("version 3") != std::string::npos);
-    QVERIFY(migrated.error().find("version 2") != std::string::npos);
+    QVERIFY(migrated.error().find("version " + std::to_string(kExpectedVersion + 1)) !=
+            std::string::npos);
+    QVERIFY(migrated.error().find("version " + std::to_string(kExpectedVersion)) !=
+            std::string::npos);
     QVERIFY(migrated.error().find("newer hinkwise") != std::string::npos);
 
     // Refusing is not the same as downgrading: the file is left exactly as the

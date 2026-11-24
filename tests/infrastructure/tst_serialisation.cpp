@@ -23,6 +23,8 @@ private slots:
     void assetKinds();
     void liabilityKinds_data();
     void liabilityKinds();
+    void trackingModes_data();
+    void trackingModes();
     void rejectsUnknownKeys();
     void rejectsOutOfRangeEnums();
 };
@@ -167,6 +169,33 @@ void TestSerialisation::liabilityKinds()
     QCOMPARE(static_cast<int>(*decoded), value);
 }
 
+void TestSerialisation::trackingModes_data()
+{
+    QTest::addColumn<int>("value");
+    QTest::addColumn<QString>("key");
+
+    QTest::newRow("accounting") << static_cast<int>(TrackingMode::Accounting) << "accounting";
+    QTest::newRow("planning") << static_cast<int>(TrackingMode::Planning) << "planning";
+}
+
+void TestSerialisation::trackingModes()
+{
+    QFETCH(int, value);
+    QFETCH(QString, key);
+
+    const TrackingMode mode = static_cast<TrackingMode>(value);
+    const QString stored = QString::fromUtf8(storageKey(mode));
+    QCOMPARE(stored, key);
+
+    const std::optional<TrackingMode> decoded = trackingModeFromStorageKey(key.toStdString());
+    QVERIFY(decoded.has_value());
+    QCOMPARE(static_cast<int>(*decoded), value);
+
+    // The label is for the interface and is allowed to read differently.
+    QVERIFY(!QString::fromUtf8(labelOf(mode)).isEmpty());
+    QVERIFY(QString::fromUtf8(labelOf(mode)) != stored);
+}
+
 void TestSerialisation::rejectsUnknownKeys()
 {
     // Labels, spellings from a future release and empty text are all rejected
@@ -187,6 +216,10 @@ void TestSerialisation::rejectsUnknownKeys()
     QVERIFY(!liabilityKindFromStorageKey(nonsense).has_value());
     QVERIFY(!bucketFromStorageKey(empty).has_value());
     QVERIFY(!bucketFromStorageKey(nonsense).has_value());
+    QVERIFY(!trackingModeFromStorageKey(empty).has_value());
+    QVERIFY(!trackingModeFromStorageKey(nonsense).has_value());
+    // The label is not a key either: only the two spellings above are.
+    QVERIFY(!trackingModeFromStorageKey(labelOf(TrackingMode::Planning)).has_value());
 }
 
 void TestSerialisation::rejectsOutOfRangeEnums()
@@ -200,6 +233,7 @@ void TestSerialisation::rejectsOutOfRangeEnums()
     QCOMPARE(QString::fromUtf8(storageKey(phase)), QString{});
     QCOMPARE(QString::fromUtf8(storageKey(kind)), QString{});
     QCOMPARE(QString::fromUtf8(storageKey(bucket)), QString{});
+    QCOMPARE(QString::fromUtf8(storageKey(static_cast<TrackingMode>(4))), QString{});
 }
 
 QTEST_APPLESS_MAIN(TestSerialisation)

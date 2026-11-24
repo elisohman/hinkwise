@@ -45,6 +45,9 @@ json::BackupData fullyPopulated()
     data.profile.phase = domain::Phase::Preserving;
     data.profile.riskTolerance = domain::Percentage::fromBasisPoints(4000);
     data.profile.jurisdiction = domain::swedishJurisdiction();
+    // Accounting rather than the default, so a round trip that drops the field
+    // cannot pass by landing on Planning anyway.
+    data.profile.trackingMode = domain::TrackingMode::Accounting;
 
     const domain::Asset fund = domain::makeAsset("fund", "Global fund", domain::AssetKind::Fund);
     domain::Asset flat = domain::makeAsset("flat", "Flat", domain::AssetKind::RealEstate);
@@ -123,6 +126,8 @@ private slots:
     void rejectsWronglyTypedField();
     void acceptsAFlowWrittenBeforeTheBreakdownExisted();
     void rejectsABreakdownThatDoesNotAddUp();
+    void acceptsAProfileWrittenBeforeTrackingModeExisted();
+    void rejectsUnknownTrackingMode();
 };
 
 void TestBackup::roundTripIsLossless()
@@ -147,6 +152,8 @@ void TestBackup::roundTripIsLossless()
     QCOMPARE(data.profile.jurisdiction.safeWithdrawalRate.basisPoints(), 400);
     QCOMPARE(data.profile.jurisdiction.capitalTaxDrag.basisPoints(), 100);
     QCOMPARE(data.profile.jurisdiction.fiMultiplierDefault, 25);
+    QCOMPARE(static_cast<int>(data.profile.trackingMode),
+             static_cast<int>(domain::TrackingMode::Accounting));
 
     QCOMPARE(data.assets.size(), std::size_t(2));
     QCOMPARE(QString::fromStdString(data.assets[1].id), QStringLiteral("flat"));
@@ -328,6 +335,38 @@ void TestBackup::rejectsABreakdownThatDoesNotAddUp()
     // The message has to say which month is wrong.
     QVERIFY(parsed.error().find("2026-01") != std::string::npos);
     QVERIFY(parsed.error().find("breakdown") != std::string::npos);
+}
+
+/// The tracking mode was added after the first backup format was written, so a
+/// file without the key is still a file this build reads. Absence means
+/// Planning: the mode an existing household was already keeping its record in.
+void TestBackup::acceptsAProfileWrittenBeforeTrackingModeExisted()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    profile.remove(QStringLiteral("trackingMode"));
+    root.insert(QStringLiteral("profile"), profile);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(static_cast<int>(parsed.value().profile.trackingMode),
+             static_cast<int>(domain::TrackingMode::Planning));
+}
+
+/// A key that is there and says something unrecognised is a different matter:
+/// the file claims to name a mode, and guessing which one would be inventing a
+/// setting the household never chose.
+void TestBackup::rejectsUnknownTrackingMode()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    profile.insert(QStringLiteral("trackingMode"), QStringLiteral("monthly"));
+    root.insert(QStringLiteral("profile"), profile);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY(!parsed.ok());
+    QVERIFY(parsed.error().find("monthly") != std::string::npos);
+    QVERIFY(parsed.error().find("trackingMode") != std::string::npos);
 }
 
 QTEST_APPLESS_MAIN(TestBackup)

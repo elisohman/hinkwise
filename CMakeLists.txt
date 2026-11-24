@@ -26,6 +26,7 @@ add_library(hinkwise_domain STATIC
     src/domain/liability.cpp
     src/domain/metrics.cpp
     src/domain/phase.cpp
+    src/domain/profile.cpp
     src/domain/projection.cpp
     src/domain/rebalance.cpp
     src/domain/rules.cpp

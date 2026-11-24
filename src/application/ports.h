@@ -118,6 +118,12 @@ public:
     /// backup is written from: latest() alone would lose the history.
     virtual Result<std::vector<MoneyPoint>> history(std::string_view assetId) const = 0;
 
+    /// The latest month any asset was valued in, whichever asset it belongs to.
+    /// std::nullopt means no valuation has ever been recorded, which is not an
+    /// error; a failed read is one, because a household that has recorded
+    /// valuations must not be told it has recorded none.
+    virtual Result<std::optional<domain::YearMonth>> mostRecentMonth() const = 0;
+
     virtual Status upsert(std::string_view assetId, domain::YearMonth month,
                           domain::Money balance) = 0;
 };
@@ -134,6 +140,10 @@ public:
     /// Every balance ever recorded for the debt, oldest first. A debt with no
     /// recorded balance has no points rather than an error.
     virtual Result<std::vector<MoneyPoint>> history(std::string_view liabilityId) const = 0;
+
+    /// The latest month any debt balance was recorded in, whichever debt it
+    /// belongs to. std::nullopt means nothing has ever been recorded.
+    virtual Result<std::optional<domain::YearMonth>> mostRecentMonth() const = 0;
 
     virtual Status upsert(std::string_view liabilityId, domain::YearMonth month,
                           domain::Money balance) = 0;

@@ -31,7 +31,7 @@ namespace {
 constexpr const char* kSelectProfile = R"(
     SELECT display_name, base_currency, phase, risk_tolerance_bp, jurisdiction_id,
            safe_withdrawal_bp, capital_tax_bp, fi_multiplier_low, fi_multiplier_default,
-           fi_multiplier_high
+           fi_multiplier_high, tracking_mode
     FROM profile
     WHERE id = 1
 )";
@@ -42,8 +42,8 @@ constexpr const char* kUpsertProfile = R"(
     INSERT INTO profile (id, display_name, base_currency, phase, risk_tolerance_bp,
                          jurisdiction_id, safe_withdrawal_bp, capital_tax_bp,
                          fi_multiplier_low, fi_multiplier_default, fi_multiplier_high,
-                         created_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         tracking_mode, created_at)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
         display_name = excluded.display_name,
         base_currency = excluded.base_currency,
@@ -54,7 +54,8 @@ constexpr const char* kUpsertProfile = R"(
         capital_tax_bp = excluded.capital_tax_bp,
         fi_multiplier_low = excluded.fi_multiplier_low,
         fi_multiplier_default = excluded.fi_multiplier_default,
-        fi_multiplier_high = excluded.fi_multiplier_high
+        fi_multiplier_high = excluded.fi_multiplier_high,
+        tracking_mode = excluded.tracking_mode
 )";
 
 constexpr const char* kSelectAssets = R"(
@@ -138,6 +139,10 @@ constexpr const char* kSelectValuationHistory = R"(
     ORDER BY month ASC
 )";
 
+// "YYYY-MM" sorts chronologically as text, so MAX(month) is the latest month
+// recorded and NULL when nothing has been. One query, no rows read.
+constexpr const char* kSelectLatestValuationMonth = "SELECT MAX(month) FROM valuation";
+
 constexpr const char* kUpsertValuation = R"(
     INSERT INTO valuation (asset_id, month, amount_minor, currency)
     VALUES (?, ?, ?, ?)
@@ -166,6 +171,8 @@ constexpr const char* kSelectDebtBalanceHistory = R"(
     WHERE liability_id = ?
     ORDER BY month ASC
 )";
+
+constexpr const char* kSelectLatestDebtBalanceMonth = "SELECT MAX(month) FROM debt_balance";
 
 constexpr const char* kUpsertDebtBalance = R"(
     INSERT INTO debt_balance (liability_id, month, amount_minor, currency)
@@ -311,6 +318,20 @@ QString monthText(domain::YearMonth month)
     return toQString(month.toString());
 }
 
+/// MAX(month) over an empty table is NULL, which is "never recorded" rather
+/// than a month that failed to parse.
+application::Result<std::optional<domain::YearMonth>> decodeLatestMonth(const QVariant& value,
+                                                                        const std::string& context)
+{
+    if (value.isNull())
+        return application::Result<std::optional<domain::YearMonth>>::ok(std::nullopt);
+
+    const application::Result<domain::YearMonth> month = decodeMonth(value, context);
+    if (!month.ok())
+        return application::Result<std::optional<domain::YearMonth>>::err(month.error());
+    return application::Result<std::optional<domain::YearMonth>>::ok(month.value());
+}
+
 QString phaseText(domain::Phase phase)
 {
     return QString::fromUtf8(domain::storageKey(phase));
@@ -328,6 +349,17 @@ application::Result<domain::Phase> decodePhase(const QVariant& value, const std:
     if (!phase)
         return application::Result<domain::Phase>::err(unknownKey(context, "phase", key));
     return application::Result<domain::Phase>::ok(*phase);
+}
+
+application::Result<domain::TrackingMode> decodeTrackingMode(const QVariant& value,
+                                                             const std::string& context)
+{
+    const std::string key = toStd(value.toString());
+    const std::optional<domain::TrackingMode> mode = domain::trackingModeFromStorageKey(key);
+    if (!mode)
+        return application::Result<domain::TrackingMode>::err(
+            unknownKey(context, "tracking mode", key));
+    return application::Result<domain::TrackingMode>::ok(*mode);
 }
 
 application::Result<domain::MonthFlow> decodeFlow(const Statement& row, int firstColumn,
@@ -421,6 +453,12 @@ application::Result<std::optional<domain::Profile>> SqliteProfileRepository::loa
     jurisdiction.fiMultiplierHigh = statement.value(9).toInt();
     profile.jurisdiction = jurisdiction;
 
+    const application::Result<domain::TrackingMode> trackingMode =
+        decodeTrackingMode(statement.value(10), "profile");
+    if (!trackingMode.ok())
+        return Outcome::err(trackingMode.error());
+    profile.trackingMode = trackingMode.value();
+
     return Outcome::ok(profile);
 }
 
@@ -437,6 +475,7 @@ application::Status SqliteProfileRepository::save(const domain::Profile& profile
         profile.jurisdiction.fiMultiplierLow,
         profile.jurisdiction.fiMultiplierDefault,
         profile.jurisdiction.fiMultiplierHigh,
+        QString::fromUtf8(domain::storageKey(profile.trackingMode)),
         toQString(nowIso()),
     });
 }
@@ -702,6 +741,21 @@ application::Status SqliteValuationRepository::upsert(std::string_view assetId,
     });
 }
 
+application::Result<std::optional<domain::YearMonth>>
+SqliteValuationRepository::mostRecentMonth() const
+{
+    using Outcome = application::Result<std::optional<domain::YearMonth>>;
+
+    Statement statement{m_connection, kSelectLatestValuationMonth, "load latest valuation month"};
+    const application::Status ran = statement.exec();
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+
+    if (!statement.next())
+        return Outcome::ok(std::nullopt);
+    return decodeLatestMonth(statement.value(0), "latest valuation month");
+}
+
 // ---------------------------------------------------------------------------
 // Debt balances
 // ---------------------------------------------------------------------------
@@ -791,6 +845,22 @@ application::Status SqliteDebtBalanceRepository::upsert(std::string_view liabili
         static_cast<qint64>(balance.minorUnits()),
         QString::fromUtf8(domain::storageKey(balance.currency())),
     });
+}
+
+application::Result<std::optional<domain::YearMonth>>
+SqliteDebtBalanceRepository::mostRecentMonth() const
+{
+    using Outcome = application::Result<std::optional<domain::YearMonth>>;
+
+    Statement statement{m_connection, kSelectLatestDebtBalanceMonth,
+                        "load latest debt balance month"};
+    const application::Status ran = statement.exec();
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+
+    if (!statement.next())
+        return Outcome::ok(std::nullopt);
+    return decodeLatestMonth(statement.value(0), "latest debt balance month");
 }
 
 // ---------------------------------------------------------------------------

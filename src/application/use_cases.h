@@ -35,6 +35,13 @@ Status recordMonth(IMonthFlowRepository& flows, domain::YearMonth month,
 Status recordValuation(IValuationRepository& valuations, std::string_view assetId,
                        domain::YearMonth month, domain::Money balance);
 
+/// Records what one debt still owes in one month, which is how a mortgage is
+/// updated as it is paid down. The liability id is required and the amount
+/// cannot be negative; recording the same month twice corrects it rather than
+/// adding a second entry.
+Status recordDebtBalance(IDebtBalanceRepository& debtBalances, std::string_view liabilityId,
+                         domain::YearMonth month, domain::Money balance);
+
 /// Adds an asset or replaces the one with the same id.
 Status addAsset(IAssetRepository& assets, const domain::Asset& asset);
 

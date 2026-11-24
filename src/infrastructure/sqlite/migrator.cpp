@@ -133,6 +133,19 @@ application::Status addSavingBreakdown(QSqlDatabase& database)
     return application::Status::success();
 }
 
+/// The schema of version 3: how the household keeps its record.
+///
+/// One ALTER TABLE with a NOT NULL default, so a file that already holds a
+/// profile comes out of the migration with 'planning': the mode that expects an
+/// old figure rather than calling it a gap. SQLite fills the column in for the
+/// existing row, so there is no second statement to run and nothing to get
+/// half done.
+application::Status addTrackingMode(QSqlDatabase& database)
+{
+    return execute(database, "ALTER TABLE profile ADD COLUMN tracking_mode TEXT NOT NULL "
+                             "DEFAULT 'planning'");
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -150,7 +163,8 @@ std::string contextMessage(const QString& context, const QSqlError& error)
 
 MigrationList schemaMigrations()
 {
-    return MigrationList{{1, &createInitialSchema}, {2, &addSavingBreakdown}};
+    return MigrationList{
+        {1, &createInitialSchema}, {2, &addSavingBreakdown}, {3, &addTrackingMode}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

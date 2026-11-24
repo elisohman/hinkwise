@@ -107,29 +107,111 @@ public:
 
 class FakeValuationRepository final : public IValuationRepository {
 public:
-    std::map<std::string, Money> latestBalance;
+    std::map<std::string, std::map<YearMonth, Money>> stored;
 
-    Result<std::optional<Money>> balanceAt(std::string_view, YearMonth) const override
+    Result<std::optional<Money>> balanceAt(std::string_view assetId, YearMonth month) const override
     {
-        return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto asset = stored.find(std::string{assetId});
+        if (asset == stored.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto point = asset->second.find(month);
+        if (point == asset->second.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        return Result<std::optional<Money>>::ok(point->second);
     }
 
     Result<std::optional<Money>> latest(std::string_view assetId) const override
     {
-        const auto found = latestBalance.find(std::string{assetId});
-        if (found == latestBalance.end())
+        const auto asset = stored.find(std::string{assetId});
+        if (asset == stored.end() || asset->second.empty())
             return Result<std::optional<Money>>::ok(std::nullopt);
-        return Result<std::optional<Money>>::ok(found->second);
+        return Result<std::optional<Money>>::ok(asset->second.rbegin()->second);
     }
 
-    Result<std::vector<MoneyPoint>> history(std::string_view) const override
+    Result<std::vector<MoneyPoint>> history(std::string_view assetId) const override
     {
-        return Result<std::vector<MoneyPoint>>::ok({});
+        std::vector<MoneyPoint> points;
+        const auto asset = stored.find(std::string{assetId});
+        if (asset != stored.end()) {
+            for (const auto& point : asset->second)
+                points.push_back(MoneyPoint{point.first, point.second});
+        }
+        return Result<std::vector<MoneyPoint>>::ok(std::move(points));
     }
 
-    Status upsert(std::string_view assetId, YearMonth, Money balance) override
+    Result<std::optional<YearMonth>> mostRecentMonth() const override
     {
-        latestBalance[std::string{assetId}] = balance;
+        std::optional<YearMonth> newest;
+        for (const auto& asset : stored) {
+            if (!asset.second.empty() && (!newest || *newest < asset.second.rbegin()->first))
+                newest = asset.second.rbegin()->first;
+        }
+        return Result<std::optional<YearMonth>>::ok(newest);
+    }
+
+    Status upsert(std::string_view assetId, YearMonth month, Money balance) override
+    {
+        stored[std::string{assetId}][month] = balance;
+        return Status::success();
+    }
+};
+
+/// Debt balances keyed by debt and month. `liabilities` stands in for the
+/// foreign key the real table enforces: a balance for a debt that does not
+/// exist is refused rather than stored and orphaned.
+class FakeDebtBalanceRepository final : public IDebtBalanceRepository {
+public:
+    std::vector<std::string> liabilities{"bolan"};
+    std::map<std::string, std::map<YearMonth, Money>> stored;
+
+    Result<std::optional<Money>> balanceAt(std::string_view liabilityId,
+                                           YearMonth month) const override
+    {
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt == stored.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto point = debt->second.find(month);
+        if (point == debt->second.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        return Result<std::optional<Money>>::ok(point->second);
+    }
+
+    Result<std::optional<Money>> latest(std::string_view liabilityId) const override
+    {
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt == stored.end() || debt->second.empty())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        return Result<std::optional<Money>>::ok(debt->second.rbegin()->second);
+    }
+
+    Result<std::vector<MoneyPoint>> history(std::string_view liabilityId) const override
+    {
+        std::vector<MoneyPoint> points;
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt != stored.end()) {
+            for (const auto& point : debt->second)
+                points.push_back(MoneyPoint{point.first, point.second});
+        }
+        return Result<std::vector<MoneyPoint>>::ok(std::move(points));
+    }
+
+    Result<std::optional<YearMonth>> mostRecentMonth() const override
+    {
+        std::optional<YearMonth> newest;
+        for (const auto& debt : stored) {
+            if (!debt.second.empty() && (!newest || *newest < debt.second.rbegin()->first))
+                newest = debt.second.rbegin()->first;
+        }
+        return Result<std::optional<YearMonth>>::ok(newest);
+    }
+
+    Status upsert(std::string_view liabilityId, YearMonth month, Money balance) override
+    {
+        const std::string id{liabilityId};
+        if (std::find(liabilities.begin(), liabilities.end(), id) == liabilities.end())
+            return Status::err("debt '" + id + "' does not exist");
+
+        stored[id][month] = balance;
         return Status::success();
     }
 };
@@ -194,9 +276,13 @@ class TestUseCases : public QObject {
 
 private slots:
     void recordMonthStoresTheFlow();
+    void recordMonthAcceptsAPastMonth();
     void recordMonthRejectsNegativeAmounts();
     void recordValuationStoresTheBalance();
+    void recordValuationAcceptsAPastMonth();
     void recordValuationRejectsInvalidInput();
+    void recordDebtBalanceStoresAndCorrectsTheMonth();
+    void recordDebtBalanceRejectsInvalidInput();
     void addAndRemoveAsset();
     void addAndRemoveLiability();
     void createProfileNeedsAName();
@@ -222,6 +308,23 @@ void TestUseCases::recordMonthStoresTheFlow()
     QCOMPARE(stored.needs.minorUnits(), qint64(2000000));
     QCOMPARE(stored.wants.minorUnits(), qint64(400000));
     QCOMPARE(stored.saving.minorUnits(), qint64(600000));
+}
+
+void TestUseCases::recordMonthAcceptsAPastMonth()
+{
+    FakeMonthFlowRepository flows;
+    const YearMonth sixMonthsAgo = kMonth.plusMonths(-6);
+
+    QVERIFY2(recordMonth(flows, sixMonthsAgo, flowOf(4000000, 1600000, 400000, 500000)).ok(),
+             "backfill");
+    QVERIFY2(recordMonth(flows, kMonth, flowOf(5000000, 2000000, 400000, 600000)).ok(),
+             "this month");
+
+    // The older month is kept, and the newer one is what at() finds.
+    const std::size_t expectedMonths = 2;
+    QCOMPARE(flows.stored.size(), expectedMonths);
+    QCOMPARE(flows.stored.at(sixMonthsAgo.index()).income.minorUnits(), qint64(4000000));
+    QCOMPARE(flows.stored.at(kMonth.index()).income.minorUnits(), qint64(5000000));
 }
 
 void TestUseCases::recordMonthRejectsNegativeAmounts()
@@ -254,9 +357,69 @@ void TestUseCases::recordValuationStoresTheBalance()
     const Status recorded = recordValuation(valuations, "fund", kMonth, sek(1000000));
     QVERIFY2(recorded.ok(), recorded.error().c_str());
 
-    const auto found = valuations.latestBalance.find("fund");
-    QVERIFY(found != valuations.latestBalance.end());
-    QCOMPARE(found->second.minorUnits(), qint64(1000000));
+    const auto found = valuations.stored.find("fund");
+    QVERIFY(found != valuations.stored.end());
+    QCOMPARE(found->second.at(kMonth).minorUnits(), qint64(1000000));
+}
+
+/// Backfilling is not a special case: the month is a key, so a month in the past
+/// is recorded like any other, and the latest valuation stays the latest one.
+void TestUseCases::recordValuationAcceptsAPastMonth()
+{
+    FakeValuationRepository valuations;
+    const YearMonth sixMonthsAgo = kMonth.plusMonths(-6);
+
+    QVERIFY2(recordValuation(valuations, "fund", sixMonthsAgo, sek(900000)).ok(), "backfill");
+    QVERIFY2(recordValuation(valuations, "fund", kMonth, sek(1000000)).ok(), "this month");
+
+    const Result<std::vector<MoneyPoint>> history = valuations.history("fund");
+    QVERIFY2(history.ok(), history.error().c_str());
+    const std::size_t expectedPoints = 2;
+    QCOMPARE(history.value().size(), expectedPoints);
+    const YearMonth oldestMonth = history.value().front().month;
+    QCOMPARE(QString::fromStdString(oldestMonth.toString()),
+             QString::fromStdString(sixMonthsAgo.toString()));
+
+    const Result<std::optional<Money>> latest = valuations.latest("fund");
+    QVERIFY2(latest.ok(), latest.error().c_str());
+    QCOMPARE(latest.value()->minorUnits(), qint64(1000000));
+}
+
+void TestUseCases::recordDebtBalanceStoresAndCorrectsTheMonth()
+{
+    FakeDebtBalanceRepository debtBalances;
+
+    const Status recorded = recordDebtBalance(debtBalances, "bolan", kMonth, sek(150000000));
+    QVERIFY2(recorded.ok(), recorded.error().c_str());
+
+    // A second entry for the same month is a correction, not a second balance.
+    const Status corrected = recordDebtBalance(debtBalances, "bolan", kMonth, sek(149000000));
+    QVERIFY2(corrected.ok(), corrected.error().c_str());
+
+    const Result<std::vector<MoneyPoint>> history = debtBalances.history("bolan");
+    QVERIFY2(history.ok(), history.error().c_str());
+    const std::size_t expectedPoints = 1;
+    QCOMPARE(history.value().size(), expectedPoints);
+    QCOMPARE(history.value().front().amount.minorUnits(), qint64(149000000));
+}
+
+void TestUseCases::recordDebtBalanceRejectsInvalidInput()
+{
+    FakeDebtBalanceRepository debtBalances;
+
+    // A debt that does not exist is refused, which is what the foreign key in
+    // the real table says too.
+    const Status unknown = recordDebtBalance(debtBalances, "card", kMonth, sek(2000000));
+    QVERIFY(!unknown.ok());
+    QVERIFY(!unknown.error().empty());
+
+    const Status missing = recordDebtBalance(debtBalances, "", kMonth, sek(2000000));
+    QVERIFY(!missing.ok());
+
+    const Status negative = recordDebtBalance(debtBalances, "bolan", kMonth, sek(-1));
+    QVERIFY(!negative.ok());
+
+    QVERIFY(debtBalances.stored.empty());
 }
 
 void TestUseCases::recordValuationRejectsInvalidInput()
@@ -265,7 +428,7 @@ void TestUseCases::recordValuationRejectsInvalidInput()
 
     QVERIFY(!recordValuation(valuations, "", kMonth, sek(1000000)).ok());
     QVERIFY(!recordValuation(valuations, "fund", kMonth, sek(-1)).ok());
-    QVERIFY(valuations.latestBalance.empty());
+    QVERIFY(valuations.stored.empty());
 }
 
 void TestUseCases::addAndRemoveAsset()

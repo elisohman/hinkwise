@@ -82,6 +82,7 @@ QJsonObject profileToJson(const domain::Profile& profile)
     put(object, "baseCurrency", storageKeyText(domain::storageKey(profile.baseCurrency)));
     put(object, "phase", storageKeyText(domain::storageKey(profile.phase)));
     put(object, "riskToleranceBp", profile.riskTolerance.basisPoints());
+    put(object, "trackingMode", storageKeyText(domain::storageKey(profile.trackingMode)));
     put(object, "jurisdiction", jurisdictionToJson(profile.jurisdiction));
     return object;
 }
@@ -360,6 +361,22 @@ application::Result<domain::Profile> profileFromJson(const QJsonValue& value,
     if (!riskTolerance.ok())
         return Outcome::err(riskTolerance.error());
     profile.riskTolerance = domain::Percentage::fromBasisPoints(riskTolerance.value());
+
+    // The tracking mode arrived after the first backup format, so a file
+    // written before it has no 'trackingMode' key at all: absence means
+    // Planning, the mode an existing household was already working in. Text
+    // that is there and unrecognised is a different matter - the key claims to
+    // say something, and guessing what would be inventing a setting.
+    const QJsonValue trackingMode = object.value().value(key("trackingMode"));
+    if (trackingMode.isUndefined()) {
+        profile.trackingMode = domain::TrackingMode::Planning;
+    } else {
+        const application::Result<domain::TrackingMode> decoded = requireEnum<domain::TrackingMode>(
+            object.value(), "trackingMode", context, domain::trackingModeFromStorageKey);
+        if (!decoded.ok())
+            return Outcome::err(decoded.error());
+        profile.trackingMode = decoded.value();
+    }
 
     const application::Result<domain::Jurisdiction> jurisdiction =
         jurisdictionFromJson(object.value().value(key("jurisdiction")), context + ": jurisdiction");

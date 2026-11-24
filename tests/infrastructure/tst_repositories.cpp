@@ -73,6 +73,8 @@ private slots:
     void valuationRoundTrip();
     void deletingAnAssetCascadesItsValuations();
     void debtBalanceRoundTrip();
+    void mostRecentMonthIsEmptyOnAnEmptyTable();
+    void unknownTrackingModeIsAnError();
     void monthFlowRoundTrip();
     void monthFlowWithAPartlyStoredBreakdownIsAnError();
     void monthFlowBreakdownThatDoesNotAddUpIsAnError();
@@ -131,6 +133,7 @@ void TestRepositories::profileRoundTrip()
     profile.jurisdiction =
         domain::customJurisdiction(domain::Percentage::fromBasisPoints(350),
                                    domain::Percentage::fromBasisPoints(80), 23, 28, 36);
+    profile.trackingMode = domain::TrackingMode::Accounting;
 
     const application::Status saved = profiles.save(profile);
     QVERIFY2(saved.ok(), saved.error().c_str());
@@ -150,6 +153,8 @@ void TestRepositories::profileRoundTrip()
     QCOMPARE(stored.jurisdiction.fiMultiplierLow, 23);
     QCOMPARE(stored.jurisdiction.fiMultiplierDefault, 28);
     QCOMPARE(stored.jurisdiction.fiMultiplierHigh, 36);
+    QCOMPARE(static_cast<int>(stored.trackingMode),
+             static_cast<int>(domain::TrackingMode::Accounting));
 
     // created_at records the first save, not the last edit.
     QSqlQuery createdAtQuery{connection()};
@@ -161,6 +166,7 @@ void TestRepositories::profileRoundTrip()
     domain::Profile renamed = profile;
     renamed.displayName = "Elis Ohman";
     renamed.phase = domain::Phase::FinanciallyIndependent;
+    renamed.trackingMode = domain::TrackingMode::Planning;
     QVERIFY(profiles.save(renamed).ok());
 
     const application::Result<std::optional<domain::Profile>> reloaded = profiles.load();
@@ -168,6 +174,8 @@ void TestRepositories::profileRoundTrip()
     QCOMPARE(QString::fromStdString(reloaded.value()->displayName), QStringLiteral("Elis Ohman"));
     QCOMPARE(static_cast<int>(reloaded.value()->phase),
              static_cast<int>(domain::Phase::FinanciallyIndependent));
+    QCOMPARE(static_cast<int>(reloaded.value()->trackingMode),
+             static_cast<int>(domain::TrackingMode::Planning));
 
     QSqlQuery createdAtAgain{connection()};
     QVERIFY(createdAtAgain.exec(QStringLiteral("SELECT created_at FROM profile WHERE id = 1")));
@@ -355,6 +363,32 @@ void TestRepositories::valuationRoundTrip()
         valuations.history("missing");
     QVERIFY2(nothing.ok(), nothing.error().c_str());
     QVERIFY(nothing.value().empty());
+
+    // The provenance read: the latest month any asset was valued in.
+    const application::Result<std::optional<domain::YearMonth>> mostRecent =
+        valuations.mostRecentMonth();
+    QVERIFY2(mostRecent.ok(), mostRecent.error().c_str());
+    QVERIFY(mostRecent.value().has_value());
+    QCOMPARE(QString::fromStdString(mostRecent.value()->toString()), QStringLiteral("2026-03"));
+}
+
+/// Nothing recorded is a real answer, not an error: a fresh household has no
+/// month to report, and the screen must be able to tell that from a read that
+/// failed.
+void TestRepositories::mostRecentMonthIsEmptyOnAnEmptyTable()
+{
+    sqlite::SqliteValuationRepository valuations{connection()};
+    sqlite::SqliteDebtBalanceRepository balances{connection()};
+
+    const application::Result<std::optional<domain::YearMonth>> valuationMonth =
+        valuations.mostRecentMonth();
+    QVERIFY2(valuationMonth.ok(), valuationMonth.error().c_str());
+    QVERIFY(!valuationMonth.value().has_value());
+
+    const application::Result<std::optional<domain::YearMonth>> balanceMonth =
+        balances.mostRecentMonth();
+    QVERIFY2(balanceMonth.ok(), balanceMonth.error().c_str());
+    QVERIFY(!balanceMonth.value().has_value());
 }
 
 void TestRepositories::deletingAnAssetCascadesItsValuations()
@@ -429,6 +463,20 @@ void TestRepositories::debtBalanceRoundTrip()
         balances.history("missing");
     QVERIFY2(nothing.ok(), nothing.error().c_str());
     QVERIFY(nothing.value().empty());
+
+    const application::Result<std::optional<domain::YearMonth>> mostRecent =
+        balances.mostRecentMonth();
+    QVERIFY2(mostRecent.ok(), mostRecent.error().c_str());
+    QVERIFY(mostRecent.value().has_value());
+    QCOMPARE(QString::fromStdString(mostRecent.value()->toString()), QStringLiteral("2026-02"));
+
+    // A balance for a debt that does not exist is refused by the foreign key,
+    // which is what makes recordDebtBalance("unknown") an error rather than a
+    // row nothing will ever read.
+    const application::Status orphan =
+        balances.upsert("missing", domain::YearMonth{2026, 2}, sek(1000000));
+    QVERIFY(!orphan.ok());
+    QVERIFY(!orphan.error().empty());
 }
 
 void TestRepositories::monthFlowRoundTrip()
@@ -613,6 +661,25 @@ void TestRepositories::unknownStoredTextIsAnError()
     const application::Result<std::vector<domain::Asset>> all = assets.all();
     QVERIFY(!all.ok());
     QVERIFY(all.error().find("space-ship") != std::string::npos);
+}
+
+void TestRepositories::unknownTrackingModeIsAnError()
+{
+    sqlite::SqliteProfileRepository profiles{connection()};
+
+    domain::Profile profile;
+    profile.displayName = "Elis";
+    QVERIFY2(profiles.save(profile).ok(), "save the profile");
+
+    QSqlQuery update{connection()};
+    QVERIFY(
+        update.exec(QStringLiteral("UPDATE profile SET tracking_mode = 'monthly' WHERE id = 1")));
+
+    // Text no release writes is reported rather than read as the default: the
+    // row says something, and this build does not know what.
+    const application::Result<std::optional<domain::Profile>> loaded = profiles.load();
+    QVERIFY(!loaded.ok());
+    QVERIFY(loaded.error().find("monthly") != std::string::npos);
 }
 
 void TestRepositories::databaseFileIsOwnerOnly()

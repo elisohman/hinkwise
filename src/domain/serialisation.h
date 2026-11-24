@@ -8,6 +8,7 @@
 #include "liability.h"
 #include "money.h"
 #include "phase.h"
+#include "profile.h"
 
 #include <optional>
 #include <string_view>
@@ -43,5 +44,11 @@ std::optional<LiabilityKind> liabilityKindFromStorageKey(std::string_view key);
 /// "buffer", "preserve", "growth", "play".
 const char* storageKey(Bucket bucket);
 std::optional<Bucket> bucketFromStorageKey(std::string_view key);
+
+/// "accounting", "planning". The mode decides how old input is talked about,
+/// never what is stored, so the two keys describe a reading of the data rather
+/// than a different data model.
+const char* storageKey(TrackingMode mode);
+std::optional<TrackingMode> trackingModeFromStorageKey(std::string_view key);
 
 } // namespace hinkwise::domain

@@ -14,6 +14,7 @@
 #include "domain/year_month.h"
 #include "ports.h"
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -23,6 +24,45 @@ namespace hinkwise::application {
 /// debt worth paying down first: 4.50 %. A loan priced above it is what
 /// isBadLoan() calls bad.
 inline constexpr domain::Percentage kMortgageBenchmark = domain::Percentage::fromBasisPoints(450);
+
+/// Whole months from `then` to `now`, or std::nullopt when nothing has ever
+/// been recorded. A month recorded in the future counts as negative, which the
+/// freshness policy reads as "fresh" because it is not old.
+std::optional<int> monthsSince(std::optional<domain::YearMonth> then, domain::YearMonth now);
+
+/// How much the household's inputs can be trusted to still describe it.
+///
+/// Missing is not a synonym for Stale: it says nothing has been recorded yet,
+/// while Stale says something was recorded and is now out of date. The two ask
+/// the household for different things.
+enum class InputFreshness {
+    Fresh,
+    Ageing,
+    Stale,
+    Missing,
+};
+
+/// The freshness of the balances and the flow under one tracking mode.
+///
+/// The thresholds differ because the two modes ask different things of the
+/// household:
+///
+///   Accounting - Fresh when both are at most 1 month old, Ageing up to 2,
+///   Stale beyond 2, Missing when either has never been recorded. A missed
+///   month is a hole in the record: last month's figure is the newest one there
+///   is, and the entry for this month is not written yet.
+///
+///   Planning - Fresh when both are at most 6 months old, Ageing up to 12,
+///   Stale beyond 12, Missing when either has never been recorded. The budget is
+///   a standing assumption rather than a monthly entry, so an old figure is
+///   still a defensible assumption - just an old one. A year is where "I set
+///   this once" stops being an explanation.
+///
+/// Either side being absent is Missing whatever the mode: a budget with no
+/// expenses recorded cannot be judged fresh, and a flow with no balances is not
+/// a plan either.
+InputFreshness freshnessOf(domain::TrackingMode mode, std::optional<int> monthsSinceBalance,
+                           std::optional<int> monthsSinceFlow);
 
 /// Everything a dashboard screen shows, in one value.
 ///
@@ -41,6 +81,19 @@ struct DashboardSnapshot {
     /// False until the first month flow is recorded, which is the point at
     /// which expenses become known and the buckets can be sized.
     bool hasFlow = false;
+
+    /// When the inputs were last recorded, whichever month it was: the newest
+    /// flow, and the newest of any asset valuation and any debt balance. Both
+    /// are std::nullopt until something has been recorded.
+    std::optional<domain::YearMonth> latestFlowMonth;
+    std::optional<domain::YearMonth> latestBalanceMonth;
+    /// The same two months counted back from the month the snapshot describes,
+    /// ready for the screen to phrase; std::nullopt when never recorded.
+    std::optional<int> monthsSinceFlow;
+    std::optional<int> monthsSinceBalance;
+    /// freshnessOf() of the above under the profile's tracking mode. Missing in
+    /// the default-constructed snapshot, because nothing is recorded there.
+    InputFreshness freshness = InputFreshness::Missing;
 };
 
 /// The bad loans among `debts`, summed and priced against kMortgageBenchmark.
@@ -60,10 +113,15 @@ domain::Money totalBadLoans(std::span<const domain::Debt> debts);
 /// false and every figure is zero, an asset without a valuation counts as zero,
 /// and a repository that cannot read a row leaves that row out. The function
 /// never throws.
-DashboardSnapshot buildDashboard(IProfileRepository& profiles, IAssetRepository& assets,
-                                 ILiabilityRepository& liabilities,
-                                 IDebtBalanceRepository& debtBalances,
-                                 IValuationRepository& valuations, IMonthFlowRepository& flows,
-                                 domain::YearMonth forMonth);
+///
+/// The provenance reads are the exception. When an input was last recorded is
+/// part of the answer - it decides whether the household is told its data is
+/// old or that it has none - so a read that fails there is an error rather than
+/// a date left empty, which would read as "never recorded".
+Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRepository& assets,
+                                         ILiabilityRepository& liabilities,
+                                         IDebtBalanceRepository& debtBalances,
+                                         IValuationRepository& valuations,
+                                         IMonthFlowRepository& flows, domain::YearMonth forMonth);
 
 } // namespace hinkwise::application

@@ -4,6 +4,7 @@
 #include "application/dashboard.h"
 #include "application/ports.h"
 #include "application/result.h"
+#include "application/use_cases.h"
 #include "domain/asset.h"
 #include "domain/bucket.h"
 #include "domain/household.h"
@@ -138,60 +139,127 @@ public:
     }
 };
 
+/// The later of two recorded months, ignoring whichever of them is absent. The
+/// dashboard's provenance and the doubles below need the same rule.
+std::optional<YearMonth> laterOf(std::optional<YearMonth> first, std::optional<YearMonth> second)
+{
+    if (!first)
+        return second;
+    if (!second)
+        return first;
+    return *second < *first ? first : second;
+}
+
+/// Valuations, month by month per asset: the dashboard reads the newest one and
+/// the newest month anything was recorded in.
 class FakeValuationRepository final : public IValuationRepository {
 public:
-    std::map<std::string, Money> latestBalance;
+    std::map<std::string, std::map<YearMonth, Money>> stored;
+    bool failMostRecentMonth = false;
 
-    Result<std::optional<Money>> balanceAt(std::string_view, YearMonth) const override
+    Result<std::optional<Money>> balanceAt(std::string_view assetId, YearMonth month) const override
     {
-        return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto asset = stored.find(std::string{assetId});
+        if (asset == stored.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto point = asset->second.find(month);
+        if (point == asset->second.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        return Result<std::optional<Money>>::ok(point->second);
     }
 
     Result<std::optional<Money>> latest(std::string_view assetId) const override
     {
-        const auto found = latestBalance.find(std::string{assetId});
-        if (found == latestBalance.end())
+        const auto asset = stored.find(std::string{assetId});
+        if (asset == stored.end() || asset->second.empty())
             return Result<std::optional<Money>>::ok(std::nullopt);
-        return Result<std::optional<Money>>::ok(found->second);
+        return Result<std::optional<Money>>::ok(asset->second.rbegin()->second);
     }
 
-    Result<std::vector<MoneyPoint>> history(std::string_view) const override
+    Result<std::vector<MoneyPoint>> history(std::string_view assetId) const override
     {
-        return Result<std::vector<MoneyPoint>>::ok({});
+        std::vector<MoneyPoint> points;
+        const auto asset = stored.find(std::string{assetId});
+        if (asset != stored.end()) {
+            for (const auto& [month, amount] : asset->second)
+                points.push_back(MoneyPoint{month, amount});
+        }
+        return Result<std::vector<MoneyPoint>>::ok(std::move(points));
     }
 
-    Status upsert(std::string_view assetId, YearMonth, Money balance) override
+    Result<std::optional<YearMonth>> mostRecentMonth() const override
     {
-        latestBalance[std::string{assetId}] = balance;
+        if (failMostRecentMonth)
+            return Result<std::optional<YearMonth>>::err("valuations could not be read");
+
+        std::optional<YearMonth> newest;
+        for (const auto& asset : stored) {
+            if (!asset.second.empty())
+                newest = laterOf(newest, asset.second.rbegin()->first);
+        }
+        return Result<std::optional<YearMonth>>::ok(newest);
+    }
+
+    Status upsert(std::string_view assetId, YearMonth month, Money balance) override
+    {
+        stored[std::string{assetId}][month] = balance;
         return Status::success();
     }
 };
 
+/// Debt balances, month by month per liability, the same shape as the valuations.
 class FakeDebtBalanceRepository final : public IDebtBalanceRepository {
 public:
-    std::map<std::string, Money> latestBalance;
+    std::map<std::string, std::map<YearMonth, Money>> stored;
+    bool failMostRecentMonth = false;
 
-    Result<std::optional<Money>> balanceAt(std::string_view, YearMonth) const override
+    Result<std::optional<Money>> balanceAt(std::string_view liabilityId,
+                                           YearMonth month) const override
     {
-        return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt == stored.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        const auto point = debt->second.find(month);
+        if (point == debt->second.end())
+            return Result<std::optional<Money>>::ok(std::nullopt);
+        return Result<std::optional<Money>>::ok(point->second);
     }
 
     Result<std::optional<Money>> latest(std::string_view liabilityId) const override
     {
-        const auto found = latestBalance.find(std::string{liabilityId});
-        if (found == latestBalance.end())
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt == stored.end() || debt->second.empty())
             return Result<std::optional<Money>>::ok(std::nullopt);
-        return Result<std::optional<Money>>::ok(found->second);
+        return Result<std::optional<Money>>::ok(debt->second.rbegin()->second);
     }
 
-    Result<std::vector<MoneyPoint>> history(std::string_view) const override
+    Result<std::vector<MoneyPoint>> history(std::string_view liabilityId) const override
     {
-        return Result<std::vector<MoneyPoint>>::ok({});
+        std::vector<MoneyPoint> points;
+        const auto debt = stored.find(std::string{liabilityId});
+        if (debt != stored.end()) {
+            for (const auto& [month, amount] : debt->second)
+                points.push_back(MoneyPoint{month, amount});
+        }
+        return Result<std::vector<MoneyPoint>>::ok(std::move(points));
     }
 
-    Status upsert(std::string_view liabilityId, YearMonth, Money balance) override
+    Result<std::optional<YearMonth>> mostRecentMonth() const override
     {
-        latestBalance[std::string{liabilityId}] = balance;
+        if (failMostRecentMonth)
+            return Result<std::optional<YearMonth>>::err("debt balances could not be read");
+
+        std::optional<YearMonth> newest;
+        for (const auto& debt : stored) {
+            if (!debt.second.empty())
+                newest = laterOf(newest, debt.second.rbegin()->first);
+        }
+        return Result<std::optional<YearMonth>>::ok(newest);
+    }
+
+    Status upsert(std::string_view liabilityId, YearMonth month, Money balance) override
+    {
+        stored[std::string{liabilityId}][month] = balance;
         return Status::success();
     }
 };
@@ -199,6 +267,7 @@ public:
 class FakeMonthFlowRepository final : public IMonthFlowRepository {
 public:
     std::vector<MonthFlowRecord> stored;
+    bool failRecent = false;
 
     Result<std::optional<MonthFlow>> at(YearMonth month) const override
     {
@@ -212,6 +281,9 @@ public:
 
     Result<std::vector<MonthFlowRecord>> recent(int count) const override
     {
+        if (failRecent)
+            return Result<std::vector<MonthFlowRecord>>::err("month flows could not be read");
+
         std::vector<MonthFlowRecord> newest = stored;
         std::sort(newest.begin(), newest.end(),
                   [](const MonthFlowRecord& left, const MonthFlowRecord& right) {
@@ -247,7 +319,15 @@ struct FakeHousehold {
     FakeValuationRepository valuations;
     FakeMonthFlowRepository flows;
 
+    /// The snapshot, or the empty household when buildDashboard() failed. Tests
+    /// about a failure ask buildResult() for the message instead.
     DashboardSnapshot build(YearMonth month)
+    {
+        const Result<DashboardSnapshot> built = buildResult(month);
+        return built.ok() ? built.value() : DashboardSnapshot{};
+    }
+
+    Result<DashboardSnapshot> buildResult(YearMonth month)
     {
         return buildDashboard(profiles, assets, liabilities, debtBalances, valuations, flows,
                               month);
@@ -283,13 +363,13 @@ void populate(FakeHousehold& household)
     household.liabilities.stored.push_back(makeLiability(
         "card", "Credit card", LiabilityKind::CreditCard, Percentage::fromBasisPoints(1995)));
 
-    household.valuations.latestBalance["buffer"] = sek(1000000);
-    household.valuations.latestBalance["fund"] = sek(40000000);
-    household.valuations.latestBalance["flat"] = sek(200000000);
-    household.valuations.latestBalance["crypto"] = sek(1000000);
+    household.valuations.upsert("buffer", kSnapshotMonth, sek(1000000));
+    household.valuations.upsert("fund", kSnapshotMonth, sek(40000000));
+    household.valuations.upsert("flat", kSnapshotMonth, sek(200000000));
+    household.valuations.upsert("crypto", kSnapshotMonth, sek(1000000));
 
-    household.debtBalances.latestBalance["mortgage"] = sek(150000000);
-    household.debtBalances.latestBalance["card"] = sek(2000000);
+    household.debtBalances.upsert("mortgage", kSnapshotMonth, sek(150000000));
+    household.debtBalances.upsert("card", kSnapshotMonth, sek(2000000));
 
     household.flows.stored.push_back(
         MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
@@ -309,6 +389,17 @@ private slots:
     void flowIsUsedWhenItIsNotLaterThanTheSnapshotMonth();
     void flowLaterThanTheSnapshotMonthIsNotPartOfIt();
     void totalBadLoansSumsOnlyDebtsAboveTheBenchmark();
+
+    void monthsSinceCountsWholeMonths();
+    void accountingFreshnessTreatsAMissedMonthAsAHole();
+    void planningFreshnessLetsTheAssumptionStandForAYear();
+
+    void provenanceReportsWhenEachInputWasLastRecorded();
+    void balanceMonthIsTheLaterOfTheTwoSides();
+    void emptyHouseholdHasNoProvenance();
+    void theModeDecidesWhatAnOldMonthMeans();
+    void aFailedProvenanceReadIsAnError();
+    void backfilledMonthsAreKeptAndDoNotBecomeTheLatest();
 };
 
 void TestDashboard::emptyDatabaseHasNoProfileAndZeroMetrics()
@@ -405,7 +496,7 @@ void TestDashboard::projectionStartsFromInvestableCapital()
     FakeHousehold houseOnly;
     houseOnly.profiles.stored = sampleProfile();
     houseOnly.assets.stored.push_back(makeAsset("flat", "Flat", AssetKind::RealEstate));
-    houseOnly.valuations.latestBalance["flat"] = sek(200000000);
+    houseOnly.valuations.upsert("flat", kSnapshotMonth, sek(200000000));
     houseOnly.flows.stored.push_back(
         MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
 
@@ -432,7 +523,7 @@ void TestDashboard::projectionStartsFromInvestableCapital()
     FakeHousehold cashOnly;
     cashOnly.profiles.stored = sampleProfile();
     cashOnly.assets.stored.push_back(makeAsset("buffer", "Buffer account", AssetKind::BankAccount));
-    cashOnly.valuations.latestBalance["buffer"] = sek(1000000000);
+    cashOnly.valuations.upsert("buffer", kSnapshotMonth, sek(1000000000));
     cashOnly.flows.stored.push_back(
         MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
 
@@ -461,7 +552,7 @@ void TestDashboard::assetWithoutValuationCountsAsZero()
     household.assets.stored.push_back(
         makeAsset("buffer", "Buffer account", AssetKind::BankAccount));
     household.assets.stored.push_back(makeAsset("fund", "Global fund", AssetKind::Fund));
-    household.valuations.latestBalance["buffer"] = sek(1000000);
+    household.valuations.upsert("buffer", kSnapshotMonth, sek(1000000));
 
     const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
 
@@ -509,6 +600,236 @@ void TestDashboard::totalBadLoansSumsOnlyDebtsAboveTheBenchmark()
 
     const std::vector<Debt> noDebts;
     QCOMPARE(ore(totalBadLoans(noDebts)), qint64(0));
+}
+
+void TestDashboard::monthsSinceCountsWholeMonths()
+{
+    const YearMonth now{2026, 3};
+
+    // Nothing recorded is not zero months old; it is nothing to measure.
+    QVERIFY(!monthsSince(std::nullopt, now).has_value());
+    QCOMPARE(*monthsSince(now, now), 0);
+    QCOMPARE(*monthsSince(now.plusMonths(-1), now), 1);
+    QCOMPARE(*monthsSince(now.plusMonths(-6), now), 6);
+    QCOMPARE(*monthsSince(now.plusMonths(-13), now), 13);
+
+    // A month recorded ahead of the snapshot is not old, so the count runs
+    // negative rather than being clamped: the freshness policy reads it as
+    // whatever "not old" is in that mode.
+    QCOMPARE(*monthsSince(now.plusMonths(1), now), -1);
+}
+
+void TestDashboard::accountingFreshnessTreatsAMissedMonthAsAHole()
+{
+    const TrackingMode mode = TrackingMode::Accounting;
+
+    // One month is the newest entry there can be: this month is not written
+    // yet. Two is late, and the third month is a hole in the record.
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 0, 0)), static_cast<int>(InputFreshness::Fresh));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 1, 1)), static_cast<int>(InputFreshness::Fresh));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 1, 2)), static_cast<int>(InputFreshness::Ageing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 2, 2)), static_cast<int>(InputFreshness::Ageing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 3, 0)), static_cast<int>(InputFreshness::Stale));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 0, 3)), static_cast<int>(InputFreshness::Stale));
+
+    // Either side absent is Missing, whichever side it is.
+    QCOMPARE(static_cast<int>(freshnessOf(mode, std::nullopt, 0)),
+             static_cast<int>(InputFreshness::Missing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 0, std::nullopt)),
+             static_cast<int>(InputFreshness::Missing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, std::nullopt, std::nullopt)),
+             static_cast<int>(InputFreshness::Missing));
+}
+
+void TestDashboard::planningFreshnessLetsTheAssumptionStandForAYear()
+{
+    const TrackingMode mode = TrackingMode::Planning;
+
+    // Half a year is still a budget nobody had to revisit; a year is where it
+    // stops being "set once" and starts being old.
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 0, 0)), static_cast<int>(InputFreshness::Fresh));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 6, 6)), static_cast<int>(InputFreshness::Fresh));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 7, 7)), static_cast<int>(InputFreshness::Ageing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 12, 12)), static_cast<int>(InputFreshness::Ageing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 13, 13)), static_cast<int>(InputFreshness::Stale));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 6, 13)), static_cast<int>(InputFreshness::Stale));
+
+    QCOMPARE(static_cast<int>(freshnessOf(mode, std::nullopt, 6)),
+             static_cast<int>(InputFreshness::Missing));
+    QCOMPARE(static_cast<int>(freshnessOf(mode, 6, std::nullopt)),
+             static_cast<int>(InputFreshness::Missing));
+}
+
+void TestDashboard::provenanceReportsWhenEachInputWasLastRecorded()
+{
+    FakeHousehold household;
+    populate(household);
+
+    const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
+
+    QVERIFY(snapshot.latestFlowMonth.has_value());
+    QCOMPARE(QString::fromStdString(snapshot.latestFlowMonth->toString()),
+             QStringLiteral("2026-03"));
+    QVERIFY(snapshot.latestBalanceMonth.has_value());
+    QCOMPARE(QString::fromStdString(snapshot.latestBalanceMonth->toString()),
+             QStringLiteral("2026-03"));
+
+    QVERIFY(snapshot.monthsSinceFlow.has_value());
+    QCOMPARE(*snapshot.monthsSinceFlow, 0);
+    QVERIFY(snapshot.monthsSinceBalance.has_value());
+    QCOMPARE(*snapshot.monthsSinceBalance, 0);
+
+    // The default mode is Planning, and this month's figures are fresh in any
+    // mode.
+    QCOMPARE(static_cast<int>(snapshot.profile.trackingMode),
+             static_cast<int>(TrackingMode::Planning));
+    QCOMPARE(static_cast<int>(snapshot.freshness), static_cast<int>(InputFreshness::Fresh));
+}
+
+void TestDashboard::balanceMonthIsTheLaterOfTheTwoSides()
+{
+    FakeHousehold household;
+    household.profiles.stored = sampleProfile();
+    household.assets.stored.push_back(makeAsset("fund", "Global fund", AssetKind::Fund));
+    household.liabilities.stored.push_back(makeLiability(
+        "bolan", "Mortgage", LiabilityKind::Mortgage, Percentage::fromBasisPoints(420)));
+
+    // The fund was valued two months ago and the mortgage last month: the
+    // household's balances were last looked at last month, when it updated the
+    // larger of the two sides.
+    household.valuations.upsert("fund", kSnapshotMonth.plusMonths(-2), sek(1000000));
+    household.debtBalances.upsert("bolan", kSnapshotMonth.plusMonths(-1), sek(50000000));
+
+    const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
+
+    QVERIFY(snapshot.latestBalanceMonth.has_value());
+    QCOMPARE(QString::fromStdString(snapshot.latestBalanceMonth->toString()),
+             QStringLiteral("2026-02"));
+    QCOMPARE(*snapshot.monthsSinceBalance, 1);
+    // No flow is recorded, so the pair is incomplete whatever the balances say.
+    QCOMPARE(static_cast<int>(snapshot.freshness), static_cast<int>(InputFreshness::Missing));
+}
+
+void TestDashboard::emptyHouseholdHasNoProvenance()
+{
+    FakeHousehold household;
+    household.profiles.stored = sampleProfile();
+
+    const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
+
+    QVERIFY(!snapshot.latestFlowMonth.has_value());
+    QVERIFY(!snapshot.latestBalanceMonth.has_value());
+    QVERIFY(!snapshot.monthsSinceFlow.has_value());
+    QVERIFY(!snapshot.monthsSinceBalance.has_value());
+    QCOMPARE(static_cast<int>(snapshot.freshness), static_cast<int>(InputFreshness::Missing));
+
+    // So is a snapshot that was never built at all, which is what a screen
+    // holds before the database is open.
+    QCOMPARE(static_cast<int>(DashboardSnapshot{}.freshness),
+             static_cast<int>(InputFreshness::Missing));
+}
+
+void TestDashboard::theModeDecidesWhatAnOldMonthMeans()
+{
+    // The same four-month-old budget: a gap in a monthly record, a standing
+    // assumption under planning. Nothing but the profile setting differs.
+    const auto householdFourMonthsBehind = [](TrackingMode mode) {
+        FakeHousehold household;
+        household.profiles.stored = sampleProfile();
+        household.profiles.stored->trackingMode = mode;
+        const YearMonth then = kSnapshotMonth.plusMonths(-4);
+        household.flows.stored.push_back(
+            MonthFlowRecord{then, flowOf(5000000, 2000000, 400000, 600000)});
+        household.assets.stored.push_back(makeAsset("fund", "Global fund", AssetKind::Fund));
+        household.valuations.upsert("fund", then, sek(40000000));
+        return household.build(kSnapshotMonth);
+    };
+
+    const DashboardSnapshot accounting = householdFourMonthsBehind(TrackingMode::Accounting);
+    QCOMPARE(*accounting.monthsSinceFlow, 4);
+    QCOMPARE(*accounting.monthsSinceBalance, 4);
+    QCOMPARE(static_cast<int>(accounting.freshness), static_cast<int>(InputFreshness::Stale));
+
+    const DashboardSnapshot planning = householdFourMonthsBehind(TrackingMode::Planning);
+    QCOMPARE(*planning.monthsSinceFlow, 4);
+    QCOMPARE(static_cast<int>(planning.freshness), static_cast<int>(InputFreshness::Fresh));
+}
+
+void TestDashboard::aFailedProvenanceReadIsAnError()
+{
+    // A read that fails must not come back as "nothing was ever recorded": the
+    // screen would then tell the household to enter figures it already has.
+    FakeHousehold noValuations;
+    populate(noValuations);
+    noValuations.valuations.failMostRecentMonth = true;
+    const Result<DashboardSnapshot> withoutValuationMonth =
+        noValuations.buildResult(kSnapshotMonth);
+    QVERIFY(!withoutValuationMonth.ok());
+    QVERIFY(withoutValuationMonth.error().find("valuations") != std::string::npos);
+
+    FakeHousehold noDebtBalances;
+    populate(noDebtBalances);
+    noDebtBalances.debtBalances.failMostRecentMonth = true;
+    const Result<DashboardSnapshot> withoutDebtMonth = noDebtBalances.buildResult(kSnapshotMonth);
+    QVERIFY(!withoutDebtMonth.ok());
+    QVERIFY(withoutDebtMonth.error().find("debt balances") != std::string::npos);
+
+    FakeHousehold noFlows;
+    populate(noFlows);
+    noFlows.flows.failRecent = true;
+    const Result<DashboardSnapshot> withoutFlowMonth = noFlows.buildResult(kSnapshotMonth);
+    QVERIFY(!withoutFlowMonth.ok());
+    QVERIFY(withoutFlowMonth.error().find("month flows") != std::string::npos);
+}
+
+void TestDashboard::backfilledMonthsAreKeptAndDoNotBecomeTheLatest()
+{
+    FakeHousehold household;
+    household.profiles.stored = sampleProfile();
+    household.assets.stored.push_back(makeAsset("fund", "Global fund", AssetKind::Fund));
+    household.flows.stored.push_back(
+        MonthFlowRecord{kSnapshotMonth, flowOf(5000000, 2000000, 400000, 600000)});
+    household.valuations.upsert("fund", kSnapshotMonth, sek(50000000));
+
+    // A month filled in after the fact is an ordinary write: the month is the
+    // key, so the past is a key like any other.
+    const YearMonth sixMonthsAgo = kSnapshotMonth.plusMonths(-6);
+    const Status flow =
+        recordMonth(household.flows, sixMonthsAgo, flowOf(4000000, 1600000, 400000, 500000));
+    QVERIFY2(flow.ok(), flow.error().c_str());
+    const Status valuation =
+        recordValuation(household.valuations, "fund", sixMonthsAgo, sek(45000000));
+    QVERIFY2(valuation.ok(), valuation.error().c_str());
+
+    const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
+
+    // The snapshot still describes the most recent month, not the oldest one
+    // touched: a backfill adds to the record, it does not move it.
+    QCOMPARE(snapshot.hasFlow, true);
+    QCOMPARE(ore(snapshot.metrics.monthlyExpenses), qint64(2400000));
+    QCOMPARE(ore(snapshot.facts.sheet.totalAssets), qint64(50000000));
+    QCOMPARE(QString::fromStdString(snapshot.latestFlowMonth->toString()),
+             QStringLiteral("2026-03"));
+    QCOMPARE(static_cast<int>(snapshot.freshness), static_cast<int>(InputFreshness::Fresh));
+
+    // And the backfilled months are there, under their own month.
+    const Result<std::optional<MonthFlow>> olderFlow = household.flows.at(sixMonthsAgo);
+    QVERIFY2(olderFlow.ok(), olderFlow.error().c_str());
+    QVERIFY(olderFlow.value().has_value());
+    QCOMPARE(ore(olderFlow.value()->income), qint64(4000000));
+
+    const Result<std::optional<Money>> olderValuation =
+        household.valuations.balanceAt("fund", sixMonthsAgo);
+    QVERIFY2(olderValuation.ok(), olderValuation.error().c_str());
+    QVERIFY(olderValuation.value().has_value());
+    QCOMPARE(ore(*olderValuation.value()), qint64(45000000));
+
+    const Result<std::vector<MoneyPoint>> history = household.valuations.history("fund");
+    QVERIFY2(history.ok(), history.error().c_str());
+    const std::size_t expectedPoints = 2;
+    QCOMPARE(history.value().size(), expectedPoints);
+    QCOMPARE(QString::fromStdString(history.value().front().month.toString()),
+             QString::fromStdString(sixMonthsAgo.toString()));
 }
 
 QTEST_APPLESS_MAIN(TestDashboard)
