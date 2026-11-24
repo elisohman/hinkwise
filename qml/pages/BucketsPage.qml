@@ -12,11 +12,24 @@ import Hinkwise
 // accounts inside the selected one on the right, and the debts underneath the
 // buckets because they reduce the headline figure instead of filling anything.
 //
+// Two ways to record a balance, and they are different sizes of the same act.
+// The update action at the top opens the flow that records every account and
+// every debt for a month; the button under the bucket records the accounts of
+// the bucket on screen, which is the shortcut for a household that is already
+// looking at the right one.
+//
 // Every write goes through the account model, which goes through the
 // AppController and its use cases. Amounts are read in C++; this file only
 // passes the text that was typed.
 Item {
     id: page
+
+    /// What the update action is called in the tracking mode in force. Main
+    /// passes it down from the dashboard, which is the one place that knows
+    /// which mode the household chose.
+    required property string updateActionLabel
+
+    signal updateRequested()
 
     // What the delete confirmation is about. The id is empty when nothing is
     // waiting, which is also how the dialogs know they are closed.
@@ -82,138 +95,303 @@ Item {
         id: accounts
     }
 
-    RowLayout {
+    ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spaceLg
         spacing: Theme.spaceLg
 
-        // ---------------------------------------------------------------
-        // Left: the four buckets, then the debts
-        // ---------------------------------------------------------------
-        ScrollView {
-            id: bucketScroll
+        // The page's own name, and the one action that is about the page as a
+        // whole rather than about the bucket in view.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spaceMd
 
-            Layout.preferredWidth: 260
+            Text {
+                text: qsTr("Accounts & buckets")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontDisplay
+                font.weight: Font.Light
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+            }
+
+            PrimaryButton {
+                text: page.updateActionLabel
+                onClicked: page.updateRequested()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            contentWidth: availableWidth
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            spacing: Theme.spaceLg
 
-            ColumnLayout {
-                width: bucketScroll.availableWidth
-                spacing: Theme.spaceXs
+            // ---------------------------------------------------------------
+            // Left: the four buckets, then the debts
+            // ---------------------------------------------------------------
+            ScrollView {
+                id: bucketScroll
 
-                Text {
-                    text: qsTr("Buckets")
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontDisplay
-                    font.weight: Font.Light
-                    Layout.bottomMargin: Theme.spaceSm
-                }
+                Layout.preferredWidth: 260
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                Repeater {
-                    model: accounts.buckets
+                ColumnLayout {
+                    width: bucketScroll.availableWidth
+                    spacing: Theme.spaceXs
 
-                    delegate: Item {
-                        id: bucketRow
-
-                        required property int index
-                        required property string label
-                        required property string balanceLabel
-                        required property string targetLabel
-                        required property string colourKey
-                        required property real bandStart
-                        required property real bandEnd
-                        required property real balanceMarker
-                        required property real capMarker
-                        required property bool hasTarget
-                        required property bool hasCap
-
-                        readonly property bool selected: bucketRow.index === accounts.selectedBucket
-
+                    SectionHeader {
                         Layout.fillWidth: true
-                        implicitHeight: bucketContent.implicitHeight + 2 * Theme.spaceSm
+                        title: qsTr("Buckets")
+                    }
 
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: Theme.radiusSmall
-                            color: bucketRow.selected ? Theme.surfaceRaised
-                                                      : bucketPointer.containsMouse
-                                                        ? Theme.surface : "transparent"
+                    Repeater {
+                        model: accounts.buckets
+
+                        delegate: Item {
+                            id: bucketRow
+
+                            required property int index
+                            required property string label
+                            required property string balanceLabel
+                            required property string targetLabel
+                            required property string colourKey
+                            required property real bandStart
+                            required property real bandEnd
+                            required property real balanceMarker
+                            required property real capMarker
+                            required property bool hasTarget
+                            required property bool hasCap
+
+                            readonly property bool selected: bucketRow.index === accounts.selectedBucket
+
+                            Layout.fillWidth: true
+                            implicitHeight: bucketContent.implicitHeight + 2 * Theme.spaceSm
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Theme.radiusSmall
+                                color: bucketRow.selected ? Theme.surfaceRaised
+                                                          : bucketPointer.containsMouse
+                                                            ? Theme.surface : "transparent"
+                            }
+
+                            ColumnLayout {
+                                id: bucketContent
+
+                                anchors.fill: parent
+                                anchors.margins: Theme.spaceSm
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spaceSm
+
+                                    Rectangle {
+                                        implicitWidth: 6
+                                        implicitHeight: 6
+                                        radius: 3
+                                        color: Theme.bucketColour(bucketRow.colourKey)
+                                    }
+
+                                    Text {
+                                        text: bucketRow.label
+                                        color: Theme.textPrimary
+                                        font.pixelSize: Theme.fontBody
+                                        font.weight: bucketRow.selected ? Font.DemiBold : Font.Normal
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        text: bucketRow.balanceLabel
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontCaption
+                                    }
+                                }
+
+                                BucketGauge {
+                                    Layout.fillWidth: true
+                                    visible: bucketRow.hasTarget || bucketRow.hasCap
+                                    showBand: bucketRow.hasTarget
+                                    showCap: bucketRow.hasCap
+                                    bandStart: bucketRow.bandStart
+                                    bandEnd: bucketRow.bandEnd
+                                    balanceMarker: bucketRow.balanceMarker
+                                    capMarker: bucketRow.capMarker
+                                    accent: Theme.bucketColour(bucketRow.colourKey)
+                                }
+
+                                Text {
+                                    text: bucketRow.targetLabel
+                                    color: Theme.textMuted
+                                    font.pixelSize: Theme.fontCaption
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            MouseArea {
+                                id: bucketPointer
+
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: accounts.selectedBucket = bucketRow.index
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.spaceMd
+                        Layout.bottomMargin: Theme.spaceXs
+                        implicitHeight: 1
+                        color: Theme.border
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spaceSm
+
+                        Text {
+                            text: qsTr("Debts")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            font.weight: Font.DemiBold
+                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 0.8
+                            Layout.fillWidth: true
                         }
 
-                        ColumnLayout {
-                            id: bucketContent
+                        PrimaryButton {
+                            text: qsTr("Add debt")
+                            filled: false
+                            onClicked: {
+                                debtName.text = "";
+                                debtKind.currentIndex = 0;
+                                debtRate.text = "";
+                                debtBalance.text = "";
+                                debtError.text = "";
+                                debtDialog.open();
+                                debtName.forceActiveFocus();
+                            }
+                        }
+                    }
 
-                            anchors.fill: parent
-                            anchors.margins: Theme.spaceSm
+                    Repeater {
+                        model: accounts.debts
+
+                        delegate: ColumnLayout {
+                            id: debtRow
+
+                            required property string debtId
+                            required property string name
+                            required property string kindLabel
+                            required property string rateLabel
+                            required property string balanceLabel
+
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceXs
                             spacing: 2
 
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.spaceSm
 
-                                Rectangle {
-                                    implicitWidth: 6
-                                    implicitHeight: 6
-                                    radius: 3
-                                    color: Theme.bucketColour(bucketRow.colourKey)
-                                }
-
                                 Text {
-                                    text: bucketRow.label
+                                    text: debtRow.name
+                                    textFormat: Text.PlainText
                                     color: Theme.textPrimary
                                     font.pixelSize: Theme.fontBody
-                                    font.weight: bucketRow.selected ? Font.DemiBold : Font.Normal
-                                    Layout.fillWidth: true
                                     elide: Text.ElideRight
+                                    Layout.fillWidth: true
                                 }
 
                                 Text {
-                                    text: bucketRow.balanceLabel
+                                    text: debtRow.balanceLabel
                                     color: Theme.textSecondary
                                     font.pixelSize: Theme.fontCaption
                                 }
                             }
 
-                            BucketGauge {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                visible: bucketRow.hasTarget || bucketRow.hasCap
-                                showBand: bucketRow.hasTarget
-                                showCap: bucketRow.hasCap
-                                bandStart: bucketRow.bandStart
-                                bandEnd: bucketRow.bandEnd
-                                balanceMarker: bucketRow.balanceMarker
-                                capMarker: bucketRow.capMarker
-                                accent: Theme.bucketColour(bucketRow.colourKey)
+                                spacing: Theme.spaceSm
+
+                                Text {
+                                    text: qsTr("%1 · %2").arg(debtRow.kindLabel,
+                                                              debtRow.rateLabel)
+                                    color: Theme.textMuted
+                                    font.pixelSize: Theme.fontCaption
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+
+                                PrimaryButton {
+                                    text: qsTr("Remove")
+                                    filled: false
+                                    onClicked: {
+                                        page.pendingDebtId = debtRow.debtId;
+                                        page.pendingDebtName = debtRow.name;
+                                        confirmDebtDialog.open();
+                                    }
+                                }
                             }
-
-                            Text {
-                                text: bucketRow.targetLabel
-                                color: Theme.textMuted
-                                font.pixelSize: Theme.fontCaption
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        MouseArea {
-                            id: bucketPointer
-
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: accounts.selectedBucket = bucketRow.index
                         }
                     }
-                }
 
-                Rectangle {
+                    Text {
+                        visible: accounts.debts.count === 0
+                        text: qsTr("No debts recorded. A mortgage or a loan reduces the "
+                             + "headline figure, so enter them here.")
+                        color: Theme.textMuted
+                        font.pixelSize: Theme.fontCaption
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.spaceXs
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
+            // ---------------------------------------------------------------
+            // Right: the accounts of the selected bucket
+            // ---------------------------------------------------------------
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: Theme.spaceSm
+
+                RowLayout {
                     Layout.fillWidth: true
-                    Layout.topMargin: Theme.spaceMd
-                    Layout.bottomMargin: Theme.spaceXs
-                    implicitHeight: 1
-                    color: Theme.border
+                    spacing: Theme.spaceMd
+
+                    Text {
+                        text: accounts.selectedBucketLabel
+                        color: Theme.textPrimary
+                        font.pixelSize: Theme.fontTitle
+                        font.weight: Font.Light
+                    }
+
+                    Text {
+                        text: accounts.bucketBalanceLabel
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontBody
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                    }
+
+                    PrimaryButton {
+                        text: qsTr("Add account")
+                        onClicked: page.openAccountDialog("", "",
+                                                          accounts.firstKindForBucket(
+                                                              accounts.selectedBucket),
+                                                          accounts.selectedBucket)
+                    }
                 }
 
                 RowLayout {
@@ -221,293 +399,152 @@ Item {
                     spacing: Theme.spaceSm
 
                     Text {
-                        text: qsTr("Debts")
+                        text: accounts.bucketTargetLabel
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontCaption
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        text: accounts.monthLabel
                         color: Theme.textMuted
                         font.pixelSize: Theme.fontCaption
-                        font.weight: Font.DemiBold
-                        font.capitalization: Font.AllUppercase
-                        font.letterSpacing: 0.8
-                        Layout.fillWidth: true
                     }
-
-                    PrimaryButton {
-                        text: qsTr("Add debt")
-                        filled: false
-                        onClicked: {
-                            debtName.text = "";
-                            debtKind.currentIndex = 0;
-                            debtRate.text = "";
-                            debtBalance.text = "";
-                            debtError.text = "";
-                            debtDialog.open();
-                            debtName.forceActiveFocus();
-                        }
-                    }
-                }
-
-                Repeater {
-                    model: accounts.debts
-
-                    delegate: ColumnLayout {
-                        id: debtRow
-
-                        required property string debtId
-                        required property string name
-                        required property string kindLabel
-                        required property string rateLabel
-                        required property string balanceLabel
-
-                        Layout.fillWidth: true
-                        Layout.topMargin: Theme.spaceXs
-                        spacing: 2
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Theme.spaceSm
-
-                            Text {
-                                text: debtRow.name
-                                textFormat: Text.PlainText
-                                color: Theme.textPrimary
-                                font.pixelSize: Theme.fontBody
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-
-                            Text {
-                                text: debtRow.balanceLabel
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontCaption
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Theme.spaceSm
-
-                            Text {
-                                text: qsTr("%1 · %2").arg(debtRow.kindLabel,
-                                                          debtRow.rateLabel)
-                                color: Theme.textMuted
-                                font.pixelSize: Theme.fontCaption
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-
-                            PrimaryButton {
-                                text: qsTr("Remove")
-                                filled: false
-                                onClicked: {
-                                    page.pendingDebtId = debtRow.debtId;
-                                    page.pendingDebtName = debtRow.name;
-                                    confirmDebtDialog.open();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    visible: accounts.debts.count === 0
-                    text: qsTr("No debts recorded. A mortgage or a loan reduces the "
-                         + "headline figure, so enter them here.")
-                    color: Theme.textMuted
-                    font.pixelSize: Theme.fontCaption
-                    Layout.fillWidth: true
-                    Layout.topMargin: Theme.spaceXs
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Right: the accounts of the selected bucket
-        // ---------------------------------------------------------------
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: Theme.spaceSm
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spaceMd
-
-                Text {
-                    text: accounts.selectedBucketLabel
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontTitle
-                    font.weight: Font.Light
-                }
-
-                Text {
-                    text: accounts.bucketBalanceLabel
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontBody
-                }
-
-                Item {
-                    Layout.fillWidth: true
                 }
 
                 PrimaryButton {
-                    text: qsTr("Add account")
-                    onClicked: page.openAccountDialog("", "",
-                                                      accounts.firstKindForBucket(
-                                                          accounts.selectedBucket),
-                                                      accounts.selectedBucket)
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spaceSm
-
-                Text {
-                    text: accounts.bucketTargetLabel
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontCaption
                     Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    text: accounts.monthLabel
-                    color: Theme.textMuted
-                    font.pixelSize: Theme.fontCaption
-                }
-            }
-
-            PrimaryButton {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spaceXs
-                text: qsTr("Record this month's balances")
-                filled: false
-                enabled: accounts.accounts.count > 0
-                onClicked: {
-                    monthError.text = "";
-                    monthDialog.open();
-                }
-            }
-
-            ScrollView {
-                id: accountScroll
-
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.topMargin: Theme.spaceSm
-                clip: true
-                contentWidth: availableWidth
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                ColumnLayout {
-                    width: accountScroll.availableWidth
-                    spacing: Theme.spaceSm
-
-                    Text {
-                        visible: accounts.accounts.count === 0
-                        text: qsTr("Nothing in this bucket yet. Add an account, or pick "
-                             + "another bucket on the left.")
-                        color: Theme.textMuted
-                        font.pixelSize: Theme.fontBody
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
+                    Layout.topMargin: Theme.spaceXs
+                    text: qsTr("Record this bucket's balances")
+                    filled: false
+                    enabled: accounts.accounts.count > 0
+                    onClicked: {
+                        monthError.text = "";
+                        monthDialog.open();
                     }
+                }
 
-                    Repeater {
-                        model: accounts.accounts
+                ScrollView {
+                    id: accountScroll
 
-                        delegate: Rectangle {
-                            id: accountCard
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.topMargin: Theme.spaceSm
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                            required property string accountId
-                            required property string name
-                            required property int kindIndex
-                            required property string kindLabel
-                            required property int bucketIndex
-                            required property string bucketLabel
-                            required property string balanceLabel
-                            required property string monthLabel
-                            required property bool hasMonthValue
+                    ColumnLayout {
+                        width: accountScroll.availableWidth
+                        spacing: Theme.spaceSm
 
+                        Text {
+                            visible: accounts.accounts.count === 0
+                            text: qsTr("Nothing in this bucket yet. Add an account, or pick "
+                                 + "another bucket on the left.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontBody
                             Layout.fillWidth: true
-                            implicitHeight: cardContent.implicitHeight + 2 * Theme.spaceMd
-                            radius: Theme.radius
-                            color: Theme.surface
-                            border.color: Theme.border
-                            border.width: 1
+                            wrapMode: Text.WordWrap
+                        }
 
-                            ColumnLayout {
-                                id: cardContent
+                        Repeater {
+                            model: accounts.accounts
 
-                                anchors.fill: parent
-                                anchors.margins: Theme.spaceMd
-                                spacing: Theme.spaceXs
+                            delegate: Rectangle {
+                                id: accountCard
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: Theme.spaceMd
+                                required property string accountId
+                                required property string name
+                                required property int kindIndex
+                                required property string kindLabel
+                                required property int bucketIndex
+                                required property string bucketLabel
+                                required property string balanceLabel
+                                required property string monthLabel
+                                required property bool hasMonthValue
+
+                                Layout.fillWidth: true
+                                implicitHeight: cardContent.implicitHeight + 2 * Theme.spaceMd
+                                radius: Theme.radius
+                                color: Theme.surface
+                                border.color: Theme.border
+                                border.width: 1
+
+                                ColumnLayout {
+                                    id: cardContent
+
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spaceMd
+                                    spacing: Theme.spaceXs
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spaceMd
+
+                                        Text {
+                                            text: accountCard.name
+                                            textFormat: Text.PlainText
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontBody
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Text {
+                                            text: accountCard.balanceLabel
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontBody
+                                        }
+                                    }
 
                                     Text {
-                                        text: accountCard.name
-                                        textFormat: Text.PlainText
-                                        color: Theme.textPrimary
-                                        font.pixelSize: Theme.fontBody
-                                        font.weight: Font.DemiBold
+                                        text: qsTr("%1 · %2 · this month: %3")
+                                                  .arg(accountCard.kindLabel, accountCard.bucketLabel,
+                                                       accountCard.monthLabel)
+                                        color: accountCard.hasMonthValue ? Theme.textSecondary
+                                                                         : Theme.textMuted
+                                        font.pixelSize: Theme.fontCaption
+                                        Layout.fillWidth: true
                                         elide: Text.ElideRight
+                                    }
+
+                                    RowLayout {
                                         Layout.fillWidth: true
-                                    }
+                                        Layout.topMargin: Theme.spaceXs
+                                        spacing: Theme.spaceSm
 
-                                    Text {
-                                        text: accountCard.balanceLabel
-                                        color: Theme.textPrimary
-                                        font.pixelSize: Theme.fontBody
-                                    }
-                                }
+                                        PrimaryButton {
+                                            text: qsTr("Edit")
+                                            filled: false
+                                            onClicked: page.openAccountDialog(accountCard.accountId,
+                                                                              accountCard.name,
+                                                                              accountCard.kindIndex,
+                                                                              accountCard.bucketIndex)
+                                        }
 
-                                Text {
-                                    text: qsTr("%1 · %2 · this month: %3")
-                                              .arg(accountCard.kindLabel, accountCard.bucketLabel,
-                                                   accountCard.monthLabel)
-                                    color: accountCard.hasMonthValue ? Theme.textSecondary
-                                                                     : Theme.textMuted
-                                    font.pixelSize: Theme.fontCaption
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                }
+                                        PrimaryButton {
+                                            text: qsTr("Record value")
+                                            filled: false
+                                            onClicked: page.openValuationDialog(accountCard.accountId,
+                                                                                 accountCard.name)
+                                        }
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.topMargin: Theme.spaceXs
-                                    spacing: Theme.spaceSm
+                                        Item {
+                                            Layout.fillWidth: true
+                                        }
 
-                                    PrimaryButton {
-                                        text: qsTr("Edit")
-                                        filled: false
-                                        onClicked: page.openAccountDialog(accountCard.accountId,
-                                                                          accountCard.name,
-                                                                          accountCard.kindIndex,
-                                                                          accountCard.bucketIndex)
-                                    }
-
-                                    PrimaryButton {
-                                        text: qsTr("Record value")
-                                        filled: false
-                                        onClicked: page.openValuationDialog(accountCard.accountId,
-                                                                             accountCard.name)
-                                    }
-
-                                    Item {
-                                        Layout.fillWidth: true
-                                    }
-
-                                    PrimaryButton {
-                                        text: qsTr("Delete")
-                                        filled: false
-                                        destructive: true
-                                        onClicked: {
-                                            page.pendingAccountId = accountCard.accountId;
-                                            page.pendingAccountName = accountCard.name;
-                                            confirmAccountDialog.open();
+                                        PrimaryButton {
+                                            text: qsTr("Delete")
+                                            filled: false
+                                            destructive: true
+                                            onClicked: {
+                                                page.pendingAccountId = accountCard.accountId;
+                                                page.pendingAccountName = accountCard.name;
+                                                confirmAccountDialog.open();
+                                            }
                                         }
                                     }
                                 }
@@ -515,16 +552,16 @@ Item {
                         }
                     }
                 }
-            }
 
-            Text {
-                visible: page.pageError.length > 0
-                text: page.pageError
-                textFormat: Text.PlainText
-                color: Theme.danger
-                font.pixelSize: Theme.fontCaption
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                Text {
+                    visible: page.pageError.length > 0
+                    text: page.pageError
+                    textFormat: Text.PlainText
+                    color: Theme.danger
+                    font.pixelSize: Theme.fontCaption
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
             }
         }
     }

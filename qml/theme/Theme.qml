@@ -60,6 +60,20 @@ QtObject {
         }
     }
 
+    // The colour of a step's status in the update flow: done, half-done, or
+    // not touched, which is what "Saved", "Unsaved changes" and "Not updated"
+    // mean.
+    function statusColour(key: string): color {
+        switch (key) {
+        case "saved":
+            return positive;
+        case "unsaved":
+            return warning;
+        default:
+            return textMuted;
+        }
+    }
+
     function severityColour(key: string): color {
         switch (key) {
         case "critical":

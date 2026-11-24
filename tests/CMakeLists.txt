@@ -47,6 +47,7 @@ hinkwise_add_test(tst_rebalance domain/tst_rebalance.cpp)
 
 hinkwise_add_application_test(tst_dashboard application/tst_dashboard.cpp)
 hinkwise_add_application_test(tst_use_cases application/tst_use_cases.cpp)
+hinkwise_add_application_test(tst_update_flow application/tst_update_flow.cpp)
 
 hinkwise_add_presentation_test(tst_input_text presentation/tst_input_text.cpp)
 hinkwise_add_presentation_test(tst_cashflow_series presentation/tst_cashflow_series.cpp)
@@ -71,6 +72,7 @@ add_executable(tst_setup_flow
     ${CMAKE_SOURCE_DIR}/src/presentation/plan_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/projection_series.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/review_view_model.cpp
+    ${CMAKE_SOURCE_DIR}/src/presentation/update_flow_view_model.cpp
     ${CMAKE_SOURCE_DIR}/src/presentation/wizard_view_model.cpp
 )
 target_link_libraries(tst_setup_flow PRIVATE

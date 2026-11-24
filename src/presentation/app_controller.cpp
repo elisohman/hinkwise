@@ -365,6 +365,20 @@ std::optional<domain::Money> AppController::assetBalanceAt(std::string_view asse
     return loaded.ok() ? loaded.value() : std::nullopt;
 }
 
+std::vector<application::MoneyPoint> AppController::assetHistory(std::string_view assetId) const
+{
+    if (!m_valuations)
+        return {};
+    return rowsOrEmpty(m_valuations->history(assetId));
+}
+
+std::vector<application::MoneyPoint> AppController::debtHistory(std::string_view liabilityId) const
+{
+    if (!m_debtBalances)
+        return {};
+    return rowsOrEmpty(m_debtBalances->history(liabilityId));
+}
+
 std::optional<domain::Money> AppController::latestDebtBalance(std::string_view liabilityId) const
 {
     if (!m_debtBalances)
@@ -403,7 +417,8 @@ application::Status AppController::report(application::Status status)
     return status;
 }
 
-application::Status AppController::createHousehold(domain::Currency currency, domain::Phase phase)
+application::Status AppController::createHousehold(domain::Currency currency, domain::Phase phase,
+                                                   domain::TrackingMode trackingMode)
 {
     if (!m_profiles)
         return application::Status::err(toStd(tr("The database is not open.")));
@@ -415,7 +430,9 @@ application::Status AppController::createHousehold(domain::Currency currency, do
     if (!created.ok())
         return application::Status::err(created.error());
 
-    return report(m_profiles->save(created.value()));
+    domain::Profile profile = created.value();
+    profile.trackingMode = trackingMode;
+    return report(m_profiles->save(profile));
 }
 
 application::Status AppController::addAsset(const domain::Asset& asset)

@@ -127,6 +127,19 @@ class DashboardViewModel : public QObject {
 
     Q_PROPERTY(bool hasProfile READ hasProfile NOTIFY changed)
     Q_PROPERTY(QString monthLabel READ monthLabel NOTIFY changed)
+    /// What the record says about the household's two inputs, worded here so
+    /// QML only has to place it: the headline names the month or months that
+    /// are on record, and the note says what is missing or how old it is.
+    Q_PROPERTY(QString inputStatusHeadline READ inputStatusHeadline NOTIFY changed)
+    Q_PROPERTY(QString inputStatusNote READ inputStatusNote NOTIFY changed)
+    /// The action the status block offers, named for the tracking mode:
+    /// "Update finances" for a monthly record, "Update budget" for a standing
+    /// budget.
+    Q_PROPERTY(QString updateActionLabel READ updateActionLabel NOTIFY changed)
+    /// True when nothing needs doing about the inputs. The screen uses it only
+    /// to quieten the status block, never to hide it: the recurring task is
+    /// part of the page whether or not it is due.
+    Q_PROPERTY(bool inputsUpToDate READ inputsUpToDate NOTIFY changed)
     Q_PROPERTY(QString phaseLabel READ phaseLabel NOTIFY changed)
     Q_PROPERTY(QString currencyLabel READ currencyLabel NOTIFY changed)
     Q_PROPERTY(double yearsOfFreedom READ yearsOfFreedom NOTIFY changed)
@@ -161,6 +174,10 @@ public:
 
     bool hasProfile() const { return m_hasProfile; }
     QString monthLabel() const { return m_monthLabel; }
+    QString inputStatusHeadline() const { return m_inputStatusHeadline; }
+    QString inputStatusNote() const { return m_inputStatusNote; }
+    QString updateActionLabel() const { return m_updateActionLabel; }
+    bool inputsUpToDate() const { return m_inputsUpToDate; }
     QString phaseLabel() const { return m_phaseLabel; }
     QString currencyLabel() const { return m_currencyLabel; }
     double yearsOfFreedom() const { return m_yearsOfFreedom; }
@@ -193,11 +210,20 @@ signals:
 private:
     void apply(const application::DashboardSnapshot& snapshot);
 
+    /// "one month", "8 months": the age of the record, in words and for a
+    /// sentence rather than for a field.
+    QString monthsAgoLabel(int months) const;
     QString monthsLabel(domain::Percentage months) const;
     QString percentLabel(domain::Percentage percentage) const;
+    /// Rebuilds the three status strings from the snapshot's provenance.
+    void applyInputStatus(const application::DashboardSnapshot& snapshot);
 
     bool m_hasProfile = false;
     QString m_monthLabel;
+    QString m_inputStatusHeadline;
+    QString m_inputStatusNote;
+    QString m_updateActionLabel;
+    bool m_inputsUpToDate = false;
     QString m_phaseLabel;
     QString m_currencyLabel;
     double m_yearsOfFreedom = 0.0;

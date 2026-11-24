@@ -5,6 +5,7 @@
 
 #include <QChar>
 #include <QCoreApplication>
+#include <QDate>
 #include <QLocale>
 #include <QString>
 #include <QStringList>
@@ -215,6 +216,12 @@ QString formatPercentage(domain::Percentage percentage)
     const QLocale locale;
     return message("%1 %").arg(
         locale.toString(static_cast<double>(percentage.basisPoints()) / 100.0, 'f', 2));
+}
+
+QString formatMonth(domain::YearMonth month, const QString& format)
+{
+    const QDate date{month.year(), static_cast<int>(month.month()), 1};
+    return QLocale{}.toString(date, format);
 }
 
 MoneyInput parseMoneyInput(const QString& text, domain::Currency currency)

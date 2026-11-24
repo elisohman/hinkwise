@@ -19,9 +19,16 @@ import Hinkwise
 Item {
     id: page
 
+    /// The review is the page's own state, because the Overview opens it too.
     property bool showingReview: false
 
+    /// What the update action is called in the tracking mode in force. Main
+    /// passes it down from the dashboard, which is the one place that knows
+    /// which mode the household chose.
+    required property string updateActionLabel
+
     signal navigateRequested(int index)
+    signal updateRequested()
 
     // The projection as the domain computed it: stacked bands per bucket, one
     // line along the top for the total, the FI target as a mark, and the year
@@ -559,15 +566,35 @@ Item {
                                     note: qsTr("%1 years").arg(plan.horizonYears)
                                 }
 
-                                Text {
-                                    visible: plan.chartEmpty
-                                    text: qsTr("There is nothing to project yet. Record what you "
-                                         + "own and what you save, and the curve starts at today's "
-                                         + "balances.")
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontBody
+                                // The projection without its inputs: what it needs,
+                                // and the way to enter it, rather than a bare
+                                // absence.
+                                ColumnLayout {
                                     Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
+                                    visible: plan.chartEmpty
+                                    spacing: Theme.spaceSm
+
+                                    Text {
+                                        text: qsTr("No projection yet")
+                                        color: Theme.textPrimary
+                                        font.pixelSize: Theme.fontTitle
+                                        font.weight: Font.Light
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text {
+                                        text: qsTr("Record your accounts and a month of cashflow "
+                                             + "and the plan can project from there.")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontBody
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    PrimaryButton {
+                                        text: page.updateActionLabel
+                                        onClicked: page.updateRequested()
+                                    }
                                 }
 
                                 ProjectionChart {

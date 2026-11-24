@@ -6,6 +6,7 @@
 #include "domain/asset.h"
 #include "domain/bucket.h"
 #include "domain/liability.h"
+#include "domain/profile.h"
 
 #include <QString>
 #include <QStringList>
@@ -27,6 +28,13 @@ QString bucketLabel(domain::Bucket bucket);
 /// The untranslated handle the theme colours a bucket by, so every page that
 /// draws one reads the same key out of the same function.
 QString bucketColourKey(domain::Bucket bucket);
+
+/// The two ways of keeping a record, as settings and onboarding offer them:
+/// the name of the choice, and the two sentences that tell them apart. One
+/// source for both screens, so the same choice is never described differently
+/// in a wizard and in settings.
+QString trackingModeLabel(domain::TrackingMode mode);
+QString trackingModeDescription(domain::TrackingMode mode);
 
 /// Every label, in the domain's order, ready for a picker whose index is the
 /// enum value.

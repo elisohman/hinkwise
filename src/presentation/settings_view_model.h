@@ -63,6 +63,16 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(bool comparisonChanges READ comparisonChanges NOTIFY changed)
     Q_PROPERTY(QString phaseError READ phaseError NOTIFY changed)
 
+    /// How the household keeps its record. The two modes read the same data
+    /// and differ in what an old month means, so the choice belongs here next
+    /// to the phase: both are statements about how the household lives, not
+    /// figures.
+    Q_PROPERTY(
+        int trackingModeIndex READ trackingModeIndex WRITE setTrackingModeIndex NOTIFY changed)
+    Q_PROPERTY(QVariantList trackingModeChoices READ trackingModeChoices CONSTANT)
+    Q_PROPERTY(bool trackingModeDirty READ trackingModeDirty NOTIFY changed)
+    Q_PROPERTY(QString trackingModeError READ trackingModeError NOTIFY changed)
+
     Q_PROPERTY(QString displayNameText READ displayNameText WRITE setDisplayNameText NOTIFY changed)
     Q_PROPERTY(QString displayNameError READ displayNameError NOTIFY changed)
     Q_PROPERTY(bool displayNameDirty READ displayNameDirty NOTIFY changed)
@@ -123,6 +133,14 @@ public:
     /// Closes the sheet and forgets the pending phase.
     Q_INVOKABLE void cancelPhaseChange();
 
+    /// Saves the chosen tracking mode through the profile-save path, which is
+    /// what makes every screen talk about an old month differently. Returns
+    /// the reason it could not.
+    Q_INVOKABLE QString saveTrackingMode();
+
+    /// Puts the choice back to the stored one.
+    Q_INVOKABLE void discardTrackingMode();
+
     /// Saves the name the page collected. Returns the reason it could not.
     Q_INVOKABLE QString saveDisplayName();
 
@@ -166,6 +184,11 @@ public:
     bool comparisonChanges() const;
     QString phaseError() const { return m_phaseError; }
 
+    int trackingModeIndex() const { return m_trackingModeIndex; }
+    QVariantList trackingModeChoices() const;
+    bool trackingModeDirty() const;
+    QString trackingModeError() const { return m_trackingModeError; }
+
     QString displayNameText() const { return m_displayNameText; }
     QString displayNameError() const { return m_displayNameError; }
     bool displayNameDirty() const;
@@ -199,6 +222,7 @@ public:
     QString qtVersion() const;
 
     void setDisplayNameText(const QString& text);
+    void setTrackingModeIndex(int index);
     void setBufferTargetPosition(int position);
     void setSafeWithdrawalRateText(const QString& text);
     void setCapitalTaxDragText(const QString& text);
@@ -219,6 +243,7 @@ private:
     /// dashboard falls back to the Swedish constants for it, so the fields have
     /// to show those same constants.
     domain::Jurisdiction jurisdiction() const;
+    domain::TrackingMode selectedTrackingMode() const;
     void fillJurisdictionTexts();
 
     QVariantList phaseHistoryRows() const;
@@ -233,6 +258,12 @@ private:
 
     QString m_displayNameText;
     QString m_displayNameError;
+
+    /// The wizard's default, which is where a profile with no choice yet
+    /// stands: a fresh household greeted with staleness warnings on its second
+    /// day would be told off for a choice it never made.
+    int m_trackingModeIndex = static_cast<int>(domain::TrackingMode::Planning);
+    QString m_trackingModeError;
 
     int m_bufferTargetPosition = 5000;
     QString m_bufferTargetError;

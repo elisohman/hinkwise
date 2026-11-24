@@ -5,6 +5,7 @@
 
 #include "domain/money.h"
 #include "domain/percentage.h"
+#include "domain/year_month.h"
 
 #include <QString>
 
@@ -28,6 +29,11 @@ QString formatMoneyPlain(const domain::Money& amount);
 
 /// "4,50 %" - an interest rate in the user's own notation.
 QString formatPercentage(domain::Percentage percentage);
+
+/// A month in the user's own notation, in the format the caller asks for:
+/// "October 2026" for a sentence, "Oct" for an axis. Every screen names a
+/// month the same way, so two pages cannot spell the same month differently.
+QString formatMonth(domain::YearMonth month, const QString& format);
 
 /// A string that has been read as money, or the reason it could not be.
 struct MoneyInput {

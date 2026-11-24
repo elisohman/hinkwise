@@ -304,6 +304,8 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_savingsRateLabel = percentLabel(snapshot.metrics.savingsRate);
     m_fiProgressLabel = percentLabel(snapshot.metrics.fiProgress);
 
+    applyInputStatus(snapshot);
+
     m_buckets->setRows(bucketRowsOf(snapshot));
 
     QVector<InsightRow> insightRows;
@@ -321,6 +323,90 @@ void DashboardViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_insights->setRows(std::move(insightRows));
 
     emit changed();
+}
+
+void DashboardViewModel::applyInputStatus(const application::DashboardSnapshot& snapshot)
+{
+    const application::InputStatus status = application::inputStatusOf(snapshot);
+    const QString monthFormat = QStringLiteral("MMMM yyyy");
+    const QString balanceMonth =
+        status.balanceMonth ? formatMonth(*status.balanceMonth, monthFormat) : QString{};
+    const QString flowMonth =
+        status.flowMonth ? formatMonth(*status.flowMonth, monthFormat) : QString{};
+
+    m_updateActionLabel = snapshot.profile.trackingMode == domain::TrackingMode::Planning
+                              ? tr("Update budget")
+                              : tr("Update finances");
+
+    // One date is only claimed when both sides carry it. Two months stay two
+    // months: naming the later one as "current" would hide the gap.
+    switch (status.kind) {
+    case application::InputStatus::Kind::Empty:
+        m_inputStatusHeadline = tr("Add what you own and owe");
+        m_inputStatusNote = tr("Expenses size your bucket targets; savings shape the plan.");
+        break;
+    case application::InputStatus::Kind::NoFlow:
+        m_inputStatusHeadline =
+            tr("Balances recorded through %1; no cashflow yet.").arg(balanceMonth);
+        m_inputStatusNote = tr("The buckets are sized from what you spend, so a month of "
+                               "cashflow is what turns balances into a plan.");
+        break;
+    case application::InputStatus::Kind::NoBalances:
+        m_inputStatusHeadline = tr("Cashflow recorded for %1; no balances yet.").arg(flowMonth);
+        m_inputStatusNote = tr("The plan projects from what you own and owe, so it needs "
+                               "the accounts as well as the month.");
+        break;
+    case application::InputStatus::Kind::BothCurrent:
+        m_inputStatusHeadline = tr("Balances and cashflow are current for %1.").arg(flowMonth);
+        break;
+    case application::InputStatus::Kind::BothEarlier:
+        m_inputStatusHeadline = tr("Balances and cashflow are recorded for %1.").arg(flowMonth);
+        break;
+    case application::InputStatus::Kind::TwoMonths:
+        m_inputStatusHeadline =
+            tr("Balances recorded through %1; cashflow for %2.").arg(balanceMonth, flowMonth);
+        break;
+    }
+
+    // The age of the record is the one thing the two tracking modes read
+    // differently: a hole to fill, or a budget that is simply old. When
+    // nothing is old, the note says what the household is looking at instead
+    // of claiming more than the record holds.
+    if (status.kind != application::InputStatus::Kind::Empty &&
+        status.kind != application::InputStatus::Kind::NoFlow &&
+        status.kind != application::InputStatus::Kind::NoBalances) {
+        const bool old = snapshot.freshness == application::InputFreshness::Ageing ||
+                         snapshot.freshness == application::InputFreshness::Stale;
+        if (old) {
+            // The older of the two sides is what makes the pair old, so it is
+            // the one the sentence counts.
+            const int oldest = std::max(snapshot.monthsSinceBalance.value_or(0),
+                                        snapshot.monthsSinceFlow.value_or(0));
+            m_inputStatusNote =
+                snapshot.profile.trackingMode == domain::TrackingMode::Accounting
+                    ? tr("One or more months are missing.")
+                    : tr("Your budget was last set %1 ago.").arg(monthsAgoLabel(oldest));
+        } else if (status.kind == application::InputStatus::Kind::TwoMonths) {
+            m_inputStatusNote =
+                tr("The balances and the cashflow were recorded in different months.");
+        } else if (status.kind == application::InputStatus::Kind::BothEarlier) {
+            m_inputStatusNote = tr("Both are recorded for that month; update them when "
+                                   "something changes.");
+        } else {
+            m_inputStatusNote = tr("Both were recorded this month, so nothing is waiting.");
+        }
+    }
+
+    m_inputsUpToDate = (status.kind == application::InputStatus::Kind::BothCurrent ||
+                        status.kind == application::InputStatus::Kind::BothEarlier) &&
+                       snapshot.freshness == application::InputFreshness::Fresh;
+}
+
+QString DashboardViewModel::monthsAgoLabel(int months) const
+{
+    if (months <= 1)
+        return tr("one month");
+    return tr("%1 months").arg(QLocale{}.toString(months));
 }
 
 QString DashboardViewModel::monthsLabel(domain::Percentage months) const

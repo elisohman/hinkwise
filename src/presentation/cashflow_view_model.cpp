@@ -198,13 +198,6 @@ QString CashflowViewModel::currencyCode() const
     return QString::fromLatin1(domain::isoCodeOf(m_currency));
 }
 
-QString CashflowViewModel::monthLabel(domain::YearMonth month, const QString& format) const
-{
-    const QLocale locale;
-    const QDate date{month.year(), static_cast<int>(month.month()), 1};
-    return locale.toString(date, format);
-}
-
 void CashflowViewModel::reload()
 {
     reloadFromStore(dirty());
@@ -219,7 +212,12 @@ void CashflowViewModel::reloadFromStore(bool keepDraft)
     m_currency = snapshot.profile.baseCurrency;
 
     const domain::YearMonth current = AppController::currentMonth();
-    m_currentMonthLabel = monthLabel(current, QStringLiteral("MMMM yyyy"));
+    m_currentMonthLabel = formatMonth(current, QStringLiteral("MMMM yyyy"));
+    // Unpinned, the form follows the calendar. Pinned, it stays on the month
+    // the update flow is recording, which may be any past one.
+    if (!m_editingPinned)
+        m_editingMonth = current;
+    m_editingMonthLabel = formatMonth(m_editingMonth, QStringLiteral("MMMM yyyy"));
 
     const std::vector<application::MonthFlowRecord> records =
         controller != nullptr ? controller->recentFlows(kHistoryMonths)
@@ -232,21 +230,32 @@ void CashflowViewModel::reloadFromStore(bool keepDraft)
     if (m_selectedMonth < first || current < m_selectedMonth)
         m_selectedMonth = current;
 
-    // The editable fields always describe the current month, whichever month
-    // of the strip is being read above them.
+    // The editable fields describe the month they write to, whichever month of
+    // the strip is being read above them. A month older than the twelve the
+    // strip holds is still found, because the month is the key it is stored
+    // under.
     const auto currentRecord =
-        std::find_if(records.cbegin(), records.cend(), [this, &current](const auto& record) {
-            return record.month == current && record.flow.income.currency() == m_currency;
+        std::find_if(records.cbegin(), records.cend(), [this](const auto& record) {
+            return record.month == m_editingMonth && record.flow.income.currency() == m_currency;
         });
-    const bool hasCurrentFlow = currentRecord != records.cend();
-    const domain::MonthFlow empty{};
-    const domain::MonthFlow& flow = hasCurrentFlow ? currentRecord->flow : empty;
+    domain::MonthFlow loaded{};
+    bool hasEditingFlow = currentRecord != records.cend();
+    if (hasEditingFlow) {
+        loaded = currentRecord->flow;
+    } else if (controller != nullptr) {
+        const std::optional<domain::MonthFlow> stored = controller->monthFlow(m_editingMonth);
+        hasEditingFlow = stored.has_value() && stored->income.currency() == m_currency;
+        if (hasEditingFlow)
+            loaded = *stored;
+    }
+    m_editingRecorded = hasEditingFlow;
+    const domain::MonthFlow& flow = loaded;
 
-    const QString loadedIncome = hasCurrentFlow ? formatMoneyPlain(flow.income) : QString{};
-    const QString loadedNeeds = hasCurrentFlow ? formatMoneyPlain(flow.needs) : QString{};
-    const QString loadedWants = hasCurrentFlow ? formatMoneyPlain(flow.wants) : QString{};
-    const QString loadedSaving = hasCurrentFlow ? formatMoneyPlain(flow.saving) : QString{};
-    const bool hasSplit = hasCurrentFlow && flow.savingSplit.has_value();
+    const QString loadedIncome = hasEditingFlow ? formatMoneyPlain(flow.income) : QString{};
+    const QString loadedNeeds = hasEditingFlow ? formatMoneyPlain(flow.needs) : QString{};
+    const QString loadedWants = hasEditingFlow ? formatMoneyPlain(flow.wants) : QString{};
+    const QString loadedSaving = hasEditingFlow ? formatMoneyPlain(flow.saving) : QString{};
+    const bool hasSplit = hasEditingFlow && flow.savingSplit.has_value();
     const QString loadedBuffer =
         hasSplit ? formatMoneyPlain(flow.savingSplit->toBuffer) : QString{};
     const QString loadedInvesting =
@@ -278,7 +287,7 @@ void CashflowViewModel::reloadFromStore(bool keepDraft)
     // The note under the form describes the month the form edits, not the
     // month the history strip happens to have selected above it.
     m_savingNote.clear();
-    if (hasCurrentFlow) {
+    if (hasEditingFlow) {
         const IncomeSplit currentSplit = incomeSplitOf(flow);
         const int rate = static_cast<int>(std::lround(currentSplit.saving.asFraction() * 100.0));
         if (currentSplit.saving < kSavingFloorReference)
@@ -307,8 +316,8 @@ void CashflowViewModel::applySelection(const QVector<FlowMonth>& months)
     for (int index = 0; index < months.size(); ++index) {
         const FlowMonth& month = months.at(index);
         HistoryColumn column;
-        column.label = monthLabel(month.month, QStringLiteral("MMM"));
-        column.fullLabel = monthLabel(month.month, QStringLiteral("MMMM yyyy"));
+        column.label = formatMonth(month.month, QStringLiteral("MMM"));
+        column.fullLabel = formatMonth(month.month, QStringLiteral("MMMM yyyy"));
         column.recorded = month.recorded;
         column.needsRatio = month.needsShare.asFraction();
         column.wantsRatio = month.wantsShare.asFraction();
@@ -324,7 +333,7 @@ void CashflowViewModel::applySelection(const QVector<FlowMonth>& months)
     if (selectedRow >= 0)
         m_history->setSelected(selectedRow);
 
-    m_selectedMonthLabel = monthLabel(m_selectedMonth, QStringLiteral("MMMM yyyy"));
+    m_selectedMonthLabel = formatMonth(m_selectedMonth, QStringLiteral("MMMM yyyy"));
     m_selectedRecorded = selected.recorded;
     m_selectedSavingsRateLabel =
         selected.recorded ? percentLabel(selected.savingShare, 1) : QString{};
@@ -396,9 +405,9 @@ void CashflowViewModel::applySelection(const QVector<FlowMonth>& months)
                         {QStringLiteral("label"), percentLabel(kSavingGoalReference, 0)}});
     }
     m_savingsFirstLabel =
-        months.isEmpty() ? QString{} : monthLabel(months.front().month, QStringLiteral("MMM"));
+        months.isEmpty() ? QString{} : formatMonth(months.front().month, QStringLiteral("MMM"));
     m_savingsLastLabel =
-        months.isEmpty() ? QString{} : monthLabel(months.back().month, QStringLiteral("MMM"));
+        months.isEmpty() ? QString{} : formatMonth(months.back().month, QStringLiteral("MMM"));
 }
 
 void CashflowViewModel::selectMonth(int index)
@@ -428,7 +437,7 @@ QString CashflowViewModel::saveMonth()
     }
 
     if (m_incomeText.trimmed().isEmpty()) {
-        m_saveError = tr("Enter this month's income.");
+        m_saveError = tr("Enter the month's income.");
         emit changed();
         return m_saveError;
     }
@@ -486,7 +495,7 @@ QString CashflowViewModel::saveMonth()
         return m_saveError;
     }
 
-    const application::Status status = controller->recordMonth(AppController::currentMonth(), flow);
+    const application::Status status = controller->recordMonth(m_editingMonth, flow);
     if (!status.ok()) {
         m_saveError = QString::fromStdString(status.error());
         emit changed();
@@ -496,9 +505,23 @@ QString CashflowViewModel::saveMonth()
     m_saveError.clear();
     // The draft is now what is stored, in the formatters' canonical spelling.
     reloadFromStore(false);
-    m_savedNote = tr("Recorded %1.").arg(m_currentMonthLabel);
+    m_savedNote = tr("Recorded %1.").arg(m_editingMonthLabel);
     emit changed();
     return {};
+}
+
+void CashflowViewModel::setEditingMonth(domain::YearMonth month)
+{
+    // A future month is not an entry that is late, it is one that cannot exist:
+    // the form writes to the current month or an earlier one.
+    const domain::YearMonth current = AppController::currentMonth();
+    const domain::YearMonth chosen = current < month ? current : month;
+    if (m_editingPinned && chosen == m_editingMonth)
+        return;
+
+    m_editingMonth = chosen;
+    m_editingPinned = true;
+    reloadFromStore(false);
 }
 
 void CashflowViewModel::discardMonth()

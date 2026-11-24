@@ -76,6 +76,7 @@ private slots:
     void exportNeedsAFile();
     void bufferTargetFollowsTheBandAndSaves();
     void draftsSurviveReloadAndDiscard();
+    void trackingModeOffersBothChoicesAndPersists();
 
 private:
     QTemporaryDir m_dataDirectory;
@@ -547,6 +548,50 @@ void TestSettingsFlow::draftsSurviveReloadAndDiscard()
     settings.discardBufferTarget();
     QCOMPARE(settings.bufferTargetPosition(), 2500);
     QVERIFY(!settings.bufferTargetDirty());
+}
+
+void TestSettingsFlow::trackingModeOffersBothChoicesAndPersists()
+{
+    SettingsViewModel settings;
+
+    // Two choices, each with the sentences that tell them apart. The list is
+    // ordered accounting first, planning second, and the profile starts on
+    // planning.
+    const QVariantList choices = settings.trackingModeChoices();
+    QCOMPARE(choices.size(), 2);
+    QVERIFY(!choices.at(0).toMap().value(QStringLiteral("label")).toString().isEmpty());
+    QVERIFY(!choices.at(0).toMap().value(QStringLiteral("description")).toString().isEmpty());
+    QCOMPARE(settings.trackingModeIndex(), static_cast<int>(domain::TrackingMode::Planning));
+    QVERIFY(!settings.trackingModeDirty());
+
+    // Choosing another mode writes nothing until Save.
+    settings.setTrackingModeIndex(static_cast<int>(domain::TrackingMode::Accounting));
+    QVERIFY(settings.trackingModeDirty());
+    QCOMPARE(static_cast<int>(m_controller->profile()->trackingMode),
+             static_cast<int>(domain::TrackingMode::Planning));
+
+    QCOMPARE(settings.saveTrackingMode(), QString{});
+    QVERIFY(!settings.trackingModeDirty());
+    QCOMPARE(static_cast<int>(m_controller->profile()->trackingMode),
+             static_cast<int>(domain::TrackingMode::Accounting));
+
+    // And it is what the rest of the application reads: accounting calls a
+    // missed month a gap.
+    QCOMPARE(static_cast<int>(m_controller->dashboardSnapshot().profile.trackingMode),
+             static_cast<int>(domain::TrackingMode::Accounting));
+
+    // Discard puts the choice back without writing.
+    settings.setTrackingModeIndex(static_cast<int>(domain::TrackingMode::Planning));
+    QVERIFY(settings.trackingModeDirty());
+    settings.discardTrackingMode();
+    QVERIFY(!settings.trackingModeDirty());
+    QCOMPARE(settings.trackingModeIndex(), static_cast<int>(domain::TrackingMode::Accounting));
+
+    // Leave the fixture on the mode it started in.
+    settings.setTrackingModeIndex(static_cast<int>(domain::TrackingMode::Planning));
+    QCOMPARE(settings.saveTrackingMode(), QString{});
+    QCOMPARE(static_cast<int>(m_controller->profile()->trackingMode),
+             static_cast<int>(domain::TrackingMode::Planning));
 }
 
 QTEST_GUILESS_MAIN(TestSettingsFlow)

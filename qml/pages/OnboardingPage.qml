@@ -28,8 +28,9 @@ Item {
     readonly property var stepNotes: [
         qsTr("Every figure in Hinkwise is in this currency. It travels with each "
              + "amount, so nothing has to be guessed later."),
-        qsTr("The phase decides the sizing table, not the size of your income. "
-             + "You can change it whenever your situation does."),
+        qsTr("The phase decides the sizing table, not the size of your income, and "
+             + "the way you keep the record decides how an old month is read. Both "
+             + "can change whenever your situation does."),
         qsTr("The model sizes every bucket from what you spend. Needs and wants "
              + "are the two halves of that spending."),
         qsTr("A name, what kind of holding it is and what it is worth. The bucket "
@@ -288,6 +289,51 @@ Item {
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        // The same step asks the second question, because the
+                        // two are the same kind of statement: how the household
+                        // lives, not what it has. A sixth screen would make a
+                        // five-step setup six for a choice with a good default.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceMd
+                            implicitHeight: 1
+                            color: Theme.border
+                        }
+
+                        Text {
+                            text: qsTr("How you use hinkwise")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 0.6
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: qsTr("Both keep the same record. The choice decides how "
+                                 + "the application reads a month you have not written down "
+                                 + "yet, and you can change it later in settings.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: wizard.trackingModeChoices
+
+                            delegate: ChoiceCard {
+                                id: trackingCard
+
+                                required property var modelData
+
+                                label: trackingCard.modelData.label
+                                description: trackingCard.modelData.description
+                                checked: trackingCard.modelData.index === wizard.trackingModeIndex
+                                onClicked: wizard.trackingModeIndex = trackingCard.modelData.index
                             }
                         }
                     }

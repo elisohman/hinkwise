@@ -15,6 +15,12 @@ Item {
 
     required property DashboardViewModel dashboard
 
+    /// Opening the update flow, and the year-end review, are the page's to ask
+    /// for: the window owns both, so the same sheet opens from every entry
+    /// point instead of a copy per page.
+    signal updateRequested()
+    signal reviewRequested()
+
     readonly property int insightLimit: 5
 
     // Where the x21 / x25 / x33 band sits on the FI track, and what to call
@@ -113,6 +119,65 @@ Item {
                     text: page.dashboard.phaseLabel
                     color: Theme.textSecondary
                     font.pixelSize: Theme.fontCaption
+                }
+            }
+        }
+
+        // The recurring task, before any figure: what is on record, what is
+        // missing from it, and the way to fix that. It never names a single
+        // month for data that has two.
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: statusContent.implicitHeight + 2 * Theme.spaceMd
+            visible: page.dashboard.hasProfile
+            radius: Theme.radius
+            color: Theme.surface
+            border.color: Theme.border
+            border.width: 1
+
+            RowLayout {
+                id: statusContent
+
+                anchors.fill: parent
+                anchors.margins: Theme.spaceMd
+                spacing: Theme.spaceMd
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: Theme.spaceSm
+                    implicitWidth: 6
+                    implicitHeight: 6
+                    radius: 3
+                    color: page.dashboard.inputsUpToDate ? Theme.positive : Theme.warning
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Text {
+                        text: page.dashboard.inputStatusHeadline
+                        color: Theme.textPrimary
+                        font.pixelSize: Theme.fontBody
+                        font.weight: Font.DemiBold
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                        visible: text.length > 0
+                        text: page.dashboard.inputStatusNote
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontCaption
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                PrimaryButton {
+                    Layout.alignment: Qt.AlignVCenter
+                    text: page.dashboard.updateActionLabel
+                    onClicked: page.updateRequested()
                 }
             }
         }
@@ -483,6 +548,42 @@ Item {
                                 Layout.fillWidth: true
                             }
                         }
+                    }
+                }
+
+                // Once a year, not every month: the review checks a year of
+                // records and plans the next one, so it sits at the end of the
+                // page rather than in the rail.
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spaceSm
+                    spacing: Theme.spaceMd
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Text {
+                            text: qsTr("Year-end review")
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontBody
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: qsTr("Once a year: what the year added, and what the "
+                                 + "next one needs.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    PrimaryButton {
+                        text: qsTr("Open the review")
+                        filled: false
+                        onClicked: page.reviewRequested()
                     }
                 }
             }

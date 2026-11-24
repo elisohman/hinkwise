@@ -61,6 +61,30 @@ QString bucketColourKey(domain::Bucket bucket)
     return QStringLiteral("buffer");
 }
 
+QString trackingModeLabel(domain::TrackingMode mode)
+{
+    switch (mode) {
+    case domain::TrackingMode::Accounting:
+        return translated("Monthly accounting");
+    case domain::TrackingMode::Planning:
+        return translated("Budget planning");
+    }
+    return translated("Budget planning");
+}
+
+QString trackingModeDescription(domain::TrackingMode mode)
+{
+    switch (mode) {
+    case domain::TrackingMode::Accounting:
+        return translated("You record every month's balances and cashflow. A month you "
+                          "skip is a gap, and hinkwise flags it.");
+    case domain::TrackingMode::Planning:
+        return translated("You set a budget and update it when something changes. Old "
+                          "figures are expected, and hinkwise reads them as normal.");
+    }
+    return {};
+}
+
 QStringList assetKindLabels()
 {
     QStringList labels;

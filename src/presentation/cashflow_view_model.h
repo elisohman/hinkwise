@@ -92,6 +92,13 @@ class CashflowViewModel : public QObject {
     Q_PROPERTY(QString currencyCode READ currencyCode NOTIFY changed)
     Q_PROPERTY(QString currentMonthLabel READ currentMonthLabel NOTIFY changed)
     Q_PROPERTY(QString selectedMonthLabel READ selectedMonthLabel NOTIFY changed)
+    /// The month the form writes to. On this page that is always the current
+    /// month; the update flow pins it to whatever month the household chose to
+    /// record, which is how one editor serves both.
+    Q_PROPERTY(QString editingMonthLabel READ editingMonthLabel NOTIFY changed)
+    /// True when a flow is on record for the month the form writes to. False is
+    /// not a month of zeros.
+    Q_PROPERTY(bool editingMonthRecorded READ editingMonthRecorded NOTIFY changed)
 
     Q_PROPERTY(QString incomeText READ incomeText WRITE setIncomeText NOTIFY changed)
     Q_PROPERTY(QString needsText READ needsText WRITE setNeedsText NOTIFY changed)
@@ -175,6 +182,12 @@ public:
     QString currencyCode() const;
     QString currentMonthLabel() const { return m_currentMonthLabel; }
     QString selectedMonthLabel() const { return m_selectedMonthLabel; }
+    QString editingMonthLabel() const { return m_editingMonthLabel; }
+    bool editingMonthRecorded() const { return m_editingRecorded; }
+
+    /// Points the form at `month`. Nothing else on the page moves: the history
+    /// strip and its selection are about reading, the form is about writing.
+    void setEditingMonth(domain::YearMonth month);
     QString incomeText() const { return m_incomeText; }
     QString needsText() const { return m_needsText; }
     QString wantsText() const { return m_wantsText; }
@@ -247,9 +260,14 @@ private:
     bool m_hasProfile = false;
     domain::Currency m_currency = domain::Currency::Sek;
     domain::YearMonth m_selectedMonth{1970, 1};
+    domain::YearMonth m_editingMonth{1970, 1};
+    /// False while the form follows the calendar, which is what makes the page
+    /// name the new month when one rolls over.
+    bool m_editingPinned = false;
 
     QString m_currentMonthLabel;
     QString m_selectedMonthLabel;
+    QString m_editingMonthLabel;
     QString m_incomeText;
     QString m_needsText;
     QString m_wantsText;
@@ -291,6 +309,7 @@ private:
     QString m_savingsFirstLabel;
     QString m_savingsLastLabel;
     bool m_selectedRecorded = false;
+    bool m_editingRecorded = false;
     bool m_selectedHasSavingSplit = false;
     bool m_savingsEmpty = true;
     IncomeSplit m_split;

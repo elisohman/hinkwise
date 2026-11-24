@@ -272,6 +272,7 @@ void SettingsViewModel::apply(const application::DashboardSnapshot& snapshot)
     const bool nameWasDirty = displayNameDirty();
     const bool jurisdictionWasDirty = jurisdictionDirty();
     const bool bufferWasDirty = bufferTargetDirty();
+    const bool trackingWasDirty = trackingModeDirty();
 
     m_hasProfile = snapshot.hasProfile;
     m_snapshot = snapshot;
@@ -292,6 +293,11 @@ void SettingsViewModel::apply(const application::DashboardSnapshot& snapshot)
 
     if (!bufferWasDirty)
         m_bufferTargetPosition = m_profile.riskTolerance.basisPoints();
+
+    // A choice keeps what was picked until it is saved or discarded, like the
+    // buffer point beside it.
+    if (!trackingWasDirty)
+        m_trackingModeIndex = static_cast<int>(m_profile.trackingMode);
 
     m_phaseHistory = phaseHistoryRows();
     emit changed();
@@ -395,6 +401,74 @@ void SettingsViewModel::cancelPhaseChange()
 {
     m_pendingPhaseIndex = -1;
     m_phaseError.clear();
+    emit changed();
+}
+
+QVariantList SettingsViewModel::trackingModeChoices() const
+{
+    const auto choice = [](domain::TrackingMode mode) {
+        return QVariantMap{
+            {QStringLiteral("index"), static_cast<int>(mode)},
+            {QStringLiteral("label"), catalog::trackingModeLabel(mode)},
+            {QStringLiteral("description"), catalog::trackingModeDescription(mode)},
+        };
+    };
+    return {choice(domain::TrackingMode::Accounting), choice(domain::TrackingMode::Planning)};
+}
+
+bool SettingsViewModel::trackingModeDirty() const
+{
+    return m_trackingModeIndex != static_cast<int>(m_profile.trackingMode);
+}
+
+void SettingsViewModel::setTrackingModeIndex(int index)
+{
+    const int clamped = std::clamp(index, 0, 1);
+    if (clamped == m_trackingModeIndex)
+        return;
+    m_trackingModeIndex = clamped;
+    m_trackingModeError.clear();
+    emit changed();
+}
+
+domain::TrackingMode SettingsViewModel::selectedTrackingMode() const
+{
+    return m_trackingModeIndex == static_cast<int>(domain::TrackingMode::Accounting)
+               ? domain::TrackingMode::Accounting
+               : domain::TrackingMode::Planning;
+}
+
+QString SettingsViewModel::saveTrackingMode()
+{
+    m_trackingModeError.clear();
+
+    AppController* controller = AppController::instance();
+    if (controller == nullptr) {
+        m_trackingModeError = tr("The database is not open.");
+        emit changed();
+        return m_trackingModeError;
+    }
+
+    domain::Profile updated = m_profile;
+    updated.trackingMode = selectedTrackingMode();
+    const application::Status saved = controller->saveProfile(updated);
+    if (!saved.ok()) {
+        m_trackingModeError = QString::fromStdString(saved.error());
+        emit changed();
+        return m_trackingModeError;
+    }
+
+    // The reload that saveProfile() announced has run and kept the draft while
+    // it still looked dirty, so the stored choice is shown explicitly.
+    m_trackingModeIndex = static_cast<int>(updated.trackingMode);
+    emit changed();
+    return {};
+}
+
+void SettingsViewModel::discardTrackingMode()
+{
+    m_trackingModeIndex = static_cast<int>(m_profile.trackingMode);
+    m_trackingModeError.clear();
     emit changed();
 }
 

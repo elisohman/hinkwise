@@ -400,6 +400,10 @@ private slots:
     void theModeDecidesWhatAnOldMonthMeans();
     void aFailedProvenanceReadIsAnError();
     void backfilledMonthsAreKeptAndDoNotBecomeTheLatest();
+
+    void inputStatusNamesAHouseholdWithNothingRecorded();
+    void inputStatusKeepsTwoMonthsAsTwoMonths();
+    void inputStatusOnlyCallsAMonthCurrentWhenBothSidesCarryIt();
 };
 
 void TestDashboard::emptyDatabaseHasNoProfileAndZeroMetrics()
@@ -830,6 +834,71 @@ void TestDashboard::backfilledMonthsAreKeptAndDoNotBecomeTheLatest()
     QCOMPARE(history.value().size(), expectedPoints);
     QCOMPARE(QString::fromStdString(history.value().front().month.toString()),
              QString::fromStdString(sixMonthsAgo.toString()));
+}
+
+void TestDashboard::inputStatusNamesAHouseholdWithNothingRecorded()
+{
+    QCOMPARE(static_cast<int>(inputStatusOf(DashboardSnapshot{}).kind),
+             static_cast<int>(InputStatus::Kind::Empty));
+
+    // One side is not nothing: the sentence has to say which half is missing,
+    // because the two halves are entered on two different pages.
+    DashboardSnapshot balancesOnly;
+    balancesOnly.latestBalanceMonth = YearMonth{2026, 2};
+    balancesOnly.monthsSinceBalance = 1;
+    const InputStatus noFlow = inputStatusOf(balancesOnly);
+    QCOMPARE(static_cast<int>(noFlow.kind), static_cast<int>(InputStatus::Kind::NoFlow));
+    QVERIFY(noFlow.balanceMonth.has_value());
+    QVERIFY(!noFlow.flowMonth.has_value());
+
+    DashboardSnapshot flowOnly;
+    flowOnly.latestFlowMonth = YearMonth{2026, 3};
+    flowOnly.monthsSinceFlow = 0;
+    QCOMPARE(static_cast<int>(inputStatusOf(flowOnly).kind),
+             static_cast<int>(InputStatus::Kind::NoBalances));
+}
+
+void TestDashboard::inputStatusKeepsTwoMonthsAsTwoMonths()
+{
+    // Balances from February and cashflow from March is not "current for
+    // March": it is two dates, and the screen has to be able to say both.
+    DashboardSnapshot snapshot;
+    snapshot.latestBalanceMonth = YearMonth{2026, 2};
+    snapshot.latestFlowMonth = YearMonth{2026, 3};
+    snapshot.monthsSinceBalance = 1;
+    snapshot.monthsSinceFlow = 0;
+
+    const InputStatus status = inputStatusOf(snapshot);
+    QCOMPARE(static_cast<int>(status.kind), static_cast<int>(InputStatus::Kind::TwoMonths));
+    QVERIFY(status.balanceMonth.has_value());
+    QVERIFY(status.flowMonth.has_value());
+    QCOMPARE(QString::fromStdString(status.balanceMonth->toString()), QStringLiteral("2026-02"));
+    QCOMPARE(QString::fromStdString(status.flowMonth->toString()), QStringLiteral("2026-03"));
+}
+
+void TestDashboard::inputStatusOnlyCallsAMonthCurrentWhenBothSidesCarryIt()
+{
+    DashboardSnapshot snapshot;
+    snapshot.latestBalanceMonth = YearMonth{2026, 3};
+    snapshot.latestFlowMonth = YearMonth{2026, 3};
+    snapshot.monthsSinceBalance = 0;
+    snapshot.monthsSinceFlow = 0;
+    QCOMPARE(static_cast<int>(inputStatusOf(snapshot).kind),
+             static_cast<int>(InputStatus::Kind::BothCurrent));
+
+    // The same shared month, counted from a snapshot two months later, is a
+    // shared month that is no longer this one.
+    snapshot.monthsSinceBalance = 2;
+    snapshot.monthsSinceFlow = 2;
+    QCOMPARE(static_cast<int>(inputStatusOf(snapshot).kind),
+             static_cast<int>(InputStatus::Kind::BothEarlier));
+
+    // A month recorded ahead of the snapshot counts as current, the way the
+    // freshness policy reads a negative count.
+    snapshot.monthsSinceBalance = -1;
+    snapshot.monthsSinceFlow = -1;
+    QCOMPARE(static_cast<int>(inputStatusOf(snapshot).kind),
+             static_cast<int>(InputStatus::Kind::BothCurrent));
 }
 
 QTEST_APPLESS_MAIN(TestDashboard)

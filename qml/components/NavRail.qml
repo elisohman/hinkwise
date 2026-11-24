@@ -18,9 +18,12 @@ Rectangle {
 
     property int currentIndex: 0
 
+    // The order is the order of the work: what the household has, what it does,
+    // what that adds up to. "Accounts & buckets" names the page by both halves
+    // of it, because both are the household's own entries.
     readonly property var titles: [
-        qsTr("Dashboard"),
-        qsTr("Buckets"),
+        qsTr("Overview"),
+        qsTr("Accounts & buckets"),
         qsTr("Cashflow"),
         qsTr("Plan"),
         qsTr("Guide"),

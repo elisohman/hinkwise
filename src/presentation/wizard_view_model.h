@@ -5,6 +5,7 @@
 
 #include "domain/asset.h"
 #include "domain/money.h"
+#include "domain/profile.h"
 
 #include <QAbstractListModel>
 #include <QByteArray>
@@ -128,6 +129,14 @@ class WizardViewModel : public QObject {
     Q_PROPERTY(int phaseIndex READ phaseIndex WRITE setPhaseIndex NOTIFY changed)
     Q_PROPERTY(QString phaseLabel READ phaseLabel NOTIFY changed)
 
+    /// The second question on the phase step: a life state and a way of
+    /// keeping the record are both statements about how the household lives,
+    /// and both decide how the application reads an old month.
+    Q_PROPERTY(QVariantList trackingModeChoices READ trackingModeChoices CONSTANT)
+    Q_PROPERTY(
+        int trackingModeIndex READ trackingModeIndex WRITE setTrackingModeIndex NOTIFY changed)
+    Q_PROPERTY(QString trackingModeLabel READ trackingModeLabel NOTIFY changed)
+
     Q_PROPERTY(QString incomeText READ incomeText WRITE setIncomeText NOTIFY changed)
     Q_PROPERTY(QString needsText READ needsText WRITE setNeedsText NOTIFY changed)
     Q_PROPERTY(QString wantsText READ wantsText WRITE setWantsText NOTIFY changed)
@@ -162,6 +171,10 @@ public:
     int phaseIndex() const { return m_phaseIndex; }
     QString phaseLabel() const;
 
+    QVariantList trackingModeChoices() const;
+    int trackingModeIndex() const { return m_trackingModeIndex; }
+    QString trackingModeLabel() const;
+
     QString incomeText() const { return m_income.text; }
     QString needsText() const { return m_needs.text; }
     QString wantsText() const { return m_wants.text; }
@@ -179,6 +192,7 @@ public:
 
     void setCurrencyIndex(int index);
     void setPhaseIndex(int index);
+    void setTrackingModeIndex(int index);
     void setIncomeText(const QString& text);
     void setNeedsText(const QString& text);
     void setWantsText(const QString& text);
@@ -209,6 +223,7 @@ private:
     };
 
     domain::Currency currency() const;
+    domain::TrackingMode trackingMode() const;
     void applyCurrency();
     void applyField(Field& field, const QString& text);
     void refreshIncome();
@@ -217,6 +232,10 @@ private:
     int m_step = 0;
     int m_currencyIndex = 0;
     int m_phaseIndex = 0;
+    /// Budget planning by default, which is where a household that has not
+    /// thought about it should start: it never turns a missed month into a
+    /// warning on the first screen.
+    int m_trackingModeIndex = static_cast<int>(domain::TrackingMode::Planning);
     Field m_income;
     Field m_needs;
     Field m_wants;

@@ -211,6 +211,105 @@ Item {
                 }
 
                 // -----------------------------------------------------------
+                // How you use hinkwise
+                // -----------------------------------------------------------
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: trackingCard.implicitHeight + 2 * Theme.spaceLg
+                    radius: Theme.radius
+                    color: Theme.surface
+                    border.color: Theme.border
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: trackingCard
+
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceLg
+                        spacing: Theme.spaceSm
+
+                        SectionHeader {
+                            Layout.fillWidth: true
+                            title: qsTr("How you use hinkwise")
+                            note: qsTr("What an old month means")
+                        }
+
+                        Text {
+                            text: qsTr("Both choices keep the same record. What changes is "
+                                 + "how the application reads its age: a month you have not "
+                                 + "written down yet, or a budget that is simply doing its "
+                                 + "job.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontBody
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceSm
+
+                            Repeater {
+                                model: settings.trackingModeChoices
+
+                                delegate: ChoiceCard {
+                                    id: trackingChoice
+
+                                    required property var modelData
+
+                                    label: trackingChoice.modelData.label
+                                    description: trackingChoice.modelData.description
+                                    checked: trackingChoice.modelData.index
+                                             === settings.trackingModeIndex
+                                    onClicked: settings.trackingModeIndex = trackingChoice.modelData.index
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Theme.spaceSm
+                            spacing: Theme.spaceSm
+
+                            PrimaryButton {
+                                text: qsTr("Save")
+                                enabled: settings.trackingModeDirty
+                                onClicked: settings.saveTrackingMode()
+                            }
+
+                            PrimaryButton {
+                                text: qsTr("Discard")
+                                filled: false
+                                visible: settings.trackingModeDirty
+                                onClicked: settings.discardTrackingMode()
+                            }
+
+                            Text {
+                                visible: settings.trackingModeDirty
+                                text: qsTr("Unsaved changes")
+                                color: Theme.textMuted
+                                font.pixelSize: Theme.fontCaption
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Text {
+                            visible: settings.trackingModeError.length > 0
+                            text: settings.trackingModeError
+                            textFormat: Text.PlainText
+                            color: Theme.danger
+                            font.pixelSize: Theme.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+
+                // -----------------------------------------------------------
                 // Buffer target
                 // -----------------------------------------------------------
                 Rectangle {

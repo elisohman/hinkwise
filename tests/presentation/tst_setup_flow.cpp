@@ -8,6 +8,7 @@
 #include "presentation/input_text.h"
 #include "presentation/plan_view_model.h"
 #include "presentation/review_view_model.h"
+#include "presentation/update_flow_view_model.h"
 #include "presentation/wizard_view_model.h"
 
 #include <QCoreApplication>
@@ -51,6 +52,7 @@ private slots:
     void planPageProjectsTheHousehold();
     void planDoesNotCountTheHouseAsSpendable();
     void reviewPageAddsAGoalAndProposesNothingAutomatic();
+    void updateFlowRecordsBothStepsForOneBackfilledMonth();
 
 private:
     QTemporaryDir m_dataDirectory;
@@ -167,6 +169,11 @@ void TestSetupFlow::createsTheHouseholdItReviewed()
     wizard.setNeedsText(QStringLiteral("15000"));
     wizard.setWantsText(QStringLiteral("9000"));
 
+    // The phase step asks how the household keeps its record too, and starts
+    // on the budget rather than on a monthly entry it has not agreed to.
+    QCOMPARE(wizard.trackingModeIndex(), static_cast<int>(domain::TrackingMode::Planning));
+    QVERIFY(!wizard.trackingModeLabel().isEmpty());
+
     wizard.next(); // currency
     wizard.next(); // phase
     wizard.next(); // income
@@ -204,6 +211,8 @@ void TestSetupFlow::createsTheHouseholdItReviewed()
     QVERIFY(profile.has_value());
     QCOMPARE(profile->baseCurrency, domain::Currency::Eur);
     QCOMPARE(profile->phase, domain::Phase::Preserving);
+    QCOMPARE(static_cast<int>(profile->trackingMode),
+             static_cast<int>(domain::TrackingMode::Planning));
 
     const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
     QVERIFY(snapshot.hasProfile);
@@ -610,6 +619,138 @@ void TestSetupFlow::reviewPageAddsAGoalAndProposesNothingAutomatic()
     QVERIFY(!review.rationaleLabel().isEmpty());
     QVERIFY(!review.hasNextContribution());
     review.setMarketDown(false);
+}
+
+void TestSetupFlow::updateFlowRecordsBothStepsForOneBackfilledMonth()
+{
+    // A debt as well as an account: one list covering both is the point of the
+    // balances step, and a debt could not be updated from a page before it.
+    AccountsViewModel accounts;
+    accounts.setSelectedBucket(static_cast<int>(domain::Bucket::Buffer));
+    QCOMPARE(accounts.addAccount(QStringLiteral("Update flow account"),
+                                 static_cast<int>(domain::AssetKind::BankAccount),
+                                 static_cast<int>(domain::Bucket::Buffer)),
+             QString{});
+    QCOMPARE(accounts.addDebt(QStringLiteral("Update flow loan"),
+                              static_cast<int>(domain::LiabilityKind::StudentLoan),
+                              QStringLiteral("2,5"), QStringLiteral("40000")),
+             QString{});
+
+    const auto idOf = [this](const QString& name) {
+        for (const domain::Asset& asset : m_controller->assets()) {
+            if (QString::fromStdString(asset.name) == name)
+                return asset.id;
+        }
+        return std::string{};
+    };
+    const std::string accountId = idOf(QStringLiteral("Update flow account"));
+    QVERIFY(!accountId.empty());
+
+    UpdateFlowViewModel flow;
+    flow.begin();
+
+    QCOMPARE(flow.monthIndex(), 0);
+    QVERIFY(flow.editingCurrentMonth());
+    QCOMPARE(flow.balancesStatus(), QStringLiteral("Not updated"));
+    QCOMPARE(flow.cashflowStatus(), QStringLiteral("Not updated"));
+    QVERIFY(flow.hasAccounts());
+    QVERIFY(!flow.dirty());
+
+    const auto rowOf = [&flow](const QString& name) {
+        for (int row = 0; row < flow.balances()->count(); ++row) {
+            const QModelIndex at = flow.balances()->index(row, 0);
+            if (flow.balances()->data(at, BalanceEntryModel::NameRole).toString() == name)
+                return row;
+        }
+        return -1;
+    };
+    const auto textOf = [&flow](int row, int role) {
+        return flow.balances()->data(flow.balances()->index(row, 0), role).toString();
+    };
+
+    const int accountRow = rowOf(QStringLiteral("Update flow account"));
+    const int debtRow = rowOf(QStringLiteral("Update flow loan"));
+    QVERIFY(accountRow >= 0);
+    QVERIFY(debtRow >= 0);
+
+    // Never valued, the field starts empty and the row says so rather than
+    // starting from a zero the record does not hold.
+    QCOMPARE(textOf(accountRow, BalanceEntryModel::AmountTextRole), QString{});
+    QCOMPARE(textOf(accountRow, BalanceEntryModel::RecordLabelRole),
+             QStringLiteral("Never recorded"));
+
+    // Backfill: three months back, both steps, in one pass.
+    const domain::YearMonth current = AppController::currentMonth();
+    const domain::YearMonth backfilled = current.plusMonths(-3);
+    flow.setMonthIndex(3);
+    QCOMPARE(flow.monthLabel(), formatMonth(backfilled, QStringLiteral("MMMM yyyy")));
+    QVERIFY(!flow.monthNote().isEmpty());
+
+    flow.balances()->setAmountText(accountRow, QStringLiteral("5000"));
+    flow.balances()->setAmountText(debtRow, QStringLiteral("38000"));
+    QVERIFY(flow.dirty());
+    QCOMPARE(flow.balancesStatus(), QStringLiteral("Unsaved changes"));
+
+    QCOMPARE(flow.saveBalances(), QString{});
+    QCOMPARE(flow.balancesStatus(), QStringLiteral("Saved"));
+    // The other step was not touched, and does not claim to have been.
+    QCOMPARE(flow.cashflowStatus(), QStringLiteral("Not updated"));
+    QVERIFY(!flow.dirty());
+
+    // Written under the month that was chosen, not under today.
+    const std::optional<domain::Money> savedBalance =
+        m_controller->assetBalanceAt(accountId, backfilled);
+    QVERIFY(savedBalance.has_value());
+    QCOMPARE(savedBalance->minorUnits(), std::int64_t{500000});
+
+    flow.cashflow()->setIncomeText(QStringLiteral("20000"));
+    flow.cashflow()->setNeedsText(QStringLiteral("10000"));
+    flow.cashflow()->setWantsText(QStringLiteral("5000"));
+    flow.cashflow()->setSavingText(QStringLiteral("5000"));
+    QCOMPARE(flow.saveCashflow(), QString{});
+    QCOMPARE(flow.cashflowStatus(), QStringLiteral("Saved"));
+
+    const std::optional<domain::MonthFlow> backfilledFlow = m_controller->monthFlow(backfilled);
+    QVERIFY(backfilledFlow.has_value());
+    QCOMPARE(backfilledFlow->income.minorUnits(), std::int64_t{2000000});
+
+    // Backfilling added a month to the record; it did not move it. The
+    // dashboard still describes the most recent month, and the flow says so.
+    const application::DashboardSnapshot snapshot = m_controller->dashboardSnapshot();
+    QVERIFY(snapshot.latestBalanceMonth.has_value());
+    QCOMPARE(QString::fromStdString(snapshot.latestBalanceMonth->toString()),
+             QString::fromStdString(current.toString()));
+    QVERIFY(flow.resultNote().contains(formatMonth(current, QStringLiteral("MMMM yyyy"))));
+
+    // A later month starts from the figure the record already implies, and
+    // says that it is a carry-forward rather than a fresh reading.
+    flow.setMonthIndex(2);
+    QCOMPARE(flow.balancesStatus(), QStringLiteral("Not updated"));
+    // Changing the month after a save says so: the month on screen is not the
+    // one that was written.
+    QVERIFY(flow.monthNote().contains(formatMonth(backfilled, QStringLiteral("MMMM yyyy"))));
+    const int carriedRow = rowOf(QStringLiteral("Update flow account"));
+    QVERIFY(carriedRow >= 0);
+    QCOMPARE(textOf(carriedRow, BalanceEntryModel::AmountTextRole),
+             formatMoneyPlain(domain::Money{500000, domain::Currency::Eur}));
+    QCOMPARE(textOf(carriedRow, BalanceEntryModel::NoteRole),
+             QStringLiteral("Unchanged from %1.")
+                 .arg(formatMonth(backfilled, QStringLiteral("MMMM yyyy"))));
+    QVERIFY(!flow.dirty());
+
+    // A field that cannot be read stops the whole step: the month is either
+    // recorded or it is not.
+    flow.balances()->setAmountText(carriedRow, QStringLiteral("5000 kr"));
+    QVERIFY(!textOf(carriedRow, BalanceEntryModel::ErrorRole).isEmpty());
+    QVERIFY(!flow.saveBalances().isEmpty());
+    QVERIFY(!m_controller->assetBalanceAt(accountId, current.plusMonths(-2)).has_value());
+
+    // Step 2 refuses the same month for the same reason the page does.
+    flow.cashflow()->setIncomeText(QStringLiteral("1000"));
+    flow.cashflow()->setNeedsText(QStringLiteral("900"));
+    flow.cashflow()->setWantsText(QStringLiteral("900"));
+    QVERIFY(!flow.saveCashflow().isEmpty());
+    QCOMPARE(flow.cashflowStatus(), QStringLiteral("Unsaved changes"));
 }
 
 QTEST_GUILESS_MAIN(TestSetupFlow)

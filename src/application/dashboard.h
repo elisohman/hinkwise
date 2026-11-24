@@ -96,6 +96,44 @@ struct DashboardSnapshot {
     InputFreshness freshness = InputFreshness::Missing;
 };
 
+/// Which months the household's two inputs are on record for, as one value.
+///
+/// The kind is the whole decision - which sides exist, whether they agree on a
+/// month, and whether that month is the one the screen describes - so the
+/// wording that follows from it is the view model's alone, and a test can read
+/// the decision without going through a screen.
+///
+/// A single date is only ever claimed when both sides carry it. Two different
+/// months stay two months here rather than being collapsed into the later one,
+/// because "balances recorded through March; cashflow for May" is the honest
+/// sentence and "current" is not.
+struct InputStatus {
+    enum class Kind {
+        /// Nothing recorded on either side yet.
+        Empty,
+        /// Balances exist and no month flow does, so there are no expenses to
+        /// size the buckets from.
+        NoFlow,
+        /// A month flow exists and no balances do, so the plan has nothing to
+        /// project from.
+        NoBalances,
+        /// Both recorded for the month the screen describes, or a later one.
+        BothCurrent,
+        /// Both recorded for the same earlier month.
+        BothEarlier,
+        /// Both recorded, for two different months.
+        TwoMonths,
+    };
+
+    Kind kind = Kind::Empty;
+    std::optional<domain::YearMonth> balanceMonth;
+    std::optional<domain::YearMonth> flowMonth;
+};
+
+/// inputStatusOf() of a snapshot: read from the months it already carries, so
+/// the screen and the sentence cannot disagree about what is on record.
+InputStatus inputStatusOf(const DashboardSnapshot& snapshot);
+
 /// The bad loans among `debts`, summed and priced against kMortgageBenchmark.
 domain::Money totalBadLoans(std::span<const domain::Debt> debts);
 

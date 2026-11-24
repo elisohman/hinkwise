@@ -131,6 +131,38 @@ InputFreshness freshnessOf(domain::TrackingMode mode, std::optional<int> monthsS
     return InputFreshness::Missing;
 }
 
+InputStatus inputStatusOf(const DashboardSnapshot& snapshot)
+{
+    InputStatus status;
+    status.balanceMonth = snapshot.latestBalanceMonth;
+    status.flowMonth = snapshot.latestFlowMonth;
+
+    if (!status.balanceMonth && !status.flowMonth) {
+        status.kind = InputStatus::Kind::Empty;
+        return status;
+    }
+    if (!status.flowMonth) {
+        status.kind = InputStatus::Kind::NoFlow;
+        return status;
+    }
+    if (!status.balanceMonth) {
+        status.kind = InputStatus::Kind::NoBalances;
+        return status;
+    }
+    if (*status.balanceMonth != *status.flowMonth) {
+        status.kind = InputStatus::Kind::TwoMonths;
+        return status;
+    }
+
+    // A month recorded ahead of the snapshot is not old, so it counts as
+    // current, the same way freshnessOf() reads a negative count.
+    const std::optional<int> sinceFlow = snapshot.monthsSinceFlow;
+    const std::optional<int> sinceBalance = snapshot.monthsSinceBalance;
+    const bool current = !sinceFlow || !sinceBalance || (*sinceFlow <= 0 && *sinceBalance <= 0);
+    status.kind = current ? InputStatus::Kind::BothCurrent : InputStatus::Kind::BothEarlier;
+    return status;
+}
+
 Money totalBadLoans(std::span<const domain::Debt> debts)
 {
     return domain::badLoanTotal(debts, kMortgageBenchmark);

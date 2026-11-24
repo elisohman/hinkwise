@@ -45,6 +45,7 @@ endif()
 # domain, so the calculations stay testable without a GUI or a database.
 add_library(hinkwise_application STATIC
     src/application/dashboard.cpp
+    src/application/update_flow.cpp
     src/application/use_cases.cpp
 )
 target_link_libraries(hinkwise_application PUBLIC hinkwise_domain)
@@ -123,6 +124,8 @@ qt_add_qml_module(hinkwise
         src/presentation/review_view_model.h
         src/presentation/settings_view_model.cpp
         src/presentation/settings_view_model.h
+        src/presentation/update_flow_view_model.cpp
+        src/presentation/update_flow_view_model.h
         src/presentation/wizard_view_model.cpp
         src/presentation/wizard_view_model.h
     QML_FILES
@@ -130,15 +133,18 @@ qt_add_qml_module(hinkwise
         qml/theme/Theme.qml
         qml/components/BucketCard.qml
         qml/components/BucketGauge.qml
+        qml/components/ChoiceCard.qml
         qml/components/ChoiceField.qml
         qml/components/ConfirmDialog.qml
         qml/components/FormRow.qml
         qml/components/InsightCard.qml
         qml/components/MoneyField.qml
+        qml/components/MonthFlowForm.qml
         qml/components/NavRail.qml
         qml/components/PrimaryButton.qml
         qml/components/SectionHeader.qml
         qml/components/StatBlock.qml
+        qml/components/UpdateFlowOverlay.qml
         qml/pages/BucketsPage.qml
         qml/pages/CashflowPage.qml
         qml/pages/DashboardPage.qml

@@ -334,6 +334,31 @@ QString WizardViewModel::phaseLabel() const
     return QString::fromUtf8(domain::labelOf(phaseAt(m_phaseIndex)));
 }
 
+QVariantList WizardViewModel::trackingModeChoices() const
+{
+    const auto choice = [](domain::TrackingMode mode) {
+        return QVariantMap{
+            {QStringLiteral("index"), static_cast<int>(mode)},
+            {QStringLiteral("label"), catalog::trackingModeLabel(mode)},
+            {QStringLiteral("description"), catalog::trackingModeDescription(mode)},
+        };
+    };
+    // Accounting first, the same order the settings page offers.
+    return {choice(domain::TrackingMode::Accounting), choice(domain::TrackingMode::Planning)};
+}
+
+domain::TrackingMode WizardViewModel::trackingMode() const
+{
+    return m_trackingModeIndex == static_cast<int>(domain::TrackingMode::Accounting)
+               ? domain::TrackingMode::Accounting
+               : domain::TrackingMode::Planning;
+}
+
+QString WizardViewModel::trackingModeLabel() const
+{
+    return catalog::trackingModeLabel(trackingMode());
+}
+
 bool WizardViewModel::incomeValid() const
 {
     if (!m_income.ok || !m_needs.ok || !m_wants.ok)
@@ -431,6 +456,7 @@ QVariantList WizardViewModel::reviewLines() const
 
     add(tr("Currency"), currencyCode());
     add(tr("Phase"), phaseLabel());
+    add(tr("How you use hinkwise"), trackingModeLabel());
     add(tr("Income after tax"), m_income.ok ? formatMoney(m_income.value) : m_income.text);
     add(tr("Needs"), m_needs.ok ? formatMoney(m_needs.value) : m_needs.text);
     add(tr("Wants"), m_wants.ok ? formatMoney(m_wants.value) : m_wants.text);
@@ -454,6 +480,15 @@ void WizardViewModel::setPhaseIndex(int index)
     if (clamped == m_phaseIndex)
         return;
     m_phaseIndex = clamped;
+    emit changed();
+}
+
+void WizardViewModel::setTrackingModeIndex(int index)
+{
+    const int clamped = std::clamp(index, 0, 1);
+    if (clamped == m_trackingModeIndex)
+        return;
+    m_trackingModeIndex = clamped;
     emit changed();
 }
 
@@ -544,7 +579,8 @@ bool WizardViewModel::createEconomy()
     const domain::MonthFlow flow{m_income.value, m_needs.value, m_wants.value,
                                  m_income.value - m_needs.value - m_wants.value};
 
-    application::Status status = controller->createHousehold(currency(), phaseAt(m_phaseIndex));
+    application::Status status =
+        controller->createHousehold(currency(), phaseAt(m_phaseIndex), trackingMode());
     if (!status.ok())
         return fail(QString::fromStdString(status.error()));
 

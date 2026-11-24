@@ -16,28 +16,18 @@ import Hinkwise
 // history from the recorded month flows, and a month nobody recorded is drawn
 // as an empty slot - not as a bar at zero, which would be a claim about the
 // household instead of a fact about the record.
+//
+// The month is entered here or in the update flow, with the same editor and the
+// same validation: MonthFlowForm is both.
 Item {
     id: page
 
-    // A control stops following the view model once it has been typed in, so
-    // the model pushes its own value back after a save, a discard or a reload.
-    // The draft itself lives in the view model, which keeps it across reloads.
-    function syncFields() {
-        if (incomeField.text !== cashflow.incomeText)
-            incomeField.text = cashflow.incomeText;
-        if (needsField.text !== cashflow.needsText)
-            needsField.text = cashflow.needsText;
-        if (wantsField.text !== cashflow.wantsText)
-            wantsField.text = cashflow.wantsText;
-        if (savingField.text !== cashflow.savingText)
-            savingField.text = cashflow.savingText;
-        if (bufferSplitField.text !== cashflow.bufferSplitText)
-            bufferSplitField.text = cashflow.bufferSplitText;
-        if (investingSplitField.text !== cashflow.investingSplitText)
-            investingSplitField.text = cashflow.investingSplitText;
-        if (amortisationSplitField.text !== cashflow.amortisationSplitText)
-            amortisationSplitField.text = cashflow.amortisationSplitText;
-    }
+    /// What the update action is called in the tracking mode in force. Main
+    /// passes it down from the dashboard, which is the one place that knows
+    /// which mode the household chose.
+    required property string updateActionLabel
+
+    signal updateRequested()
 
     // One horizontal stacked bar: needs, then wants, then saving, each a share
     // of income. The colours borrow the buckets they behave like - the buffer's
@@ -210,14 +200,6 @@ Item {
         id: cashflow
     }
 
-    Connections {
-        target: cashflow
-
-        function onChanged() {
-            page.syncFields();
-        }
-    }
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spaceLg
@@ -243,6 +225,11 @@ Item {
                 color: Theme.textMuted
                 font.pixelSize: Theme.fontBody
             }
+
+            PrimaryButton {
+                text: page.updateActionLabel
+                onClicked: page.updateRequested()
+            }
         }
 
         ScrollView {
@@ -259,198 +246,76 @@ Item {
                 spacing: Theme.spaceLg
 
                 // -----------------------------------------------------------
-                // This month, editable
+                // Nothing recorded for this month
                 // -----------------------------------------------------------
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: monthForm.implicitHeight + 2 * Theme.spaceLg
+                    implicitHeight: emptyContent.implicitHeight + 2 * Theme.spaceMd
+                    visible: !cashflow.editingMonthRecorded
+                    radius: Theme.radius
+                    color: Theme.surface
+                    border.color: Theme.border
+                    border.width: 1
+
+                    RowLayout {
+                        id: emptyContent
+
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceMd
+                        spacing: Theme.spaceMd
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                text: qsTr("No month recorded yet")
+                                color: Theme.textPrimary
+                                font.pixelSize: Theme.fontBody
+                                font.weight: Font.DemiBold
+                                Layout.fillWidth: true
+                            }
+
+                            Text {
+                                text: qsTr("Nothing has come in or gone out on record for "
+                                     + "%1. The buckets are sized from a month of "
+                                     + "cashflow, so the form below is where the plan "
+                                     + "starts.").arg(cashflow.editingMonthLabel)
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontCaption
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        PrimaryButton {
+                            text: page.updateActionLabel
+                            onClicked: page.updateRequested()
+                        }
+                    }
+                }
+
+                // -----------------------------------------------------------
+                // The month, editable, with the update flow's own editor
+                // -----------------------------------------------------------
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: monthCard.implicitHeight + 2 * Theme.spaceLg
                     radius: Theme.radius
                     color: Theme.surface
                     border.color: Theme.border
                     border.width: 1
 
                     ColumnLayout {
-                        id: monthForm
+                        id: monthCard
 
                         anchors.fill: parent
                         anchors.margins: Theme.spaceLg
                         spacing: Theme.spaceMd
 
-                        SectionHeader {
+                        MonthFlowForm {
                             Layout.fillWidth: true
-                            title: qsTr("This month")
-                            note: cashflow.currentMonthLabel
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 2
-                            columnSpacing: Theme.spaceMd
-                            rowSpacing: Theme.spaceSm
-
-                            FormRow {
-                                label: qsTr("Income after tax")
-                                hint: cashflow.currencyCode
-
-                                MoneyField {
-                                    id: incomeField
-
-                                    text: cashflow.incomeText
-                                    placeholder: qsTr("What came in")
-                                    unit: cashflow.currencyCode
-                                    onEdited: (value) => cashflow.incomeText = value
-                                }
-                            }
-
-                            FormRow {
-                                label: qsTr("Needs")
-                                hint: cashflow.currencyCode
-
-                                MoneyField {
-                                    id: needsField
-
-                                    text: cashflow.needsText
-                                    placeholder: qsTr("Rent, food, transport")
-                                    unit: cashflow.currencyCode
-                                    onEdited: (value) => cashflow.needsText = value
-                                }
-                            }
-
-                            FormRow {
-                                label: qsTr("Wants")
-                                hint: cashflow.currencyCode
-
-                                MoneyField {
-                                    id: wantsField
-
-                                    text: cashflow.wantsText
-                                    placeholder: qsTr("Everything else you choose")
-                                    unit: cashflow.currencyCode
-                                    onEdited: (value) => cashflow.wantsText = value
-                                }
-                            }
-
-                            FormRow {
-                                label: qsTr("Saving")
-                                hint: cashflow.currencyCode
-
-                                MoneyField {
-                                    id: savingField
-
-                                    text: cashflow.savingText
-                                    placeholder: qsTr("Paid to yourself, amortisation included")
-                                    unit: cashflow.currencyCode
-                                    onEdited: (value) => cashflow.savingText = value
-                                }
-                            }
-                        }
-
-                        // ---------------------------------------------------
-                        // Where the saving went, when the household knows
-                        // ---------------------------------------------------
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: Theme.spaceSm
-
-                            Text {
-                                text: qsTr("Where the saving went")
-                                color: Theme.textMuted
-                                font.pixelSize: Theme.fontCaption
-                                font.capitalization: Font.AllUppercase
-                                font.letterSpacing: 0.6
-                                Layout.fillWidth: true
-                            }
-
-                            Text {
-                                text: qsTr("Optional. If you split it, all three have to add up "
-                                     + "to the saving total; leave all three empty if you only know "
-                                     + "the total.")
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontCaption
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: Theme.spaceMd
-
-                                FormRow {
-                                    Layout.fillWidth: true
-                                    label: qsTr("To the buffer")
-
-                                    MoneyField {
-                                        id: bufferSplitField
-
-                                        text: cashflow.bufferSplitText
-                                        placeholder: qsTr("Optional")
-                                        unit: cashflow.currencyCode
-                                        onEdited: (value) => cashflow.bufferSplitText = value
-                                    }
-                                }
-
-                                FormRow {
-                                    Layout.fillWidth: true
-                                    label: qsTr("To investments")
-
-                                    MoneyField {
-                                        id: investingSplitField
-
-                                        text: cashflow.investingSplitText
-                                        placeholder: qsTr("Optional")
-                                        unit: cashflow.currencyCode
-                                        onEdited: (value) => cashflow.investingSplitText = value
-                                    }
-                                }
-
-                                FormRow {
-                                    Layout.fillWidth: true
-                                    label: qsTr("To debt amortisation")
-
-                                    MoneyField {
-                                        id: amortisationSplitField
-
-                                        text: cashflow.amortisationSplitText
-                                        placeholder: qsTr("Optional")
-                                        unit: cashflow.currencyCode
-                                        onEdited: (value) => cashflow.amortisationSplitText = value
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: Theme.spaceSm
-
-                                PrimaryButton {
-                                    text: qsTr("Fill the rest into investments")
-                                    filled: false
-                                    enabled: cashflow.savingSplitCanFill
-                                    onClicked: cashflow.fillSavingSplitRemainder()
-                                }
-
-                                Item {
-                                    Layout.fillWidth: true
-                                }
-                            }
-
-                            Text {
-                                visible: cashflow.savingSplitError.length > 0
-                                text: cashflow.savingSplitError
-                                color: Theme.danger
-                                font.pixelSize: Theme.fontCaption
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Text {
-                                text: qsTr("Debt amortisation counts as saving in the model: "
-                                     + "paying down a loan is money kept, not money spent.")
-                                color: Theme.textMuted
-                                font.pixelSize: Theme.fontCaption
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
+                            model: cashflow
                         }
 
                         RowLayout {
@@ -458,7 +323,7 @@ Item {
                             spacing: Theme.spaceMd
 
                             PrimaryButton {
-                                text: qsTr("Record %1").arg(cashflow.currentMonthLabel)
+                                text: qsTr("Record %1").arg(cashflow.editingMonthLabel)
                                 enabled: cashflow.savingSplitValid
                                 onClicked: cashflow.saveMonth()
                             }
@@ -487,25 +352,6 @@ Item {
                             Item {
                                 Layout.fillWidth: true
                             }
-                        }
-
-                        Text {
-                            visible: text.length > 0
-                            text: cashflow.saveError
-                            textFormat: Text.PlainText
-                            color: Theme.danger
-                            font.pixelSize: Theme.fontCaption
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                        }
-
-                        Text {
-                            visible: text.length > 0
-                            text: cashflow.savingNote
-                            color: Theme.textMuted
-                            font.pixelSize: Theme.fontCaption
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
                         }
                     }
                 }

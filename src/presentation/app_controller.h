@@ -125,6 +125,12 @@ public:
                                                 domain::YearMonth month) const;
     std::optional<domain::Money> latestDebtBalance(std::string_view liabilityId) const;
 
+    /// Every valuation of an asset and every balance of a debt, oldest first.
+    /// Empty when the account has never been recorded, and also when the read
+    /// fails: a row the update flow cannot describe is a row it leaves alone.
+    std::vector<application::MoneyPoint> assetHistory(std::string_view assetId) const;
+    std::vector<application::MoneyPoint> debtHistory(std::string_view liabilityId) const;
+
     /// The recorded month flows, newest first, at most `count` of them. This is
     /// what the cashflow history is drawn from: a month the household never
     /// recorded is simply not in the list, which is different from a month of
@@ -143,7 +149,13 @@ public:
     /// Every one returns the use case's own message on failure, and emits
     /// dataChanged() only when the write succeeded, so a screen can show the
     /// message and leave its state alone.
-    application::Status createHousehold(domain::Currency currency, domain::Phase phase);
+    /// Creates the household. The tracking mode is part of the same write: the
+    /// wizard asks for it on the phase step, and a household that started in
+    /// one mode and was saved again in the other would have two writes where
+    /// there is one decision.
+    application::Status
+    createHousehold(domain::Currency currency, domain::Phase phase,
+                    domain::TrackingMode trackingMode = domain::TrackingMode::Planning);
     application::Status addAsset(const domain::Asset& asset);
     application::Status removeAsset(std::string_view assetId);
     application::Status addLiability(const domain::Liability& liability);
