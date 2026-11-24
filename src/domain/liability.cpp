@@ -9,7 +9,8 @@
 namespace hinkwise::domain {
 
 Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
-                        Percentage interestRate)
+                        Percentage interestRate, RepaymentStyle style, Money regularPayment,
+                        Money monthlyFee)
 {
     if (id.empty())
         throw std::invalid_argument{"makeLiability: id must not be empty"};
@@ -17,12 +18,21 @@ Liability makeLiability(std::string id, std::string name, LiabilityKind kind,
         throw std::invalid_argument{"makeLiability: name must not be empty"};
     if (interestRate.isNegative())
         throw std::invalid_argument{"makeLiability: interest rate must not be negative"};
+    if (regularPayment.isNegative())
+        throw std::invalid_argument{"makeLiability: regular payment must not be negative"};
+    if (monthlyFee.isNegative())
+        throw std::invalid_argument{"makeLiability: monthly fee must not be negative"};
+    if (!monthlyFee.isZero() && style != RepaymentStyle::Annuity)
+        throw std::invalid_argument{"makeLiability: a monthly fee belongs to an annuity"};
 
     Liability liability;
     liability.id = std::move(id);
     liability.name = std::move(name);
     liability.kind = kind;
     liability.interestRate = interestRate;
+    liability.style = style;
+    liability.regularPayment = regularPayment;
+    liability.monthlyFee = monthlyFee;
     return liability;
 }
 

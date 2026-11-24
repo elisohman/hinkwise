@@ -79,19 +79,25 @@ constexpr const char* kUpsertAsset = R"(
 constexpr const char* kDeleteAsset = "DELETE FROM asset WHERE id = ?";
 
 constexpr const char* kSelectLiabilities = R"(
-    SELECT id, name, kind, interest_bp
+    SELECT id, name, kind, interest_bp, repayment_style, regular_payment_minor,
+           monthly_fee_minor,
+           COALESCE((SELECT base_currency FROM profile WHERE id = 1), 'SEK')
     FROM liability
     WHERE archived = 0
     ORDER BY name, id
 )";
 
 constexpr const char* kUpsertLiability = R"(
-    INSERT INTO liability (id, name, kind, interest_bp, archived)
-    VALUES (?, ?, ?, ?, 0)
+    INSERT INTO liability (id, name, kind, interest_bp, repayment_style,
+                           regular_payment_minor, monthly_fee_minor, archived)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
         kind = excluded.kind,
-        interest_bp = excluded.interest_bp
+        interest_bp = excluded.interest_bp,
+        repayment_style = excluded.repayment_style,
+        regular_payment_minor = excluded.regular_payment_minor,
+        monthly_fee_minor = excluded.monthly_fee_minor
 )";
 
 constexpr const char* kDeleteLiability = "DELETE FROM liability WHERE id = ?";
@@ -572,6 +578,25 @@ application::Result<std::vector<domain::Liability>> SqliteLiabilityRepository::a
         liability.kind = *kind;
 
         liability.interestRate = domain::Percentage::fromBasisPoints(statement.value(3).toInt());
+
+        const std::string styleKey = toStd(statement.value(4).toString());
+        const std::optional<domain::RepaymentStyle> style =
+            domain::repaymentStyleFromStorageKey(styleKey);
+        if (!style)
+            return Outcome::err(
+                unknownKey("liability '" + liability.id + "'", "repayment style", styleKey));
+        liability.style = *style;
+
+        // A liability carries no currency of its own: the household has one
+        // base currency, and its payments are amounts in it.
+        const std::string currencyKey = toStd(statement.value(7).toString());
+        const std::optional<domain::Currency> currency =
+            domain::currencyFromStorageKey(currencyKey);
+        if (!currency)
+            return Outcome::err(
+                unknownKey("liability '" + liability.id + "'", "currency", currencyKey));
+        liability.regularPayment = domain::Money{statement.value(5).toLongLong(), *currency};
+        liability.monthlyFee = domain::Money{statement.value(6).toLongLong(), *currency};
         liabilities.push_back(std::move(liability));
     }
     return Outcome::ok(std::move(liabilities));
@@ -584,6 +609,9 @@ application::Status SqliteLiabilityRepository::upsert(const domain::Liability& l
         toQString(liability.name),
         QString::fromUtf8(domain::storageKey(liability.kind)),
         liability.interestRate.basisPoints(),
+        QString::fromUtf8(domain::storageKey(liability.style)),
+        static_cast<qlonglong>(liability.regularPayment.minorUnits()),
+        static_cast<qlonglong>(liability.monthlyFee.minorUnits()),
     });
 }
 

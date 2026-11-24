@@ -246,12 +246,23 @@ Result<DashboardSnapshot> buildDashboard(IProfileRepository& profiles, IAssetRep
     std::vector<domain::Debt> debts;
     if (loadedLiabilities.ok()) {
         debts.reserve(loadedLiabilities.value().size());
+        snapshot.debts.reserve(loadedLiabilities.value().size());
         for (const domain::Liability& liability : loadedLiabilities.value()) {
             Money balance = zero;
             const Result<std::optional<Money>> latest = debtBalances.latest(liability.id);
             if (latest.ok())
                 balance = usableOrZero(latest.value(), currency);
             debts.push_back(domain::Debt{&liability, balance});
+
+            // The payment amounts are amounts in the household's one base
+            // currency, whatever unit the row was written in, so the plan can
+            // add them to the rest of the figures without a unit mismatch.
+            snapshot.debts.push_back(DebtInEffect{
+                liability.id, liability.name, liability.kind, liability.interestRate,
+                liability.style, Money{liability.regularPayment.minorUnits(), currency},
+                Money{liability.monthlyFee.minorUnits(), currency}, balance});
+            if (balance.isPositive() && !liability.regularPayment.isPositive())
+                snapshot.hasDebtWithoutTerms = true;
         }
     }
 

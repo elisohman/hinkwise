@@ -48,6 +48,21 @@ ProjectionInput emptyInput()
     return input;
 }
 
+/// A loan repaid by a fixed principal amount each month.
+LoanTerms fixedLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment)
+{
+    return LoanTerms{sek(balance), Percentage::fromBasisPoints(annualRateBp),
+                     RepaymentStyle::FixedAmortisation, sek(monthlyPayment), sek(0)};
+}
+
+/// A loan repaid by one fixed monthly sum covering interest, fee and principal.
+LoanTerms annuityLoan(qint64 balance, int annualRateBp, qint64 monthlyPayment,
+                      qint64 monthlyFee = 0)
+{
+    return LoanTerms{sek(balance), Percentage::fromBasisPoints(annualRateBp),
+                     RepaymentStyle::Annuity, sek(monthlyPayment), sek(monthlyFee)};
+}
+
 } // namespace
 
 class TestProjection : public QObject {
@@ -68,9 +83,16 @@ private slots:
     void yearsToTargetForAZeroTarget();
     void zeroYearsYieldsTodayOnly();
     void negativeHorizonYieldsTodayOnly();
-    void debtFallsByTheAmortisationAndFloorsAtZero();
-    void aRepaidMortgageReadsZeroFromItsYearOnwards();
-    void amortisationThatIsZeroOrNegativeLeavesDebtFlat();
+    void aFixedAmortisationLoanFallsLinearlyAndStopsAtZero();
+    void aLoanThatIsClearedStaysAtZero();
+    void aZeroPaymentLeavesTheDebtFlat();
+    void annuityPrincipalShareRisesAsTheBalanceFalls();
+    void anAnnuityEndsAtTheStatedPayment();
+    void anUnderServicingAnnuityKeepsTheBalanceFlatAndFlagsIt();
+    void mixedLoansSumIndependently();
+    void interestAccruesAndIsReported();
+    void feesAccrueForAnAnnuity();
+    void zeroRateLoansClearExactly();
     void netWorthIsTheTotalMinusDebt();
     void netWorthCountsOtherAssets();
     void noOtherAssetsChangesNothing();
@@ -335,56 +357,213 @@ void TestProjection::negativeHorizonYieldsTodayOnly()
     QCOMPARE(years.front().year, 0);
 }
 
-void TestProjection::debtFallsByTheAmortisationAndFloorsAtZero()
+void TestProjection::aFixedAmortisationLoanFallsLinearlyAndStopsAtZero()
 {
     ProjectionInput input = emptyInput();
-    input.years = 3;
-    input.startingDebt = sek(2500000);       // 25 000 kr
-    input.annualAmortisation = sek(1000000); // 10 000 kr
+    input.years = 5;
+    // 50 000 kr at zero rate repaid at 1 000 kr a month: 12 000 kr a year,
+    // which is the same amount every year until the loan is gone.
+    input.loans = {fixedLoan(5000000, 0, 100000)};
 
     const std::vector<ProjectionYear> years = project(input);
 
-    QCOMPARE(ore(years[0].debt), qint64(2500000));
-    QCOMPARE(ore(years[1].debt), qint64(1500000));
-    QCOMPARE(ore(years[2].debt), qint64(500000));
+    QCOMPARE(ore(years[0].debt), qint64(5000000));
+    QCOMPARE(ore(years[1].debt), qint64(3800000));
+    QCOMPARE(ore(years[2].debt), qint64(2600000));
+    QCOMPARE(ore(years[3].debt), qint64(1400000));
+    QCOMPARE(ore(years[4].debt), qint64(200000));
     // The last payment clears the loan; it does not lend the household money.
-    QCOMPARE(ore(years[3].debt), qint64(0));
+    QCOMPARE(ore(years[5].debt), qint64(0));
 
     // A negative balance is not a debt the model can reason about either, so
     // today is floored the same way.
     ProjectionInput negative = emptyInput();
-    negative.startingDebt = sek(-1000000);
+    negative.loans = {fixedLoan(-1000000, 0, 100000)};
     QCOMPARE(ore(project(negative).front().debt), qint64(0));
 }
 
-void TestProjection::aRepaidMortgageReadsZeroFromItsYearOnwards()
+void TestProjection::aLoanThatIsClearedStaysAtZero()
 {
     ProjectionInput input = emptyInput();
     input.years = 5;
-    input.startingDebt = sek(3000000);       // 30 000 kr
-    input.annualAmortisation = sek(1000000); // 10 000 kr a year
+    input.loans = {fixedLoan(3000000, 0, 100000)}; // 30 000 kr, 1 000 kr a month
 
     const std::vector<ProjectionYear> years = project(input);
 
-    QCOMPARE(ore(years[2].debt), qint64(1000000));
+    QCOMPARE(ore(years[2].debt), qint64(600000));
     for (std::size_t year = 3; year < years.size(); ++year)
         QCOMPARE(ore(years[year].debt), qint64(0));
 }
 
-void TestProjection::amortisationThatIsZeroOrNegativeLeavesDebtFlat()
+void TestProjection::aZeroPaymentLeavesTheDebtFlat()
 {
-    // No split recorded is zero here, and a negative figure is a broken input:
-    // neither may turn the loan into a growing balance.
-    for (const qint64 amortisation : {qint64(0), qint64(-1000000)}) {
+    // A loan with no terms recorded comes out of the upgrade as fixed
+    // amortisation with a zero payment, and a negative payment is broken input:
+    // neither may turn the loan into an invented paydown or a growing balance.
+    for (const qint64 payment : {qint64(0), qint64(-1000000)}) {
         ProjectionInput input = emptyInput();
         input.years = 3;
-        input.startingDebt = sek(5000000); // 50 000 kr
-        input.annualAmortisation = sek(amortisation);
+        input.loans = {fixedLoan(5000000, 0, payment)};
 
         const std::vector<ProjectionYear> years = project(input);
 
         for (const ProjectionYear& year : years)
             QCOMPARE(ore(year.debt), qint64(5000000));
+    }
+
+    // No loans at all is a zero debt, not a paydown of one.
+    const std::vector<ProjectionYear> none = project(emptyInput());
+    QCOMPARE(ore(none.front().debt), qint64(0));
+}
+
+void TestProjection::annuityPrincipalShareRisesAsTheBalanceFalls()
+{
+    // 100 000 kr at 12 % repaid as one fixed monthly sum of 1 500 kr: early
+    // payments are mostly interest, and as the balance falls the interest share
+    // falls with it. A yearly approximation would split every year the same.
+    ProjectionInput input = emptyInput();
+    input.years = 4;
+    input.loans = {annuityLoan(10000000, 1200, 150000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    const Money firstYearInterest = years[1].interestPaid - years[0].interestPaid;
+    const Money secondYearInterest = years[2].interestPaid - years[1].interestPaid;
+    QVERIFY(secondYearInterest < firstYearInterest);
+
+    const Money firstYearPrincipal = years[0].debt - years[1].debt;
+    const Money secondYearPrincipal = years[1].debt - years[2].debt;
+    QVERIFY(firstYearPrincipal < secondYearPrincipal);
+    QVERIFY(years[2].debt.isPositive());
+}
+
+void TestProjection::anAnnuityEndsAtTheStatedPayment()
+{
+    // 1 000 kr at 12 % repaid as 100 kr a month. The payment never changes; the
+    // loan ends when the balance does, eleven months in.
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.loans = {annuityLoan(100000, 1200, 10000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[0].debt), qint64(100000));
+    QCOMPARE(ore(years[1].debt), qint64(0));
+    QCOMPARE(ore(years[1].interestPaid), qint64(5898));
+    QCOMPARE(ore(years[1].feesPaid), qint64(0));
+    QVERIFY(!years[1].loanNeverRepaid);
+    // Once the loan is gone it stays gone and costs nothing more.
+    QCOMPARE(ore(years[2].debt), qint64(0));
+    QCOMPARE(ore(years[2].interestPaid), qint64(5898));
+}
+
+void TestProjection::anUnderServicingAnnuityKeepsTheBalanceFlatAndFlagsIt()
+{
+    // 100 000 kr at 12 % costs 1 000 kr a month in interest alone. A 1 000 kr
+    // payment with a 100 kr fee does not even cover that, so no principal can be
+    // paid: the balance stays where it is and the year says why.
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.loans = {annuityLoan(10000000, 1200, 100000, 10000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QVERIFY(!years.front().loanNeverRepaid);
+    for (std::size_t year = 1; year < years.size(); ++year) {
+        QCOMPARE(ore(years[year].debt), qint64(10000000));
+        QVERIFY(years[year].loanNeverRepaid);
+    }
+    QCOMPARE(ore(years[1].interestPaid), qint64(1200000));
+    QCOMPARE(ore(years[1].feesPaid), qint64(120000));
+    QCOMPARE(ore(years[2].interestPaid), qint64(2400000));
+    QCOMPARE(ore(years[2].feesPaid), qint64(240000));
+}
+
+void TestProjection::mixedLoansSumIndependently()
+{
+    // A 2 000 000 kr mortgage at 2.65 % repaid with 3 000 kr of principal a
+    // month beside a 300 000 kr student loan at 1.5 % repaid as a 1 500 kr
+    // annuity with a 50 kr fee. Each loan has its own terms, and the household's
+    // figures are the two of them added up - not one blended rate.
+    ProjectionInput mortgage = emptyInput();
+    mortgage.years = 3;
+    mortgage.loans = {fixedLoan(200000000, 265, 300000)};
+
+    ProjectionInput student = emptyInput();
+    student.years = 3;
+    student.loans = {annuityLoan(30000000, 150, 150000, 5000)};
+
+    ProjectionInput mixed = emptyInput();
+    mixed.years = 3;
+    mixed.loans = {mortgage.loans.front(), student.loans.front()};
+
+    const std::vector<ProjectionYear> mortgageYears = project(mortgage);
+    const std::vector<ProjectionYear> studentYears = project(student);
+    const std::vector<ProjectionYear> mixedYears = project(mixed);
+
+    for (std::size_t year = 0; year < mixedYears.size(); ++year) {
+        QCOMPARE(ore(mixedYears[year].debt),
+                 ore(mortgageYears[year].debt) + ore(studentYears[year].debt));
+        QCOMPARE(ore(mixedYears[year].interestPaid),
+                 ore(mortgageYears[year].interestPaid) + ore(studentYears[year].interestPaid));
+        QCOMPARE(ore(mixedYears[year].feesPaid),
+                 ore(mortgageYears[year].feesPaid) + ore(studentYears[year].feesPaid));
+    }
+
+    // Both balances fall, and the student loan's fee is a cost of its own.
+    QVERIFY(mixedYears.back().debt < mixedYears.front().debt);
+    QCOMPARE(ore(mixedYears[1].feesPaid), qint64(60000));
+    QVERIFY(mixedYears[1].interestPaid.isPositive());
+}
+
+void TestProjection::interestAccruesAndIsReported()
+{
+    // 12 000 kr at 12 % costs 120 kr a month, 1 440 kr a year, even when no
+    // principal is being paid: the debt is a cost to hold as well as a balance.
+    ProjectionInput input = emptyInput();
+    input.years = 2;
+    input.loans = {fixedLoan(1200000, 1200, 0)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[0].interestPaid), qint64(0));
+    QCOMPARE(ore(years[1].interestPaid), qint64(144000));
+    QCOMPARE(ore(years[2].interestPaid), qint64(288000));
+    QCOMPARE(ore(years[1].feesPaid), qint64(0));
+    for (const ProjectionYear& year : years)
+        QCOMPARE(ore(year.debt), qint64(1200000));
+}
+
+void TestProjection::feesAccrueForAnAnnuity()
+{
+    ProjectionInput input = emptyInput();
+    input.years = 3;
+    input.loans = {annuityLoan(5000000, 1200, 100000, 5000)};
+
+    const std::vector<ProjectionYear> years = project(input);
+
+    QCOMPARE(ore(years[1].feesPaid), qint64(60000));
+    QCOMPARE(ore(years[3].feesPaid), qint64(180000));
+    // The fee is a cost, never principal: the balance still falls by the
+    // payment less the interest and the fee.
+    QVERIFY(years[3].debt < years[0].debt);
+}
+
+void TestProjection::zeroRateLoansClearExactly()
+{
+    // With no interest there is nothing to split: the monthly payment is
+    // principal and twelve of them clear the loan exactly.
+    for (const LoanTerms& loan : {fixedLoan(1200000, 0, 100000), annuityLoan(1200000, 0, 100000)}) {
+        ProjectionInput input = emptyInput();
+        input.years = 1;
+        input.loans = {loan};
+
+        const std::vector<ProjectionYear> years = project(input);
+
+        QCOMPARE(ore(years[1].debt), qint64(0));
+        QCOMPARE(ore(years[1].interestPaid), qint64(0));
+        QCOMPARE(ore(years[1].feesPaid), qint64(0));
+        QVERIFY(!years[1].loanNeverRepaid);
     }
 }
 
@@ -394,8 +573,7 @@ void TestProjection::netWorthIsTheTotalMinusDebt()
     input.years = 2;
     input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000); // 100 000 kr
     input.annualContributions[indexOf(Bucket::Growth)] = sek(1000000);
-    input.startingDebt = sek(4000000);      // 40 000 kr
-    input.annualAmortisation = sek(500000); // 5 000 kr a year
+    input.loans = {fixedLoan(4000000, 0, 50000)}; // 40 000 kr, 500 kr a month
 
     const std::vector<ProjectionYear> years = project(input);
 
@@ -403,10 +581,10 @@ void TestProjection::netWorthIsTheTotalMinusDebt()
         QCOMPARE(ore(year.netWorth), ore(year.total) - ore(year.debt));
 
     QCOMPARE(ore(years.front().netWorth), qint64(6000000));
-    // 100 000 + 10 000 twice, less the 30 000 still owed in year two.
+    // 100 000 + 10 000 twice, less the 28 000 still owed in year two.
     QCOMPARE(ore(years[2].total), qint64(12000000));
-    QCOMPARE(ore(years[2].debt), qint64(3000000));
-    QCOMPARE(ore(years[2].netWorth), qint64(9000000));
+    QCOMPARE(ore(years[2].debt), qint64(2800000));
+    QCOMPARE(ore(years[2].netWorth), qint64(9200000));
 }
 
 void TestProjection::netWorthCountsOtherAssets()
@@ -419,8 +597,7 @@ void TestProjection::netWorthCountsOtherAssets()
     input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000);
     input.startingOtherAssets = sek(200000000);
     input.otherAssetsRealReturn = Percentage::fromBasisPoints(250);
-    input.startingDebt = sek(150000000);
-    input.annualAmortisation = sek(1200000);
+    input.loans = {fixedLoan(150000000, 0, 100000)};
 
     const std::vector<ProjectionYear> years = project(input);
 
@@ -445,8 +622,7 @@ void TestProjection::noOtherAssetsChangesNothing()
     input.startingBalances[indexOf(Bucket::Growth)] = sek(10000000);
     input.annualContributions[indexOf(Bucket::Growth)] = sek(1000000);
     input.otherAssetsRealReturn = Percentage::fromBasisPoints(250);
-    input.startingDebt = sek(4000000);
-    input.annualAmortisation = sek(500000);
+    input.loans = {fixedLoan(4000000, 0, 50000)};
 
     const std::vector<ProjectionYear> years = project(input);
 
@@ -491,8 +667,7 @@ void TestProjection::amortisationReachesNoInvestableCapital()
     ProjectionInput allToTheLoan = emptyInput();
     allToTheLoan.years = 3;
     allToTheLoan.startingBalances[indexOf(Bucket::Preserve)] = sek(10000000);
-    allToTheLoan.startingDebt = sek(5000000);       // 50 000 kr
-    allToTheLoan.annualAmortisation = sek(1200000); // 1 000 kr a month
+    allToTheLoan.loans = {fixedLoan(5000000, 0, 100000)}; // 50 000 kr, 1 000 kr a month
 
     const std::vector<ProjectionYear> amortised = project(allToTheLoan);
 
@@ -525,12 +700,10 @@ void TestProjection::debtDoesNotChangeYearsOfFreedom()
     borrowed.startingBalances[indexOf(Bucket::Growth)] = sek(50000000); // 500 000 kr
     borrowed.annualExpenses = sek(25000000);
     borrowed.fiTarget = sek(100000000);
-    borrowed.startingDebt = sek(180000000); // a 1 800 000 kr mortgage
-    borrowed.annualAmortisation = sek(12000000);
+    borrowed.loans = {fixedLoan(180000000, 0, 1000000)}; // a 1 800 000 kr mortgage
 
     ProjectionInput unencumbered = borrowed;
-    unencumbered.startingDebt = sek(0);
-    unencumbered.annualAmortisation = sek(0);
+    unencumbered.loans.clear();
 
     const std::vector<ProjectionYear> withDebt = project(borrowed);
     const std::vector<ProjectionYear> withoutDebt = project(unencumbered);

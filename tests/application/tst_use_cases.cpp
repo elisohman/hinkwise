@@ -94,7 +94,13 @@ public:
 
     Status upsert(const Liability& liability) override
     {
-        stored.push_back(liability);
+        const auto existing =
+            std::find_if(stored.begin(), stored.end(),
+                         [&liability](const Liability& item) { return item.id == liability.id; });
+        if (existing == stored.end())
+            stored.push_back(liability);
+        else
+            *existing = liability;
         return Status::success();
     }
 
@@ -285,6 +291,8 @@ private slots:
     void recordDebtBalanceRejectsInvalidInput();
     void addAndRemoveAsset();
     void addAndRemoveLiability();
+    void updateLiabilityChangesTheTermsAndKeepsTheLoan();
+    void updateLiabilityRejectsInvalidTerms();
     void createProfileNeedsAName();
     void createProfileStartsInSwedishJurisdiction();
     void changePhaseAppendsHistoryAndPersists();
@@ -457,6 +465,50 @@ void TestUseCases::addAndRemoveLiability()
     QCOMPARE(liabilities.stored.size(), expectedAfterAdd);
 
     QVERIFY(removeLiability(liabilities, "card").ok());
+    QVERIFY(liabilities.stored.empty());
+}
+
+void TestUseCases::updateLiabilityChangesTheTermsAndKeepsTheLoan()
+{
+    FakeLiabilityRepository liabilities;
+    const Liability mortgage = makeLiability(
+        "bolan", "Mortgage", LiabilityKind::Mortgage, Percentage::fromBasisPoints(265),
+        RepaymentStyle::FixedAmortisation, sek(300000), sek(0));
+    QVERIFY(addLiability(liabilities, mortgage).ok());
+
+    Liability repriced = mortgage;
+    repriced.interestRate = Percentage::fromBasisPoints(310);
+    repriced.style = RepaymentStyle::Annuity;
+    repriced.regularPayment = sek(350000);
+    repriced.monthlyFee = sek(5000);
+    QVERIFY(updateLiability(liabilities, repriced).ok());
+
+    // The loan is corrected, not replaced by a second one: the id is what every
+    // recorded balance hangs on.
+    const std::size_t expectedCount = 1;
+    QCOMPARE(liabilities.stored.size(), expectedCount);
+    QCOMPARE(QString::fromStdString(liabilities.stored.front().id), QStringLiteral("bolan"));
+    QCOMPARE(liabilities.stored.front().interestRate.basisPoints(), 310);
+    QCOMPARE(static_cast<int>(liabilities.stored.front().style),
+             static_cast<int>(RepaymentStyle::Annuity));
+    QCOMPARE(liabilities.stored.front().regularPayment.minorUnits(), qint64(350000));
+    QCOMPARE(liabilities.stored.front().monthlyFee.minorUnits(), qint64(5000));
+}
+
+void TestUseCases::updateLiabilityRejectsInvalidTerms()
+{
+    FakeLiabilityRepository liabilities;
+    Liability loan = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
+                                   Percentage::fromBasisPoints(265), RepaymentStyle::Annuity,
+                                   sek(300000), sek(5000));
+
+    loan.regularPayment = sek(-1);
+    QVERIFY(!updateLiability(liabilities, loan).ok());
+
+    loan = makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage, Percentage{});
+    loan.monthlyFee = sek(5000);
+    QVERIFY(!updateLiability(liabilities, loan).ok());
+
     QVERIFY(liabilities.stored.empty());
 }
 

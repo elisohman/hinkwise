@@ -51,6 +51,12 @@ Status removeAsset(IAssetRepository& assets, std::string_view assetId);
 /// Adds a liability or replaces the one with the same id.
 Status addLiability(ILiabilityRepository& liabilities, const domain::Liability& liability);
 
+/// Changes a liability's own terms - its rate, style, payment and fee - while
+/// keeping its id, and therefore every balance recorded against it. A rate is
+/// not a reason to delete a loan and lose its history: the history is what says
+/// what has actually been repaid.
+Status updateLiability(ILiabilityRepository& liabilities, const domain::Liability& liability);
+
 /// Removes a liability and everything recorded about it.
 Status removeLiability(ILiabilityRepository& liabilities, std::string_view liabilityId);
 

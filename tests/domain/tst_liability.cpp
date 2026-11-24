@@ -22,6 +22,11 @@ Liability creditCard()
                          Percentage::fromBasisPoints(1995));
 }
 
+Money sek(qint64 minorUnits)
+{
+    return Money{minorUnits, Currency::Sek};
+}
+
 } // namespace
 
 class TestLiability : public QObject {
@@ -32,6 +37,10 @@ private slots:
     void makeLiabilityRejectsEmptyId();
     void makeLiabilityRejectsEmptyName();
     void makeLiabilityRejectsNegativeRate();
+    void makeLiabilityKeepsItsRepaymentTerms();
+    void makeLiabilityRejectsANegativePayment();
+    void makeLiabilityRejectsANegativeFee();
+    void makeLiabilityRejectsAFeeOnFixedAmortisation();
     void zeroRateIsAllowed();
     void isBadLoanAtTheBoundary();
     void isBadLoanComparesStrictly();
@@ -67,6 +76,51 @@ void TestLiability::makeLiabilityRejectsNegativeRate()
     QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
                              makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
                                            Percentage::fromBasisPoints(-1)));
+}
+
+void TestLiability::makeLiabilityKeepsItsRepaymentTerms()
+{
+    const Liability loan = makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                                         Percentage::fromBasisPoints(150), RepaymentStyle::Annuity,
+                                         sek(150000), sek(5000));
+
+    QCOMPARE(static_cast<int>(loan.style), static_cast<int>(RepaymentStyle::Annuity));
+    QCOMPARE(loan.regularPayment.minorUnits(), qint64(150000));
+    QCOMPARE(loan.monthlyFee.minorUnits(), qint64(5000));
+
+    // A loan with nothing recorded is fixed amortisation with a zero payment,
+    // which is the model's "no terms yet" rather than a paid-off loan.
+    const Liability untold =
+        makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage, fourAndAHalfPercent());
+    QCOMPARE(static_cast<int>(untold.style), static_cast<int>(RepaymentStyle::FixedAmortisation));
+    QVERIFY(untold.regularPayment.isZero());
+    QVERIFY(untold.monthlyFee.isZero());
+}
+
+void TestLiability::makeLiabilityRejectsANegativePayment()
+{
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
+                             makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
+                                           fourAndAHalfPercent(), RepaymentStyle::FixedAmortisation,
+                                           sek(-1)));
+}
+
+void TestLiability::makeLiabilityRejectsANegativeFee()
+{
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
+                             makeLiability("csn", "Student loan", LiabilityKind::StudentLoan,
+                                           Percentage::fromBasisPoints(150),
+                                           RepaymentStyle::Annuity, sek(150000), sek(-1)));
+}
+
+void TestLiability::makeLiabilityRejectsAFeeOnFixedAmortisation()
+{
+    // The fee is part of what an annuity payment is split into; on a fixed
+    // amortisation loan there is nothing for it to belong to.
+    QVERIFY_THROWS_EXCEPTION(std::invalid_argument,
+                             makeLiability("bolan", "Mortgage", LiabilityKind::Mortgage,
+                                           fourAndAHalfPercent(), RepaymentStyle::FixedAmortisation,
+                                           sek(300000), sek(5000)));
 }
 
 void TestLiability::zeroRateIsAllowed()

@@ -247,7 +247,8 @@ void TestRepositories::liabilityRoundTrip()
 
     const domain::Liability mortgage =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                              domain::Percentage::fromBasisPoints(425));
+                              domain::Percentage::fromBasisPoints(425),
+                              domain::RepaymentStyle::Annuity, sek(1500000), sek(5000));
     QVERIFY(liabilities.upsert(mortgage).ok());
 
     const application::Result<std::vector<domain::Liability>> all = liabilities.all();
@@ -260,16 +261,25 @@ void TestRepositories::liabilityRoundTrip()
     QCOMPARE(static_cast<int>(all.value()[0].kind),
              static_cast<int>(domain::LiabilityKind::Mortgage));
     QCOMPARE(all.value()[0].interestRate.basisPoints(), 425);
+    QCOMPARE(static_cast<int>(all.value()[0].style),
+             static_cast<int>(domain::RepaymentStyle::Annuity));
+    QCOMPARE(all.value()[0].regularPayment.minorUnits(), qint64(1500000));
+    QCOMPARE(all.value()[0].monthlyFee.minorUnits(), qint64(5000));
 
     const domain::Liability repriced =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                              domain::Percentage::fromBasisPoints(390));
+                              domain::Percentage::fromBasisPoints(390),
+                              domain::RepaymentStyle::FixedAmortisation, sek(0), sek(0));
     QVERIFY(liabilities.upsert(repriced).ok());
 
     const application::Result<std::vector<domain::Liability>> reloaded = liabilities.all();
     QVERIFY2(reloaded.ok(), reloaded.error().c_str());
     QCOMPARE(reloaded.value().size(), expectedCount);
     QCOMPARE(reloaded.value()[0].interestRate.basisPoints(), 390);
+    QCOMPARE(static_cast<int>(reloaded.value()[0].style),
+             static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
+    QCOMPARE(reloaded.value()[0].regularPayment.minorUnits(), qint64(0));
+    QCOMPARE(reloaded.value()[0].monthlyFee.minorUnits(), qint64(0));
 }
 
 void TestRepositories::plannedExpenseRoundTrip()
@@ -457,6 +467,19 @@ void TestRepositories::debtBalanceRoundTrip()
              QStringLiteral("2026-01"));
     QCOMPARE(history.value().at(0).amount.minorUnits(), qint64(250000000));
     QCOMPARE(history.value().at(1).amount.minorUnits(), qint64(247000000));
+
+    // Changing the rate corrects the loan rather than ending it: the id stays,
+    // so every balance recorded against it is still there afterwards.
+    QVERIFY(liabilities
+                .upsert(domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
+                                              domain::Percentage::fromBasisPoints(360)))
+                .ok());
+    const application::Result<std::vector<application::MoneyPoint>> afterRateChange =
+        balances.history("bolan");
+    QVERIFY2(afterRateChange.ok(), afterRateChange.error().c_str());
+    QCOMPARE(afterRateChange.value().size(), std::size_t{2});
+    QCOMPARE(afterRateChange.value().at(0).amount.minorUnits(), qint64(250000000));
+    QCOMPARE(afterRateChange.value().at(1).amount.minorUnits(), qint64(247000000));
 
     // A debt nobody has recorded a balance for has no points, not an error.
     const application::Result<std::vector<application::MoneyPoint>> nothing =

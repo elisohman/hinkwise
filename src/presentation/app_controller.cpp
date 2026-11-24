@@ -456,6 +456,13 @@ application::Status AppController::addLiability(const domain::Liability& liabili
     return report(application::addLiability(*m_liabilities, liability));
 }
 
+application::Status AppController::updateLiability(const domain::Liability& liability)
+{
+    if (!m_liabilities)
+        return application::Status::err(toStd(tr("The database is not open.")));
+    return report(application::updateLiability(*m_liabilities, liability));
+}
+
 application::Status AppController::removeLiability(std::string_view liabilityId)
 {
     if (!m_liabilities)

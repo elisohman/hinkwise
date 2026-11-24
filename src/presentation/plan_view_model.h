@@ -193,6 +193,10 @@ private:
     bool m_chartEmpty = true;
     bool m_hasDebt = false;
     bool m_debtWithoutAmortisation = false;
+    /// True when the snapshot found a loan that still owes money but records no
+    /// monthly payment. Kept from apply() because recompute() runs again for the
+    /// what-if amount without a fresh snapshot.
+    bool m_debtWithoutTerms = false;
     QString m_debtTodayLabel;
     QString m_debtFreeLabel;
     QString m_netWorthEndLabel;

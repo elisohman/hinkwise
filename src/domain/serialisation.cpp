@@ -66,6 +66,11 @@ constexpr std::array<StorageKey<LiabilityKind>, 6> kLiabilityKindKeys{{
     {"other", LiabilityKind::Other},
 }};
 
+constexpr std::array<StorageKey<RepaymentStyle>, 2> kRepaymentStyleKeys{{
+    {"fixed-amortisation", RepaymentStyle::FixedAmortisation},
+    {"annuity", RepaymentStyle::Annuity},
+}};
+
 constexpr std::array<StorageKey<Bucket>, 4> kBucketKeys{{
     {"buffer", Bucket::Buffer},
     {"preserve", Bucket::Preserve},
@@ -124,6 +129,16 @@ const char* storageKey(LiabilityKind kind)
 std::optional<LiabilityKind> liabilityKindFromStorageKey(std::string_view key)
 {
     return valueOf(kLiabilityKindKeys, key);
+}
+
+const char* storageKey(RepaymentStyle style)
+{
+    return keyOf(kRepaymentStyleKeys, style);
+}
+
+std::optional<RepaymentStyle> repaymentStyleFromStorageKey(std::string_view key)
+{
+    return valueOf(kRepaymentStyleKeys, key);
 }
 
 const char* storageKey(Bucket bucket)

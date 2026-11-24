@@ -11,6 +11,27 @@
 
 namespace hinkwise::application {
 
+namespace {
+
+/// The checks every path that writes a liability makes, whether it adds a new
+/// one or changes the terms of an existing one.
+Status validateLiability(const domain::Liability& liability)
+{
+    if (liability.id.empty() || liability.name.empty())
+        return Status::err("A liability needs an id and a name.");
+    if (liability.interestRate.isNegative())
+        return Status::err("A liability's interest rate cannot be negative.");
+    if (liability.regularPayment.isNegative())
+        return Status::err("A liability's regular payment cannot be negative.");
+    if (liability.monthlyFee.isNegative())
+        return Status::err("A liability's monthly fee cannot be negative.");
+    if (!liability.monthlyFee.isZero() && liability.style != domain::RepaymentStyle::Annuity)
+        return Status::err("A monthly fee belongs to an annuity.");
+    return Status::success();
+}
+
+} // namespace
+
 Status recordMonth(IMonthFlowRepository& flows, domain::YearMonth month,
                    const domain::MonthFlow& flow)
 {
@@ -66,11 +87,22 @@ Status removeAsset(IAssetRepository& assets, std::string_view assetId)
 
 Status addLiability(ILiabilityRepository& liabilities, const domain::Liability& liability)
 {
-    if (liability.id.empty() || liability.name.empty())
-        return Status::err("A liability needs an id and a name.");
-    if (liability.interestRate.isNegative())
-        return Status::err("A liability's interest rate cannot be negative.");
+    const Status checked = validateLiability(liability);
+    if (!checked.ok())
+        return checked;
 
+    return liabilities.upsert(liability);
+}
+
+Status updateLiability(ILiabilityRepository& liabilities, const domain::Liability& liability)
+{
+    const Status checked = validateLiability(liability);
+    if (!checked.ok())
+        return checked;
+
+    // Upsert keys on the id, so the balance history recorded against it stays
+    // exactly where it is: changing a rate corrects the loan, it does not end
+    // one loan and start another.
     return liabilities.upsert(liability);
 }
 

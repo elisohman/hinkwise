@@ -389,6 +389,7 @@ private slots:
     void flowIsUsedWhenItIsNotLaterThanTheSnapshotMonth();
     void flowLaterThanTheSnapshotMonthIsNotPartOfIt();
     void totalBadLoansSumsOnlyDebtsAboveTheBenchmark();
+    void debtsCarryTheirTermsAndLatestBalance();
 
     void monthsSinceCountsWholeMonths();
     void accountingFreshnessTreatsAMissedMonthAsAHole();
@@ -604,6 +605,51 @@ void TestDashboard::totalBadLoansSumsOnlyDebtsAboveTheBenchmark()
 
     const std::vector<Debt> noDebts;
     QCOMPARE(ore(totalBadLoans(noDebts)), qint64(0));
+}
+
+void TestDashboard::debtsCarryTheirTermsAndLatestBalance()
+{
+    FakeHousehold household;
+    populate(household);
+    household.liabilities.stored.push_back(makeLiability(
+        "csn", "Student loan", LiabilityKind::StudentLoan, Percentage::fromBasisPoints(150),
+        RepaymentStyle::Annuity, sek(150000), sek(5000)));
+    household.debtBalances.upsert("csn", kSnapshotMonth, sek(30000000));
+
+    const DashboardSnapshot snapshot = household.build(kSnapshotMonth);
+
+    QCOMPARE(snapshot.debts.size(), std::size_t{3});
+
+    const auto find = [&snapshot](std::string_view id) -> const DebtInEffect& {
+        for (const DebtInEffect& debt : snapshot.debts) {
+            if (debt.id == id)
+                return debt;
+        }
+        return snapshot.debts.front();
+    };
+
+    const DebtInEffect& csn = find("csn");
+    QCOMPARE(static_cast<int>(csn.kind), static_cast<int>(LiabilityKind::StudentLoan));
+    QCOMPARE(bps(csn.interestRate), 150);
+    QCOMPARE(static_cast<int>(csn.style), static_cast<int>(RepaymentStyle::Annuity));
+    QCOMPARE(ore(csn.regularPayment), qint64(150000));
+    QCOMPARE(ore(csn.monthlyFee), qint64(5000));
+    QCOMPARE(ore(csn.balance), qint64(30000000));
+
+    // The mortgage has no terms recorded in the fixture, and the credit card
+    // still owes 20 000 kr: that is the state the plan must not draw as paid
+    // down, so the snapshot says the terms are missing.
+    const DebtInEffect& card = find("card");
+    QCOMPARE(ore(card.balance), qint64(2000000));
+    QVERIFY(card.regularPayment.isZero());
+    QVERIFY(snapshot.hasDebtWithoutTerms);
+
+    // Recording a payment for every loan clears the warning.
+    FakeHousehold paid;
+    populate(paid);
+    for (Liability& liability : paid.liabilities.stored)
+        liability.regularPayment = sek(100000);
+    QVERIFY(!paid.build(kSnapshotMonth).hasDebtWithoutTerms);
 }
 
 void TestDashboard::monthsSinceCountsWholeMonths()

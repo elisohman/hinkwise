@@ -23,6 +23,8 @@ private slots:
     void assetKinds();
     void liabilityKinds_data();
     void liabilityKinds();
+    void repaymentStyles_data();
+    void repaymentStyles();
     void trackingModes_data();
     void trackingModes();
     void rejectsUnknownKeys();
@@ -169,6 +171,30 @@ void TestSerialisation::liabilityKinds()
     QCOMPARE(static_cast<int>(*decoded), value);
 }
 
+void TestSerialisation::repaymentStyles_data()
+{
+    QTest::addColumn<int>("value");
+    QTest::addColumn<QString>("key");
+
+    QTest::newRow("fixed amortisation")
+        << static_cast<int>(RepaymentStyle::FixedAmortisation) << "fixed-amortisation";
+    QTest::newRow("annuity") << static_cast<int>(RepaymentStyle::Annuity) << "annuity";
+}
+
+void TestSerialisation::repaymentStyles()
+{
+    QFETCH(int, value);
+    QFETCH(QString, key);
+
+    const RepaymentStyle style = static_cast<RepaymentStyle>(value);
+    const QString stored = QString::fromUtf8(storageKey(style));
+    QCOMPARE(stored, key);
+
+    const std::optional<RepaymentStyle> decoded = repaymentStyleFromStorageKey(key.toStdString());
+    QVERIFY(decoded.has_value());
+    QCOMPARE(static_cast<int>(*decoded), value);
+}
+
 void TestSerialisation::trackingModes_data()
 {
     QTest::addColumn<int>("value");
@@ -214,6 +240,8 @@ void TestSerialisation::rejectsUnknownKeys()
     QVERIFY(!assetKindFromStorageKey(nonsense).has_value());
     QVERIFY(!assetKindFromStorageKey(snakeCase).has_value());
     QVERIFY(!liabilityKindFromStorageKey(nonsense).has_value());
+    QVERIFY(!repaymentStyleFromStorageKey(empty).has_value());
+    QVERIFY(!repaymentStyleFromStorageKey(nonsense).has_value());
     QVERIFY(!bucketFromStorageKey(empty).has_value());
     QVERIFY(!bucketFromStorageKey(nonsense).has_value());
     QVERIFY(!trackingModeFromStorageKey(empty).has_value());
@@ -234,6 +262,7 @@ void TestSerialisation::rejectsOutOfRangeEnums()
     QCOMPARE(QString::fromUtf8(storageKey(kind)), QString{});
     QCOMPARE(QString::fromUtf8(storageKey(bucket)), QString{});
     QCOMPARE(QString::fromUtf8(storageKey(static_cast<TrackingMode>(4))), QString{});
+    QCOMPARE(QString::fromUtf8(storageKey(static_cast<RepaymentStyle>(7))), QString{});
 }
 
 QTEST_APPLESS_MAIN(TestSerialisation)

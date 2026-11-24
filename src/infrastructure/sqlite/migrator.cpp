@@ -146,6 +146,31 @@ application::Status addTrackingMode(QSqlDatabase& database)
                              "DEFAULT 'planning'");
 }
 
+/// The schema of version 4: each loan's own repayment terms.
+///
+/// Every column has a NOT NULL default, so a file that already holds a loan
+/// comes out of the migration as fixed amortisation with a zero payment. That
+/// is the model's "no terms recorded yet": the plan keeps the balance flat and
+/// says so instead of inventing a paydown the household never entered. A
+/// monthly fee belongs to an annuity, so its default of zero is the only
+/// meaningful value for an upgraded row.
+application::Status addLoanTerms(QSqlDatabase& database)
+{
+    static constexpr const char* kStatements[] = {
+        "ALTER TABLE liability ADD COLUMN repayment_style TEXT NOT NULL DEFAULT "
+        "'fixed-amortisation'",
+        "ALTER TABLE liability ADD COLUMN regular_payment_minor INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE liability ADD COLUMN monthly_fee_minor INTEGER NOT NULL DEFAULT 0",
+    };
+
+    for (const char* statement : kStatements) {
+        const application::Status status = execute(database, statement);
+        if (!status.ok())
+            return status;
+    }
+    return application::Status::success();
+}
+
 application::Status setSchemaVersion(QSqlDatabase& database, int version)
 {
     // user_version is a header field, not a value a statement can bind, and the
@@ -163,8 +188,10 @@ std::string contextMessage(const QString& context, const QSqlError& error)
 
 MigrationList schemaMigrations()
 {
-    return MigrationList{
-        {1, &createInitialSchema}, {2, &addSavingBreakdown}, {3, &addTrackingMode}};
+    return MigrationList{{1, &createInitialSchema},
+                         {2, &addSavingBreakdown},
+                         {3, &addTrackingMode},
+                         {4, &addLoanTerms}};
 }
 
 application::Result<int> schemaVersion(QSqlDatabase& database)

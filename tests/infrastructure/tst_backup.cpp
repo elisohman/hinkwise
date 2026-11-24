@@ -56,7 +56,9 @@ json::BackupData fullyPopulated()
     data.assets = {fund, flat};
 
     data.liabilities = {domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
-                                              domain::Percentage::fromBasisPoints(420))};
+                                              domain::Percentage::fromBasisPoints(420),
+                                              domain::RepaymentStyle::Annuity, sek(1750000),
+                                              sek(5000))};
 
     domain::PlannedExpense roof;
     roof.id = "roof";
@@ -128,6 +130,8 @@ private slots:
     void rejectsABreakdownThatDoesNotAddUp();
     void acceptsAProfileWrittenBeforeTrackingModeExisted();
     void rejectsUnknownTrackingMode();
+    void acceptsALiabilityWrittenBeforeTermsExisted();
+    void rejectsUnknownRepaymentStyle();
 };
 
 void TestBackup::roundTripIsLossless()
@@ -166,6 +170,10 @@ void TestBackup::roundTripIsLossless()
     QCOMPARE(static_cast<int>(data.liabilities[0].kind),
              static_cast<int>(domain::LiabilityKind::Mortgage));
     QCOMPARE(data.liabilities[0].interestRate.basisPoints(), 420);
+    QCOMPARE(static_cast<int>(data.liabilities[0].style),
+             static_cast<int>(domain::RepaymentStyle::Annuity));
+    QCOMPARE(data.liabilities[0].regularPayment.minorUnits(), qint64(1750000));
+    QCOMPARE(data.liabilities[0].monthlyFee.minorUnits(), qint64(5000));
 
     QCOMPARE(data.plannedExpenses.size(), std::size_t(1));
     QCOMPARE(data.plannedExpenses[0].amount.minorUnits(), qint64(25000000));
@@ -367,6 +375,46 @@ void TestBackup::rejectsUnknownTrackingMode()
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("monthly") != std::string::npos);
     QVERIFY(parsed.error().find("trackingMode") != std::string::npos);
+}
+
+/// The repayment terms arrived after the first backup format, so a liability
+/// without them is still a liability: fixed amortisation with a zero payment,
+/// which is the model's "no terms recorded yet".
+void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject mortgage = liabilities.at(0).toObject();
+    mortgage.remove(QStringLiteral("repaymentStyle"));
+    mortgage.remove(QStringLiteral("regularPayment"));
+    mortgage.remove(QStringLiteral("monthlyFee"));
+    liabilities.replace(0, mortgage);
+    root.insert(QStringLiteral("liabilities"), liabilities);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(static_cast<int>(parsed.value().liabilities[0].style),
+             static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
+    QVERIFY(parsed.value().liabilities[0].regularPayment.isZero());
+    QVERIFY(parsed.value().liabilities[0].monthlyFee.isZero());
+}
+
+/// A style that is there and says something unrecognised is a different
+/// matter: guessing which repayment the file meant would invent terms the
+/// household never recorded.
+void TestBackup::rejectsUnknownRepaymentStyle()
+{
+    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
+    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject mortgage = liabilities.at(0).toObject();
+    mortgage.insert(QStringLiteral("repaymentStyle"), QStringLiteral("interest-only"));
+    liabilities.replace(0, mortgage);
+    root.insert(QStringLiteral("liabilities"), liabilities);
+
+    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    QVERIFY(!parsed.ok());
+    QVERIFY(parsed.error().find("interest-only") != std::string::npos);
+    QVERIFY(parsed.error().find("repaymentStyle") != std::string::npos);
 }
 
 QTEST_APPLESS_MAIN(TestBackup)

@@ -86,6 +86,7 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
 {
     const QLocale locale;
     m_hasProfile = snapshot.hasProfile;
+    m_debtWithoutTerms = snapshot.hasDebtWithoutTerms;
     m_currency = snapshot.profile.baseCurrency;
     // The what-if amount belongs to the profile's currency; an amount typed
     // before the profile changed is dropped rather than added to another unit.
@@ -126,25 +127,24 @@ void PlanViewModel::apply(const application::DashboardSnapshot& snapshot)
     m_baseInput.fiTarget = snapshot.metrics.fiTargetDefault;
     m_baseInput.years = kHorizonYears;
 
-    // Debt starts at everything the balance sheet says is owed and falls by
-    // what the household records paying off each month, annualised. The
-    // property's value is not in the buckets, so its market value never moves
-    // here: the loan is the only part of the equity that does. With no split
-    // the household has not said how much goes to the loan, and the plan says
-    // that instead of drawing a mortgage that never falls.
-    m_baseInput.startingDebt = snapshot.facts.sheet.totalLiabilities.currency() == m_currency
-                                   ? snapshot.facts.sheet.totalLiabilities
-                                   : domain::Money::zero(m_currency);
+    // Debt is simulated loan by loan, each with its own rate, style and
+    // monthly payment, so the split between a mortgage and a student loan
+    // follows from their terms instead of from an aggregate amortisation. A
+    // loan whose payment is zero keeps its balance flat: that is what "no terms
+    // recorded yet" looks like to the model, and the page says so rather than
+    // drawing a paydown nobody entered.
+    m_baseInput.loans.clear();
+    m_baseInput.loans.reserve(snapshot.debts.size());
+    for (const application::DebtInEffect& debt : snapshot.debts) {
+        m_baseInput.loans.push_back(domain::LoanTerms{debt.balance, debt.interestRate, debt.style,
+                                                      debt.regularPayment, debt.monthlyFee});
+    }
     const std::optional<domain::SavingsBreakdown>& split = snapshot.facts.flow.savingSplit;
     // A breakdown in another currency is unusable: all three parts are added to
     // amounts in the profile's currency, so none of them may be mixed in.
     const bool splitKnown = split.has_value() && split->toBuffer.currency() == m_currency &&
                             split->toInvesting.currency() == m_currency &&
                             split->toAmortisation.currency() == m_currency;
-    m_baseInput.annualAmortisation =
-        splitKnown
-            ? split->toAmortisation.scaledBy(domain::Percentage::fromBasisPoints(kMonthsPerYear))
-            : domain::Money::zero(m_currency);
     for (const domain::Bucket bucket : domain::allBuckets()) {
         const std::size_t index = static_cast<std::size_t>(bucket);
         m_baseInput.expectedRealReturn[index] = returnUsedFor(bucket);
@@ -273,7 +273,7 @@ void PlanViewModel::recompute()
     m_extraYearLabel = extraSavingActive() ? yearLabel(askedSeries.yearsToTarget) : QString{};
 
     m_hasDebt = shown.hasDebt;
-    m_debtWithoutAmortisation = m_hasDebt && !m_baseInput.annualAmortisation.isPositive();
+    m_debtWithoutAmortisation = m_hasDebt && m_debtWithoutTerms;
     m_debtTodayLabel = shown.debt.isEmpty() ? QString{} : formatMoney(shown.debt.front().value);
     m_debtFreeLabel.clear();
     if (m_hasDebt && !m_debtWithoutAmortisation) {
@@ -288,8 +288,8 @@ void PlanViewModel::recompute()
         shown.netWorth.isEmpty() ? QString{} : formatMoney(shown.netWorth.back().value);
     m_amortisationNote =
         m_debtWithoutAmortisation
-            ? tr("No amortisation is recorded, so the debt does not fall in this projection. "
-                 "Record what you pay off the loan on the cashflow page.")
+            ? tr("No monthly payment is recorded for a loan that still owes money, so its balance "
+                 "does not fall in this projection. Record the payment on the loan.")
             : QString{};
 
     m_fiDeltaLabel.clear();

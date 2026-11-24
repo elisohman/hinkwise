@@ -159,6 +159,7 @@ public:
     application::Status addAsset(const domain::Asset& asset);
     application::Status removeAsset(std::string_view assetId);
     application::Status addLiability(const domain::Liability& liability);
+    application::Status updateLiability(const domain::Liability& liability);
     application::Status removeLiability(std::string_view liabilityId);
     application::Status addPlannedExpense(const domain::PlannedExpense& expense);
     application::Status removePlannedExpense(std::string_view expenseId);

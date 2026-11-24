@@ -41,6 +41,10 @@ std::optional<AssetKind> assetKindFromStorageKey(std::string_view key);
 const char* storageKey(LiabilityKind kind);
 std::optional<LiabilityKind> liabilityKindFromStorageKey(std::string_view key);
 
+/// "fixed-amortisation", "annuity".
+const char* storageKey(RepaymentStyle style);
+std::optional<RepaymentStyle> repaymentStyleFromStorageKey(std::string_view key);
+
 /// "buffer", "preserve", "growth", "play".
 const char* storageKey(Bucket bucket);
 std::optional<Bucket> bucketFromStorageKey(std::string_view key);

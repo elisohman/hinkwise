@@ -18,6 +18,15 @@ domain::Money sek(qint64 minorUnits)
     return domain::Money{minorUnits, domain::Currency::Sek};
 }
 
+/// A loan repaid by a fixed principal amount each month, at zero rate so the
+/// chart tests can state the paydown as one figure a year.
+domain::LoanTerms fixedLoan(qint64 balance, qint64 monthlyPayment)
+{
+    return domain::LoanTerms{sek(balance), domain::Percentage{},
+                             domain::RepaymentStyle::FixedAmortisation, sek(monthlyPayment),
+                             sek(0)};
+}
+
 std::size_t indexOf(domain::Bucket bucket)
 {
     return static_cast<std::size_t>(bucket);
@@ -139,12 +148,11 @@ void TestProjectionSeries::refusesToDrawAnEmptyProjection()
 
 void TestProjectionSeries::carriesTheDebtAndNetWorthAlongTheHorizon()
 {
-    // 100 000 kr of capital and a 50 000 kr loan repaid at 10 000 kr a year:
+    // 100 000 kr of capital and a 50 000 kr loan repaid at 12 000 kr a year:
     // the loan is gone in year five, and every year of it is a point on the
     // same axis as the buckets.
     domain::ProjectionInput projection = input();
-    projection.startingDebt = sek(5000000);
-    projection.annualAmortisation = sek(1000000);
+    projection.loans = {fixedLoan(5000000, 100000)};
 
     const ProjectionSeries series = projectionSeriesOf(projection);
 
@@ -156,7 +164,7 @@ void TestProjectionSeries::carriesTheDebtAndNetWorthAlongTheHorizon()
     QCOMPARE(series.debt.front().yearRatio, 0.0);
     QCOMPARE(series.debt.back().yearRatio, 1.0);
     QCOMPARE(series.debt.front().value.minorUnits(), qint64{5000000});
-    QCOMPARE(series.debt[1].value.minorUnits(), qint64{4000000});
+    QCOMPARE(series.debt[1].value.minorUnits(), qint64{3800000});
     QVERIFY(series.debt.front().ratio > series.debt[1].ratio);
     QCOMPARE(series.debt.back().ratio, 0.0);
 
@@ -173,8 +181,7 @@ void TestProjectionSeries::reachesBelowZeroWhenDebtOutrunsTheCapital()
     // A 300 000 kr loan against 100 000 kr of capital: net worth is negative
     // today, and the line has to be on the chart rather than below its rim.
     domain::ProjectionInput projection = input();
-    projection.startingDebt = sek(30000000);
-    projection.annualAmortisation = sek(500000);
+    projection.loans = {fixedLoan(30000000, 41666)};
 
     const ProjectionSeries series = projectionSeriesOf(projection);
 

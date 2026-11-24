@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace hinkwise::domain {
 
@@ -14,6 +15,10 @@ namespace {
 
 /// Basis points in a whole: 100 % of a target, or one year of expenses.
 constexpr std::int64_t basisPointsInWhole = 10000;
+
+/// Months in a year, and therefore the divisor that turns an annual rate into
+/// the rate one repayment is charged at.
+constexpr std::int64_t monthsPerYear = 12;
 
 /// numerator / denominator in basis points, rounded half away from zero.
 ///
@@ -41,17 +46,112 @@ Money sumOf(const std::array<Money, 4>& balances)
     return total;
 }
 
-/// One year of repayment. A zero or negative amortisation is what a household
-/// that has recorded none looks like to the model, so it leaves the debt flat
-/// rather than growing it. The debt never falls below zero: the last payment
-/// clears the loan, it does not turn the household into a lender.
-Money afterOneYearsAmortisation(const Money& debt, const Money& annualAmortisation)
+/// One month of interest: the annual rate spread over the twelve repayments of
+/// a year, in integer minor units, rounded half away from zero. A negative rate
+/// is broken input rather than a rebate, so it earns nothing.
+Money monthlyInterest(const Money& balance, Percentage annualRate)
 {
-    if (!annualAmortisation.isPositive() || !debt.isPositive())
-        return debt;
-    if (debt <= annualAmortisation)
-        return Money::zero(debt.currency());
-    return debt - annualAmortisation;
+    if (!balance.isPositive() || annualRate.isNegative())
+        return Money::zero(balance.currency());
+
+    const std::int64_t divisor = basisPointsInWhole * monthsPerYear;
+    const std::int64_t product = balance.minorUnits() * annualRate.basisPoints();
+    const std::int64_t adjusted = product >= 0 ? product + divisor / 2 : product - divisor / 2;
+    return Money{adjusted / divisor, balance.currency()};
+}
+
+/// One loan while the projection runs: its terms and the balance left after the
+/// months simulated so far.
+struct LoanState {
+    LoanTerms terms;
+    Money balance;
+};
+
+std::vector<LoanState> statesOf(const std::vector<LoanTerms>& loans)
+{
+    std::vector<LoanState> states;
+    states.reserve(loans.size());
+    for (const LoanTerms& terms : loans) {
+        // A negative balance is not a debt the model can reason about, so it
+        // starts where a repaid loan does.
+        const Money balance =
+            terms.balance.isNegative() ? Money::zero(terms.balance.currency()) : terms.balance;
+        states.push_back(LoanState{terms, balance});
+    }
+    return states;
+}
+
+/// What one simulated year cost and cleared.
+struct YearRepayment {
+    Money interestPaid;
+    Money feesPaid;
+    bool loanNeverRepaid = false;
+};
+
+/// Repays one loan for one month, adding what it cost to the year's totals.
+///
+/// FixedAmortisation: the recorded payment is principal, so the whole of it
+/// comes off the balance and the interest is a separate cost.
+///
+/// Annuity: the recorded payment is everything, so the principal is whatever is
+/// left after interest and the administration fee. As the balance falls the
+/// interest share falls with it and the principal share rises, which is exactly
+/// the behaviour a yearly approximation gets wrong.
+///
+/// An annuity whose payment does not cover interest plus fee cannot reduce its
+/// balance. Growing it forever would turn one broken figure into a debt that
+/// swallows the projection, so the balance is kept flat and the year is flagged
+/// for the interface to explain.
+void repayOneMonth(LoanState& loan, YearRepayment& year)
+{
+    if (!loan.balance.isPositive())
+        return;
+
+    const Money interest = monthlyInterest(loan.balance, loan.terms.annualRate);
+    year.interestPaid += interest;
+
+    if (loan.terms.style == RepaymentStyle::Annuity) {
+        const Money fee = loan.terms.monthlyFee.isNegative() ? Money::zero(loan.balance.currency())
+                                                             : loan.terms.monthlyFee;
+        year.feesPaid += fee;
+        const Money cost = interest + fee;
+        if (loan.terms.regularPayment <= cost) {
+            year.loanNeverRepaid = true;
+            return;
+        }
+
+        const Money principal = loan.terms.regularPayment - cost;
+        loan.balance = loan.balance <= principal ? Money::zero(loan.balance.currency())
+                                                 : loan.balance - principal;
+        return;
+    }
+
+    // No payment recorded is zero here, and a negative one is broken input:
+    // neither may turn the loan into a growing balance.
+    if (!loan.terms.regularPayment.isPositive())
+        return;
+
+    loan.balance = loan.balance <= loan.terms.regularPayment
+                       ? Money::zero(loan.balance.currency())
+                       : loan.balance - loan.terms.regularPayment;
+}
+
+Money totalBalance(const std::vector<LoanState>& loans, Currency currency)
+{
+    Money total = Money::zero(currency);
+    for (const LoanState& loan : loans)
+        total += loan.balance;
+    return total;
+}
+
+/// The unit every debt figure is reported in. A loan states its own currency,
+/// and a household with none borrows today's unit from its starting balances:
+/// zero owed is still zero of something.
+Currency debtCurrencyOf(const ProjectionInput& input)
+{
+    if (!input.loans.empty())
+        return input.loans.front().balance.currency();
+    return input.startingBalances.front().currency();
 }
 
 /// Fills the derived figures of a row: the total, the debt and the two ratios
@@ -76,17 +176,21 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
     // "today only" keeps every caller safe without inventing an exception for
     // what is otherwise a pure function.
     const int steps = input.years < 0 ? 0 : input.years;
+    const Currency currency = debtCurrencyOf(input);
 
     std::vector<ProjectionYear> years;
     years.reserve(static_cast<std::size_t>(steps) + 1);
+    std::vector<LoanState> loans = statesOf(input.loans);
+
+    Money interestPaid = Money::zero(currency);
+    Money feesPaid = Money::zero(currency);
 
     ProjectionYear today;
     today.year = 0;
     today.perBucket = input.startingBalances;
-    // A negative balance is not a debt the model can reason about, so today is
-    // floored the same way every later year is.
-    today.debt = input.startingDebt.isNegative() ? Money::zero(input.startingDebt.currency())
-                                                 : input.startingDebt;
+    today.debt = totalBalance(loans, currency);
+    today.interestPaid = interestPaid;
+    today.feesPaid = feesPaid;
     today.otherAssets = input.startingOtherAssets;
     fillDerived(today, input);
     years.push_back(today);
@@ -102,7 +206,21 @@ std::vector<ProjectionYear> project(const ProjectionInput& input)
             year.perBucket[index] = previous + growth + input.annualContributions[index];
         }
 
-        year.debt = afterOneYearsAmortisation(years.back().debt, input.annualAmortisation);
+        // A year of repayment is twelve repayments, because an annuity's split
+        // between interest and principal changes every month as its balance
+        // falls. The cumulative costs grow with it.
+        YearRepayment repayment{Money::zero(currency), Money::zero(currency), false};
+        for (int month = 0; month < monthsPerYear; ++month) {
+            for (LoanState& loan : loans)
+                repayOneMonth(loan, repayment);
+        }
+        interestPaid += repayment.interestPaid;
+        feesPaid += repayment.feesPaid;
+
+        year.debt = totalBalance(loans, currency);
+        year.interestPaid = interestPaid;
+        year.feesPaid = feesPaid;
+        year.loanNeverRepaid = repayment.loanNeverRepaid;
         // Nothing is added to the other assets: the saving the household
         // records is already all in the buckets or in the amortisation, and
         // counting it here as well would grow the same krona twice.

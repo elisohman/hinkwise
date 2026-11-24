@@ -106,6 +106,9 @@ QJsonObject liabilityToJson(const domain::Liability& liability)
     put(object, "name", storageKeyText(liability.name));
     put(object, "kind", storageKeyText(domain::storageKey(liability.kind)));
     put(object, "interestBp", liability.interestRate.basisPoints());
+    put(object, "repaymentStyle", storageKeyText(domain::storageKey(liability.style)));
+    put(object, "regularPayment", moneyToJson(liability.regularPayment));
+    put(object, "monthlyFee", moneyToJson(liability.monthlyFee));
     return object;
 }
 
@@ -463,6 +466,38 @@ application::Result<domain::Liability> liabilityFromJson(const QJsonValue& value
     if (!interest.ok())
         return Outcome::err(interest.error());
     liability.interestRate = domain::Percentage::fromBasisPoints(interest.value());
+
+    // A backup written before the terms existed has none of these keys. Absence
+    // means fixed amortisation with a zero payment, which is the model's "no
+    // terms recorded yet" - a loan that is not being paid down must not be read
+    // as a paid-off one.
+    const QJsonValue styleValue = object.value().value(key("repaymentStyle"));
+    if (!styleValue.isUndefined()) {
+        const application::Result<domain::RepaymentStyle> style =
+            requireEnum<domain::RepaymentStyle>(object.value(), "repaymentStyle", context,
+                                                domain::repaymentStyleFromStorageKey);
+        if (!style.ok())
+            return Outcome::err(style.error());
+        liability.style = style.value();
+    }
+
+    const QJsonValue paymentValue = object.value().value(key("regularPayment"));
+    if (!paymentValue.isUndefined()) {
+        const application::Result<domain::Money> payment =
+            requireMoney(object.value(), "regularPayment", context);
+        if (!payment.ok())
+            return Outcome::err(payment.error());
+        liability.regularPayment = payment.value();
+    }
+
+    const QJsonValue feeValue = object.value().value(key("monthlyFee"));
+    if (!feeValue.isUndefined()) {
+        const application::Result<domain::Money> fee =
+            requireMoney(object.value(), "monthlyFee", context);
+        if (!fee.ok())
+            return Outcome::err(fee.error());
+        liability.monthlyFee = fee.value();
+    }
 
     return Outcome::ok(liability);
 }

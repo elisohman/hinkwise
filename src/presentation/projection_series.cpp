@@ -57,7 +57,7 @@ ProjectionSeries projectionSeriesOf(const domain::ProjectionInput& input)
         return series;
 
     series.valid = true;
-    series.hasDebt = input.startingDebt.isPositive();
+    series.hasDebt = !years.front().debt.isZero();
     series.zeroRatio = -bottom / span;
     const auto ratioOfAmount = [&](const domain::Money& amount) {
         return std::clamp((static_cast<double>(amount.minorUnits()) - bottom) / span, 0.0, 1.0);

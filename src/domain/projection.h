@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "liability.h"
 #include "money.h"
 #include "percentage.h"
 
@@ -12,9 +13,28 @@
 
 namespace hinkwise::domain {
 
+/// One loan's own repayment terms.
+///
+/// Loans are projected one by one rather than as one aggregate balance because
+/// they do not carry the same rate: a krona paid on a 2.65 % mortgage and a
+/// krona paid on a 1.5 % student loan are not the same krona. The split between
+/// them follows from their own terms, so nothing has to be entered twice.
+struct LoanTerms {
+    /// What is left to repay today.
+    Money balance{};
+    Percentage annualRate{};
+    RepaymentStyle style = RepaymentStyle::FixedAmortisation;
+    /// MONTHLY. For FixedAmortisation this is the principal repaid; for Annuity
+    /// it is the total paid, interest and fee included.
+    Money regularPayment{};
+    /// MONTHLY, Annuity only. A cost, never principal.
+    Money monthlyFee{};
+};
+
 /// What a projection needs: the four buckets as they stand today, what is
 /// added to them each year, the assets that are not in them, the two yardsticks
-/// the model measures progress against, and the debt those families sit beside.
+/// the model measures progress against, and the loans those families sit
+/// beside.
 ///
 /// Every return here is REAL. There is no inflation figure to supply and none
 /// is applied, so a projection speaks in today's money throughout and the one
@@ -55,12 +75,12 @@ struct ProjectionInput {
     /// The FI target to measure progress against. May be zero, which means the
     /// household states no target and progress against it is zero.
     Money fiTarget{};
-    /// Total debt today. Zero when the household records none.
-    Money startingDebt{};
-    /// Principal repaid per year. Interest is a separate cost and is NOT
-    /// modelled here: this is the amortisation the household records,
-    /// annualised.
-    Money annualAmortisation{};
+    /// Every loan the household carries, each with its own rate, style and
+    /// monthly payment. Empty is a household that records no debt, which is a
+    /// debt of zero rather than an invented paydown. A loan whose payment is
+    /// zero is simulated without a paydown too: terms that were never recorded
+    /// must not look like a loan being cleared.
+    std::vector<LoanTerms> loans;
     /// Number of yearly steps. A negative value is treated as zero.
     int years = 30;
 };
@@ -76,9 +96,22 @@ struct ProjectionYear {
     /// The non-investable assets, grown at the real return they were given.
     /// Never part of total: the buckets and these grow on separate rates.
     Money otherAssets{};
-    /// What is left to repay. Falls by the annual amortisation, never below
-    /// zero; a zero or negative amortisation leaves it where it is.
+    /// What is left to repay: every loan balance added up. Never below zero,
+    /// because the last payment clears a loan rather than turning the household
+    /// into a lender.
     Money debt{};
+    /// Interest paid so far, cumulative over every loan. Interest is a cost and
+    /// never principal: reporting it apart is what shows a household what the
+    /// debt costs to hold, not only what it clears.
+    Money interestPaid{};
+    /// Administration fees paid so far, cumulative. Annuity loans only.
+    Money feesPaid{};
+    /// True in a year where an annuity's monthly payment does not cover its
+    /// interest and fee, so its balance cannot fall. The balance is kept flat
+    /// rather than grown forever, and this flag is how the interface can say the
+    /// payment does not service the loan instead of drawing a debt that never
+    /// moves without explanation.
+    bool loanNeverRepaid = false;
     /// Everything owned less everything owed: total + otherAssets - debt.
     /// Neither the total nor the debt alone is net worth, because the debt is
     /// secured on what sits in otherAssets.

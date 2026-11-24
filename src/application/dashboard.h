@@ -6,6 +6,7 @@
 #include "domain/balance_sheet.h"
 #include "domain/household.h"
 #include "domain/insight.h"
+#include "domain/liability.h"
 #include "domain/metrics.h"
 #include "domain/money.h"
 #include "domain/percentage.h"
@@ -16,6 +17,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace hinkwise::application {
@@ -64,6 +66,20 @@ enum class InputFreshness {
 InputFreshness freshnessOf(domain::TrackingMode mode, std::optional<int> monthsSinceBalance,
                            std::optional<int> monthsSinceFlow);
 
+/// One debt as the plan needs to see it: the liability's own terms together
+/// with what is left to repay. The plan repays each loan separately because
+/// their rates differ, so it needs the terms and not just the total.
+struct DebtInEffect {
+    std::string id;
+    std::string name;
+    domain::LiabilityKind kind = domain::LiabilityKind::Other;
+    domain::Percentage interestRate{};
+    domain::RepaymentStyle style = domain::RepaymentStyle::FixedAmortisation;
+    domain::Money regularPayment{};
+    domain::Money monthlyFee{};
+    domain::Money balance{};
+};
+
 /// Everything a dashboard screen shows, in one value.
 ///
 /// The pieces are the same objects every calculation already speaks in, so a
@@ -75,6 +91,15 @@ struct DashboardSnapshot {
     domain::Metrics metrics;
     std::vector<domain::Insight> insights;
     domain::RebalanceProposal rebalance;
+    /// Every loan with the terms it is being repaid on, in the profile's
+    /// currency, paired with the latest balance recorded for it. The plan
+    /// builds one projection loan per entry; empty means the household records
+    /// no debt.
+    std::vector<DebtInEffect> debts;
+    /// True when a loan still owes money but records no monthly payment, so the
+    /// projection keeps its balance flat. The page says the terms are missing
+    /// rather than leaving a debt that never falls unexplained.
+    bool hasDebtWithoutTerms = false;
     /// False until the household has been created. The other fields are then
     /// zero and the screen shows its empty state.
     bool hasProfile = false;
