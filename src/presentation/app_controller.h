@@ -18,6 +18,7 @@
 #include <QObject>
 #include <QString>
 #include <QtQml/qqmlregistration.h>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -91,6 +92,16 @@ public:
 
     /// The stored profile, std::nullopt until the household has been set up.
     std::optional<domain::Profile> profile() const;
+
+    /// The profile every scoped repository currently reads and writes, or zero
+    /// while the database holds no profile at all. Reading it also re-points
+    /// the repositories if another connection changed the stored pointer.
+    Q_INVOKABLE qint64 activeProfileId() const;
+
+    /// Makes `id` the active profile: the scoped repositories are re-pointed
+    /// and dataChanged() is emitted, so every screen reloads the household it
+    /// now describes. Fails when no profile has that id.
+    application::Status setActiveProfile(std::int64_t id);
 
     /// Saves the profile as a whole, which is how settings edits the name and
     /// the jurisdiction: the row is one value, and the use cases only read it.
@@ -224,6 +235,20 @@ private:
     /// it changed.
     void endTransaction(bool committed);
 
+    /// Reads meta.active_profile and points the scoped repositories at it.
+    /// When no profile is active but some exist, the lowest id takes over; a
+    /// database with no profile at all leaves them unset, which is what the
+    /// wizard creates the first one into.
+    application::Status activateStoredProfile() const;
+
+    /// The controller is the one place that keeps the repository pointers in
+    /// step with meta.active_profile. Every public operation calls this first,
+    /// so a second connection that switched the active profile cannot leave
+    /// the repositories reading one household while profile() reads another.
+    application::Status syncActiveProfile() const;
+
+    void pointScopedRepositoriesAt(std::int64_t profileId) const;
+
     // The database is declared first so that it outlives the repositories
     // borrowing its connection.
     std::unique_ptr<infrastructure::sqlite::Database> m_database;
@@ -237,6 +262,11 @@ private:
     std::unique_ptr<infrastructure::sqlite::SqlitePhaseHistoryRepository> m_phaseHistory;
     std::unique_ptr<infrastructure::sqlite::SqliteTransactionFactory> m_transactions;
     QString m_lastError;
+
+    /// The profile the scoped repositories were last pointed at. It is mutable
+    /// because the const reads re-point it when another connection moves the
+    /// stored pointer.
+    mutable std::int64_t m_activeProfileId = 0;
 
     /// How many transactions this controller has open. Nesting is refused, so
     /// it is 0 or 1; it is a count so that a rollback and a commit can be told

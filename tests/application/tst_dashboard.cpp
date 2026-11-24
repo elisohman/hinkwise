@@ -76,11 +76,33 @@ public:
         return Result<std::optional<Profile>>::ok(stored);
     }
 
+    Result<std::optional<Profile>> loadById(std::int64_t id) const override
+    {
+        if (!stored || stored->id != id)
+            return Result<std::optional<Profile>>::ok(std::nullopt);
+        return Result<std::optional<Profile>>::ok(stored);
+    }
+
+    Result<std::vector<ProfileSummary>> list() const override
+    {
+        return Result<std::vector<ProfileSummary>>::ok({});
+    }
+
     Status save(const Profile& profile) override
     {
         stored = profile;
         return Status::success();
     }
+
+    Result<Profile> create(const Profile& profile) override
+    {
+        stored = profile;
+        return Result<Profile>::ok(profile);
+    }
+
+    Status remove(std::int64_t) override { return Status::success(); }
+
+    Status setActive(std::int64_t) override { return Status::success(); }
 };
 
 class FakeAssetRepository final : public IAssetRepository {

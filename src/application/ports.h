@@ -13,6 +13,7 @@
 #include "domain/year_month.h"
 #include "result.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,6 +44,15 @@ struct MoneyPoint {
     domain::Money amount;
 };
 
+/// One profile as a list shows it: enough to name the household and tell which
+/// way it keeps its record, without loading the whole row.
+struct ProfileSummary {
+    std::int64_t id = 0;
+    std::string displayName;
+    std::string baseCurrency;
+    std::string trackingMode;
+};
+
 /// The repositories are the application layer's view of storage: pure virtual,
 /// no Qt types, and every failure reported through Result. The infrastructure
 /// layer implements them; tests and future in-memory doubles implement the same
@@ -55,12 +65,35 @@ class IProfileRepository {
 public:
     virtual ~IProfileRepository() = default;
 
-    /// The stored profile, std::nullopt when the household has not been set up
-    /// yet. An empty database is not an error.
+    /// The ACTIVE profile, std::nullopt when no profile is active yet. An
+    /// empty database is not an error; a meta row pointing at a profile that
+    /// does not exist is.
     virtual Result<std::optional<domain::Profile>> load() const = 0;
 
-    /// Creates or replaces the single stored profile.
+    /// One profile by id, std::nullopt when no row has that id. A backup needs
+    /// every household, not only the active one.
+    virtual Result<std::optional<domain::Profile>> loadById(std::int64_t id) const = 0;
+
+    /// Every stored profile, oldest id first.
+    virtual Result<std::vector<ProfileSummary>> list() const = 0;
+
+    /// Saves the profile the caller is editing. A profile with an id updates
+    /// that row; a profile without one updates the active row, or creates the
+    /// first profile when the database holds none and makes it active.
     virtual Status save(const domain::Profile& profile) = 0;
+
+    /// Stores `profile` as a new household, makes it active, and returns it
+    /// with the id it was given.
+    virtual Result<domain::Profile> create(const domain::Profile& profile) = 0;
+
+    /// Removes the profile and everything recorded under it. Refuses to remove
+    /// the last profile, because a database with no household has nothing to
+    /// show and nothing to save into.
+    virtual Status remove(std::int64_t id) = 0;
+
+    /// Records which profile every scoped repository should read and write.
+    /// Fails when no profile has that id.
+    virtual Status setActive(std::int64_t id) = 0;
 };
 
 class IAssetRepository {

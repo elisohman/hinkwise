@@ -24,7 +24,7 @@ namespace {
 
 /// The version a fresh file reaches, which is also the number the application
 /// has to keep in step with schemaMigrations().
-constexpr int kExpectedVersion = 6;
+constexpr int kExpectedVersion = 7;
 
 constexpr std::array<const char*, 9> kTables{
     "profile",    "asset",         "liability", "planned_expense", "valuation", "debt_balance",
@@ -50,6 +50,18 @@ bool hasColumn(QSqlDatabase& connection, const char* table, const char* column)
     while (query.next()) {
         if (query.value(1).toString() == QString::fromUtf8(column))
             return true;
+    }
+    return false;
+}
+
+bool isNotNull(QSqlDatabase& connection, const char* table, const char* column)
+{
+    QSqlQuery query{connection};
+    if (!query.exec(QStringLiteral("PRAGMA table_info(%1)").arg(QString::fromUtf8(table))))
+        return false;
+    while (query.next()) {
+        if (query.value(1).toString() == QString::fromUtf8(column))
+            return query.value(3).toInt() != 0;
     }
     return false;
 }
@@ -97,6 +109,15 @@ constexpr const char* kInsertVersionTwoProfile =
     "(1, 'Elis', 'SEK', 'building-wealth', 5000, 'SE', 400, 100, 21, 25, 33, "
     "'2026-01-31T12:00:00Z')";
 
+/// The profile row a version 6 file holds, before a file could hold more than
+/// one household. It is the row the upgrade has to keep as profile 1.
+constexpr const char* kInsertVersionSixProfile =
+    "INSERT INTO profile (id, display_name, base_currency, phase, risk_tolerance_bp, "
+    "jurisdiction_id, safe_withdrawal_bp, capital_tax_bp, fi_multiplier_low, "
+    "fi_multiplier_default, fi_multiplier_high, created_at, tracking_mode) VALUES "
+    "(1, 'Elis', 'SEK', 'building-wealth', 5000, 'SE', 400, 100, 21, 25, 33, "
+    "'2026-01-31T12:00:00Z', 'accounting')";
+
 QString trackingModeOfStoredProfile(QSqlDatabase& connection)
 {
     QSqlQuery query{connection};
@@ -137,6 +158,8 @@ private slots:
     void versionThreeLiabilityComesOutWithoutTerms();
     void versionFourLiabilityComesOutWithoutATerm();
     void versionFiveLiabilityKeepsItsRate();
+    void versionSixUpgradesToOneHouseholdWithItsData();
+    void versionSixWithDataButNoProfileIsRefused();
     void migratingTwiceChangesNothing();
     void newerSchemaIsRefused();
     void failedMigrationLeavesTheVersionUnchanged();
@@ -184,6 +207,17 @@ void TestMigrator::freshFileMigratesToTheExpectedVersion()
     // from is gone rather than left beside it.
     QVERIFY(hasColumn(connection, "liability", "interest_100k"));
     QVERIFY(!hasColumn(connection, "liability", "interest_bp"));
+
+    // Version 7 gives every household-owned table an owner column, and the
+    // profile itself no longer insists on being the only row.
+    for (const char* table :
+         {"asset", "liability", "planned_expense", "month_flow", "phase_history"})
+        QVERIFY(hasColumn(connection, table, "profile_id"));
+    QSqlQuery profileSql{connection};
+    QVERIFY(profileSql.exec(
+        QStringLiteral("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'profile'")));
+    QVERIFY(profileSql.next());
+    QVERIFY(!profileSql.value(0).toString().contains(QStringLiteral("CHECK (id = 1)")));
 }
 
 /// A file written by the release that only knew schema version 1 has months in
@@ -210,6 +244,13 @@ void TestMigrator::versionOneUpgradesAndKeepsItsRows()
     // Schemas before version 2 have no breakdown columns at all.
     for (const char* column : kSavingBreakdownColumns)
         QVERIFY(!hasColumn(connection, "month_flow", column));
+
+    // A file that has a recorded month has a household that recorded it. The
+    // version 7 upgrade gives every row an owner, so the fixture has to name
+    // the one the month belongs to.
+    QSqlQuery insertProfile{connection};
+    QVERIFY2(insertProfile.exec(QString::fromUtf8(kInsertVersionTwoProfile)),
+             qPrintable(insertProfile.lastError().text()));
 
     QSqlQuery insert{connection};
     QVERIFY(insert.exec(QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, "
@@ -331,6 +372,12 @@ void TestMigrator::versionThreeLiabilityComesOutWithoutTerms()
     QSqlQuery insert{connection};
     QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionThreeLiability)),
              qPrintable(insert.lastError().text()));
+    // A version 6 file could hold household rows without a profile, but then
+    // migration 7 rightly refuses. The fixture is a real file, so it names the
+    // household the loan belongs to.
+    QSqlQuery profile{connection};
+    QVERIFY2(profile.exec(QString::fromUtf8(kInsertVersionTwoProfile)),
+             qPrintable(profile.lastError().text()));
 
     const application::Result<int> atFour = sqlite::applyMigrations(connection, migrations);
     QVERIFY2(atFour.ok(), atFour.error().c_str());
@@ -392,6 +439,9 @@ void TestMigrator::versionFourLiabilityComesOutWithoutATerm()
     QSqlQuery insert{connection};
     QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionFourLiability)),
              qPrintable(insert.lastError().text()));
+    QSqlQuery profile{connection};
+    QVERIFY2(profile.exec(QString::fromUtf8(kInsertVersionTwoProfile)),
+             qPrintable(profile.lastError().text()));
 
     const application::Result<int> atFive = sqlite::applyMigrations(connection, migrations);
     QVERIFY2(atFive.ok(), atFive.error().c_str());
@@ -449,6 +499,9 @@ void TestMigrator::versionFiveLiabilityKeepsItsRate()
     QSqlQuery insert{connection};
     QVERIFY2(insert.exec(QString::fromUtf8(kInsertVersionFiveLiability)),
              qPrintable(insert.lastError().text()));
+    QSqlQuery profile{connection};
+    QVERIFY2(profile.exec(QString::fromUtf8(kInsertVersionTwoProfile)),
+             qPrintable(profile.lastError().text()));
 
     const application::Result<int> atSix = sqlite::applyMigrations(connection, migrations);
     QVERIFY2(atSix.ok(), atSix.error().c_str());
@@ -469,6 +522,205 @@ void TestMigrator::versionFiveLiabilityKeepsItsRate()
     QVERIFY(select.exec(QStringLiteral("SELECT interest_100k FROM liability WHERE id = 'bolan'")));
     QVERIFY(select.next());
     QCOMPARE(select.value(0).toInt(), 2650);
+}
+
+/// A version 6 file holds exactly one household and all of its data. Upgrading
+/// must leave that household readable as profile 1: same row, same ids, same
+/// balances and flows, now tagged with the profile every scoped read filters on.
+void TestMigrator::versionSixUpgradesToOneHouseholdWithItsData()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    QVERIFY(migrations.size() >= std::size_t{7});
+    const std::span<const sqlite::Migration> upToVersionSix{migrations.data(), 6};
+
+    const application::Result<int> atSix = sqlite::applyMigrations(connection, upToVersionSix);
+    QVERIFY2(atSix.ok(), atSix.error().c_str());
+    QCOMPARE(atSix.value(), 6);
+
+    const std::array<const char*, 8> rows{
+        kInsertVersionSixProfile,
+        "INSERT INTO asset (id, name, kind, bucket, liquid, included_in_headline) VALUES "
+        "('fund', 'Global fund', 'fund', 'growth', 1, 1)",
+        "INSERT INTO valuation (asset_id, month, amount_minor, currency) VALUES "
+        "('fund', '2026-01', 1000000, 'SEK')",
+        "INSERT INTO liability (id, name, kind, interest_100k, repayment_style, "
+        "regular_payment_minor, monthly_fee_minor, term_months, archived) VALUES "
+        "('bolan', 'Mortgage', 'mortgage', 4200, 'annuity', 1750000, 5000, 240, 0)",
+        "INSERT INTO debt_balance (liability_id, month, amount_minor, currency) VALUES "
+        "('bolan', '2026-01', 250000000, 'SEK')",
+        "INSERT INTO planned_expense (id, name, amount_minor, due_month, currency) VALUES "
+        "('roof', 'New roof', 25000000, '2027-05', 'SEK')",
+        "INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, saving_minor, "
+        "currency, saving_buffer_minor, saving_invest_minor, saving_amort_minor) VALUES "
+        "('2026-01', 3000000, 1500000, 500000, 1000000, 'SEK', 400000, 400000, 200000)",
+        "INSERT INTO phase_history (changed_at, phase) VALUES "
+        "('2026-01-31T12:00:00Z', 'building-wealth')",
+    };
+    for (const char* row : rows) {
+        QSqlQuery insert{connection};
+        QVERIFY2(insert.exec(QString::fromUtf8(row)), qPrintable(insert.lastError().text()));
+    }
+
+    const application::Result<int> atSeven = sqlite::applyMigrations(connection, migrations);
+    QVERIFY2(atSeven.ok(), atSeven.error().c_str());
+    QCOMPARE(atSeven.value(), kExpectedVersion);
+
+    // Every rebuilt owner column is required, so no later write can create an
+    // orphan row either.
+    for (const char* table :
+         {"asset", "liability", "planned_expense", "month_flow", "phase_history"})
+        QVERIFY(isNotNull(connection, table, "profile_id"));
+
+    // An insert that names no owner is refused by the schema rather than
+    // stored as a row no scoped read can find.
+    QSqlQuery ownerless{connection};
+    QVERIFY(!ownerless.exec(QStringLiteral(
+        "INSERT INTO asset (id, name, kind, bucket, liquid, "
+        "included_in_headline) VALUES ('orphan', 'Orphan', 'fund', 'growth', 1, 1)")));
+
+    // The household is still one row with the id it had, and the single-row
+    // CHECK is gone so a second one can be created.
+    QSqlQuery profile{connection};
+    QVERIFY(profile.exec(QStringLiteral("SELECT id, display_name, tracking_mode FROM profile")));
+    QVERIFY(profile.next());
+    QCOMPARE(profile.value(0).toInt(), 1);
+    QCOMPARE(profile.value(1).toString(), QStringLiteral("Elis"));
+    QCOMPARE(profile.value(2).toString(), QStringLiteral("accounting"));
+    QVERIFY(profile.exec(QStringLiteral("SELECT sql FROM sqlite_master WHERE type = 'table' "
+                                        "AND name = 'profile'")));
+    QVERIFY(profile.next());
+    QVERIFY(!profile.value(0).toString().contains(QStringLiteral("CHECK (id = 1)")));
+
+    QSqlQuery active{connection};
+    QVERIFY(active.exec(QStringLiteral("SELECT value FROM meta WHERE key = 'active_profile'")));
+    QVERIFY(active.next());
+    QCOMPARE(active.value(0).toString(), QStringLiteral("1"));
+
+    // Every row that existed is still there, under profile 1, with its values.
+    QSqlQuery asset{connection};
+    QVERIFY(asset.exec(QStringLiteral("SELECT id, name, profile_id FROM asset")));
+    QVERIFY(asset.next());
+    QCOMPARE(asset.value(0).toString(), QStringLiteral("fund"));
+    QCOMPARE(asset.value(1).toString(), QStringLiteral("Global fund"));
+    QCOMPARE(asset.value(2).toInt(), 1);
+
+    QSqlQuery valuation{connection};
+    QVERIFY(valuation.exec(QStringLiteral("SELECT asset_id, month, amount_minor FROM valuation")));
+    QVERIFY(valuation.next());
+    QCOMPARE(valuation.value(0).toString(), QStringLiteral("fund"));
+    QCOMPARE(valuation.value(1).toString(), QStringLiteral("2026-01"));
+    QCOMPARE(valuation.value(2).toLongLong(), qint64(1000000));
+
+    QSqlQuery liability{connection};
+    QVERIFY(liability.exec(QStringLiteral(
+        "SELECT id, interest_100k, regular_payment_minor, profile_id FROM liability")));
+    QVERIFY(liability.next());
+    QCOMPARE(liability.value(0).toString(), QStringLiteral("bolan"));
+    QCOMPARE(liability.value(1).toInt(), 4200);
+    QCOMPARE(liability.value(2).toLongLong(), qint64(1750000));
+    QCOMPARE(liability.value(3).toInt(), 1);
+
+    QSqlQuery balance{connection};
+    QVERIFY(balance.exec(QStringLiteral("SELECT liability_id, amount_minor FROM debt_balance")));
+    QVERIFY(balance.next());
+    QCOMPARE(balance.value(0).toString(), QStringLiteral("bolan"));
+    QCOMPARE(balance.value(1).toLongLong(), qint64(250000000));
+
+    QSqlQuery expense{connection};
+    QVERIFY(expense.exec(QStringLiteral("SELECT id, due_month, profile_id FROM planned_expense")));
+    QVERIFY(expense.next());
+    QCOMPARE(expense.value(0).toString(), QStringLiteral("roof"));
+    QCOMPARE(expense.value(1).toString(), QStringLiteral("2027-05"));
+    QCOMPARE(expense.value(2).toInt(), 1);
+
+    QSqlQuery flow{connection};
+    QVERIFY(flow.exec(QStringLiteral("SELECT month, income_minor, saving_buffer_minor, "
+                                     "profile_id FROM month_flow")));
+    QVERIFY(flow.next());
+    QCOMPARE(flow.value(0).toString(), QStringLiteral("2026-01"));
+    QCOMPARE(flow.value(1).toLongLong(), qint64(3000000));
+    QCOMPARE(flow.value(2).toLongLong(), qint64(400000));
+    QCOMPARE(flow.value(3).toInt(), 1);
+
+    QSqlQuery history{connection};
+    QVERIFY(
+        history.exec(QStringLiteral("SELECT changed_at, phase, profile_id FROM phase_history")));
+    QVERIFY(history.next());
+    QCOMPARE(history.value(0).toString(), QStringLiteral("2026-01-31T12:00:00Z"));
+    QCOMPARE(history.value(1).toString(), QStringLiteral("building-wealth"));
+    QCOMPARE(history.value(2).toInt(), 1);
+
+    // The rebuilt keys are per household now: the same month and the same
+    // second can exist under a second profile.
+    QSqlQuery secondProfile{connection};
+    QVERIFY(secondProfile.exec(
+        QStringLiteral("INSERT INTO profile (display_name, base_currency, phase, "
+                       "risk_tolerance_bp, jurisdiction_id, safe_withdrawal_bp, "
+                       "capital_tax_bp, fi_multiplier_low, fi_multiplier_default, "
+                       "fi_multiplier_high, created_at) VALUES ('Budget', 'SEK', "
+                       "'building-wealth', 5000, 'SE', 400, 100, 21, 25, 33, "
+                       "'2026-02-01T12:00:00Z')")));
+
+    QSqlQuery secondFlow{connection};
+    QVERIFY(secondFlow.exec(
+        QStringLiteral("INSERT INTO month_flow (profile_id, month, income_minor, needs_minor, "
+                       "wants_minor, saving_minor, currency) VALUES "
+                       "(2, '2026-01', 1, 2, 3, 4, 'SEK')")));
+    QSqlQuery secondHistory{connection};
+    QVERIFY(secondHistory.exec(
+        QStringLiteral("INSERT INTO phase_history (profile_id, changed_at, phase) VALUES "
+                       "(2, '2026-01-31T12:00:00Z', 'building-wealth')")));
+}
+
+void TestMigrator::versionSixWithDataButNoProfileIsRefused()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto opened = sqlite::Database::open(directory.filePath(QStringLiteral("hinkwise.db")));
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    sqlite::Database database = std::move(opened.value());
+    QSqlDatabase connection = database.connection();
+
+    const sqlite::MigrationList migrations = sqlite::schemaMigrations();
+    const std::span<const sqlite::Migration> upToVersionSix{migrations.data(), 6};
+
+    const application::Result<int> atSix = sqlite::applyMigrations(connection, upToVersionSix);
+    QVERIFY2(atSix.ok(), atSix.error().c_str());
+    QCOMPARE(atSix.value(), 6);
+
+    // A version 6 file could hold household rows without ever requiring the
+    // single profile row. There is no owner to give them, and a NULL owner
+    // would hide them from every scoped read and from the backup.
+    QSqlQuery asset{connection};
+    QVERIFY2(asset.exec(QStringLiteral("INSERT INTO asset (id, name, kind, bucket, liquid, "
+                                       "included_in_headline) VALUES "
+                                       "('fund', 'Global fund', 'fund', 'growth', 1, 1)")),
+             qPrintable(asset.lastError().text()));
+
+    const application::Result<int> atSeven = sqlite::applyMigrations(connection, migrations);
+    QVERIFY(!atSeven.ok());
+    QVERIFY(atSeven.error().find("no profile") != std::string::npos);
+
+    // Refusing is not a partial upgrade: the file is still a version 6 file,
+    // with the row that could not be owned.
+    const application::Result<int> version = sqlite::schemaVersion(connection);
+    QVERIFY2(version.ok(), version.error().c_str());
+    QCOMPARE(version.value(), 6);
+    QVERIFY(!hasColumn(connection, "asset", "profile_id"));
+
+    QSqlQuery count{connection};
+    QVERIFY(count.exec(QStringLiteral("SELECT count(*) FROM asset")));
+    QVERIFY(count.next());
+    QCOMPARE(count.value(0).toInt(), 1);
 }
 
 void TestMigrator::migratingTwiceChangesNothing()

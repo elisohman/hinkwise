@@ -76,6 +76,10 @@ private slots:
 private:
     QSqlDatabase connection() const;
 
+    /// Stores the household these repositories belong to and returns its id,
+    /// so every scoped call has an owner to filter on.
+    std::int64_t seedProfile();
+
     /// Runs one statement on the test's own connection, for the two things a
     /// repository cannot do: defer a constraint, and refuse a write.
     bool run(const QString& sql) const;
@@ -110,6 +114,18 @@ QSqlDatabase TestTransactions::connection() const
     return m_database->connection();
 }
 
+std::int64_t TestTransactions::seedProfile()
+{
+    sqlite::SqliteProfileRepository profiles{connection()};
+    if (!profiles.save(sampleProfile()).ok())
+        return 0;
+
+    const Result<std::optional<domain::Profile>> loaded = profiles.load();
+    if (!loaded.ok() || !loaded.value())
+        return 0;
+    return loaded.value()->id;
+}
+
 bool TestTransactions::run(const QString& sql) const
 {
     QSqlQuery query{connection()};
@@ -122,7 +138,13 @@ int TestTransactions::assetCountOnDisk() const
     if (!opened.ok())
         return -1;
 
+    sqlite::SqliteProfileRepository profiles{opened.value().connection()};
+    const Result<std::optional<domain::Profile>> active = profiles.load();
+    if (!active.ok() || !active.value())
+        return -1;
+
     sqlite::SqliteAssetRepository assets{opened.value().connection()};
+    assets.setActiveProfile(active.value()->id);
     const Result<std::vector<domain::Asset>> all = assets.all();
     if (!all.ok())
         return -1;
@@ -131,12 +153,17 @@ int TestTransactions::assetCountOnDisk() const
 
 void TestTransactions::commitStoresEverything()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteTransactionFactory factory{connection()};
     Result<std::unique_ptr<Transaction>> begun = factory.begin();
     QVERIFY2(begun.ok(), begun.error().c_str());
 
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     sqlite::SqliteValuationRepository valuations{connection()};
+    valuations.setActiveProfile(profileId);
     QVERIFY2(assets.upsert(domain::makeAsset("fund", "Fund", domain::AssetKind::Fund)).ok(),
              "asset");
     QVERIFY2(valuations.upsert("fund", kMonth, sek(1000000)).ok(), "valuation");
@@ -154,8 +181,13 @@ void TestTransactions::commitStoresEverything()
 
 void TestTransactions::droppingWithoutCommitRollsBack()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     sqlite::SqliteValuationRepository valuations{connection()};
+    valuations.setActiveProfile(profileId);
 
     {
         sqlite::SqliteTransactionFactory factory{connection()};
@@ -177,8 +209,13 @@ void TestTransactions::droppingWithoutCommitRollsBack()
 
 void TestTransactions::aFailedCommitRollsBack()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     sqlite::SqliteValuationRepository valuations{connection()};
+    valuations.setActiveProfile(profileId);
 
     sqlite::SqliteTransactionFactory factory{connection()};
     Result<std::unique_ptr<Transaction>> begun = factory.begin();
@@ -191,7 +228,12 @@ void TestTransactions::aFailedCommitRollsBack()
 
     QVERIFY2(assets.upsert(domain::makeAsset("fund", "Fund", domain::AssetKind::Fund)).ok(),
              "asset");
-    QVERIFY2(valuations.upsert("no-such-asset", kMonth, sek(500)).ok(), "deferred check");
+    // Written below the repository because the repository now refuses a
+    // valuation for an asset that does not belong to the active profile. The
+    // deferred check is what makes COMMIT refuse this row.
+    QVERIFY2(run(QStringLiteral("INSERT INTO valuation (asset_id, month, amount_minor, currency) "
+                                "VALUES ('no-such-asset', '2026-03', 500, 'SEK')")),
+             "deferred check");
 
     const Status committed = begun.value()->commit();
     QVERIFY(!committed.ok());
@@ -203,6 +245,9 @@ void TestTransactions::aFailedCommitRollsBack()
 
 void TestTransactions::aSecondBeginIsRefusedAndLeavesTheOuterAlone()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteTransactionFactory factory{connection()};
     Result<std::unique_ptr<Transaction>> outer = factory.begin();
     QVERIFY2(outer.ok(), outer.error().c_str());
@@ -214,6 +259,7 @@ void TestTransactions::aSecondBeginIsRefusedAndLeavesTheOuterAlone()
     // The refusal is not a rollback: the outer transaction still owns its work
     // and commits it.
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     QVERIFY2(assets.upsert(domain::makeAsset("fund", "Fund", domain::AssetKind::Fund)).ok(),
              "asset within the outer transaction");
 
@@ -224,11 +270,13 @@ void TestTransactions::aSecondBeginIsRefusedAndLeavesTheOuterAlone()
 
 void TestTransactions::changePhaseStoresTheHistoryAndTheProfile()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteProfileRepository profiles{connection()};
     sqlite::SqlitePhaseHistoryRepository history{connection()};
+    history.setActiveProfile(profileId);
     sqlite::SqliteTransactionFactory factory{connection()};
-
-    QVERIFY2(profiles.save(sampleProfile()).ok(), "profile");
 
     domain::Profile profile = sampleProfile();
     const Status changed = changePhase(profiles, history, factory, profile,
@@ -248,11 +296,13 @@ void TestTransactions::changePhaseStoresTheHistoryAndTheProfile()
 
 void TestTransactions::changePhaseRollsBackAHistoryEntryTheProfileNeverGot()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteProfileRepository profiles{connection()};
     sqlite::SqlitePhaseHistoryRepository history{connection()};
+    history.setActiveProfile(profileId);
     sqlite::SqliteTransactionFactory factory{connection()};
-
-    QVERIFY2(profiles.save(sampleProfile()).ok(), "profile");
 
     // The profile refuses to be written, so the failure lands on the second and
     // last write of the use case, with the history entry already stored.

@@ -52,22 +52,30 @@ struct BackupData {
     std::vector<application::PhaseChange> phaseHistory;
 };
 
+/// A file holds every household in the database, not only the active one. Each
+/// entry is the complete record of one profile: its row and everything that
+/// belongs to it.
+struct Backup {
+    std::vector<BackupData> profiles;
+};
+
 /// The backup format this build writes and reads. A file from a newer build is
 /// rejected rather than half understood: silently dropping a field the user
-/// wrote is worse than refusing the file.
-inline constexpr int kBackupVersion = 1;
+/// wrote is worse than refusing the file. Version 1 held one profile at the
+/// root; it is still read as a list of one.
+inline constexpr int kBackupVersion = 2;
 
 /// The backup as indented JSON text.
 ///
 /// Money is written as integer minor units with its currency, and months as
 /// "YYYY-MM", so reading the file back yields exactly the values that went in.
-std::string toJson(const BackupData& data);
+std::string toJson(const Backup& data);
 
-/// Parses a backup written by toJson.
+/// Parses a backup written by toJson, or a version 1 file with one profile.
 ///
 /// Fails with a message that names the field or the version when the text is
 /// not JSON, comes from a version this build does not know, or is missing
 /// something a household needs. Never throws.
-application::Result<BackupData> backupFromJson(std::string_view text);
+application::Result<Backup> backupFromJson(std::string_view text);
 
 } // namespace hinkwise::infrastructure::json

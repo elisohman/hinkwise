@@ -112,6 +112,37 @@ std::string serialise(const QJsonObject& object)
     return QJsonDocument{object}.toJson(QJsonDocument::Compact).toStdString();
 }
 
+json::Backup singleProfile(const json::BackupData& data)
+{
+    return json::Backup{{data}};
+}
+
+QJsonObject firstBundle(const QJsonObject& root)
+{
+    return root.value(QStringLiteral("profiles")).toArray().at(0).toObject();
+}
+
+void setFirstBundle(QJsonObject& root, const QJsonObject& bundle)
+{
+    QJsonArray profiles = root.value(QStringLiteral("profiles")).toArray();
+    profiles.replace(0, bundle);
+    root.insert(QStringLiteral("profiles"), profiles);
+}
+
+/// The version 1 shape: one profile's fields at the root, with no profiles
+/// array. Reading it has to produce exactly the same household as a list of one.
+QJsonObject versionOneObject(const json::BackupData& data)
+{
+    QJsonObject listed = parsedObject(json::toJson(singleProfile(data)));
+    const QJsonObject bundle = firstBundle(listed);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    for (auto entry = bundle.begin(); entry != bundle.end(); ++entry)
+        root.insert(entry.key(), entry.value());
+    return root;
+}
+
 } // namespace
 
 class TestBackup : public QObject {
@@ -119,6 +150,8 @@ class TestBackup : public QObject {
 
 private slots:
     void roundTripIsLossless();
+    void roundTripHoldsEveryProfile();
+    void acceptsVersionOneFileWithOneProfile();
     void largeAmountsSurviveTheRoundTrip();
     void rejectsUnknownVersion();
     void rejectsMalformedJson();
@@ -139,17 +172,19 @@ private slots:
 void TestBackup::roundTripIsLossless()
 {
     const json::BackupData original = fullyPopulated();
-    const std::string text = json::toJson(original);
+    const json::Backup backup = singleProfile(original);
+    const std::string text = json::toJson(backup);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(text);
+    const application::Result<json::Backup> parsed = json::backupFromJson(text);
     QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(parsed.value().profiles.size(), std::size_t{1});
 
     // The strongest statement of losslessness: writing the parsed value again
     // produces the same document.
     const std::string again = json::toJson(parsed.value());
     QVERIFY(parsedObject(again) == parsedObject(text));
 
-    const json::BackupData& data = parsed.value();
+    const json::BackupData& data = parsed.value().profiles.front();
     QCOMPARE(QString::fromStdString(data.profile.displayName), QStringLiteral("Elis"));
     QCOMPARE(static_cast<int>(data.profile.baseCurrency), static_cast<int>(domain::Currency::Sek));
     QCOMPARE(static_cast<int>(data.profile.phase), static_cast<int>(domain::Phase::Preserving));
@@ -215,6 +250,56 @@ void TestBackup::roundTripIsLossless()
              static_cast<int>(domain::Phase::Preserving));
 }
 
+void TestBackup::roundTripHoldsEveryProfile()
+{
+    const json::BackupData monthly = fullyPopulated();
+
+    json::BackupData budget;
+    budget.profile.displayName = "Budget";
+    budget.profile.baseCurrency = domain::Currency::Eur;
+    budget.profile.phase = domain::Phase::BuildingWealth;
+    budget.profile.jurisdiction = domain::swedishJurisdiction();
+    budget.profile.trackingMode = domain::TrackingMode::Planning;
+    budget.assets = {domain::makeAsset("budget-fund", "Budget fund", domain::AssetKind::Fund)};
+
+    json::AssetValuations valuations;
+    valuations.assetId = "budget-fund";
+    valuations.points = {{domain::YearMonth{2026, 1}, domain::Money{700, domain::Currency::Eur}}};
+    budget.assetValuations = {valuations};
+
+    const json::Backup original{{monthly, budget}};
+    const application::Result<json::Backup> parsed = json::backupFromJson(json::toJson(original));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(parsed.value().profiles.size(), std::size_t{2});
+
+    QCOMPARE(QString::fromStdString(parsed.value().profiles[0].profile.displayName),
+             QStringLiteral("Elis"));
+    QCOMPARE(parsed.value().profiles[0].assets.size(), std::size_t{2});
+    QCOMPARE(QString::fromStdString(parsed.value().profiles[1].profile.displayName),
+             QStringLiteral("Budget"));
+    QCOMPARE(parsed.value().profiles[1].assets.size(), std::size_t{1});
+    QCOMPARE(QString::fromStdString(parsed.value().profiles[1].assets[0].id),
+             QStringLiteral("budget-fund"));
+    QCOMPARE(parsed.value().profiles[1].assetValuations[0].points[0].amount.minorUnits(),
+             qint64{700});
+}
+
+void TestBackup::acceptsVersionOneFileWithOneProfile()
+{
+    const json::BackupData original = fullyPopulated();
+    const QJsonObject root = versionOneObject(original);
+    QVERIFY(root.value(QStringLiteral("profile")).isObject());
+    QVERIFY(!root.value(QStringLiteral("profiles")).isArray());
+
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QCOMPARE(parsed.value().profiles.size(), std::size_t{1});
+    QCOMPARE(QString::fromStdString(parsed.value().profiles[0].profile.displayName),
+             QStringLiteral("Elis"));
+    QCOMPARE(parsed.value().profiles[0].assets.size(), std::size_t{2});
+    QCOMPARE(parsed.value().profiles[0].assetValuations.size(), std::size_t{1});
+}
+
 void TestBackup::largeAmountsSurviveTheRoundTrip()
 {
     // Beyond 2^53 a double would silently round; the format stores minor units
@@ -226,83 +311,93 @@ void TestBackup::largeAmountsSurviveTheRoundTrip()
     valuations.points = {{domain::YearMonth{2026, 1}, sek(huge)}};
     data.assetValuations = {valuations};
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(json::toJson(data));
+    const application::Result<json::Backup> parsed =
+        json::backupFromJson(json::toJson(singleProfile(data)));
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    QCOMPARE(parsed.value().assetValuations[0].points[0].amount.minorUnits(), huge);
+    QCOMPARE(parsed.value().profiles.size(), std::size_t{1});
+    QCOMPARE(parsed.value().profiles[0].assetValuations[0].points[0].amount.minorUnits(), huge);
 }
 
 void TestBackup::rejectsUnknownVersion()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    root.insert(QStringLiteral("version"), 2);
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    root.insert(QStringLiteral("version"), json::kBackupVersion + 1);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
-    QVERIFY(parsed.error().find("version 2") != std::string::npos);
+    QVERIFY(parsed.error().find("version 3") != std::string::npos);
 
-    QJsonObject old = parsedObject(json::toJson(fullyPopulated()));
+    QJsonObject old = parsedObject(json::toJson(singleProfile(fullyPopulated())));
     old.insert(QStringLiteral("version"), 0);
-    const application::Result<json::BackupData> older = json::backupFromJson(serialise(old));
+    const application::Result<json::Backup> older = json::backupFromJson(serialise(old));
     QVERIFY(!older.ok());
     QVERIFY(older.error().find("version 0") != std::string::npos);
 }
 
 void TestBackup::rejectsMalformedJson()
 {
-    const application::Result<json::BackupData> broken = json::backupFromJson("{ not json at all");
+    const application::Result<json::Backup> broken = json::backupFromJson("{ not json at all");
     QVERIFY(!broken.ok());
     QVERIFY(broken.error().find("invalid JSON") != std::string::npos);
 
-    const application::Result<json::BackupData> notAnObject = json::backupFromJson("[1, 2, 3]");
+    const application::Result<json::Backup> notAnObject = json::backupFromJson("[1, 2, 3]");
     QVERIFY(!notAnObject.ok());
     QVERIFY(notAnObject.error().find("not a JSON object") != std::string::npos);
 
-    const application::Result<json::BackupData> empty = json::backupFromJson("");
+    const application::Result<json::Backup> empty = json::backupFromJson("");
     QVERIFY(!empty.ok());
 }
 
 void TestBackup::rejectsMissingSection()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    root.remove(QStringLiteral("assets"));
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    bundle.remove(QStringLiteral("assets"));
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("assets") != std::string::npos);
 }
 
 void TestBackup::rejectsMissingField()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonObject profile = bundle.value(QStringLiteral("profile")).toObject();
     profile.remove(QStringLiteral("phase"));
-    root.insert(QStringLiteral("profile"), profile);
+    bundle.insert(QStringLiteral("profile"), profile);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("phase") != std::string::npos);
 }
 
 void TestBackup::rejectsUnknownEnumText()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonObject profile = bundle.value(QStringLiteral("profile")).toObject();
     profile.insert(QStringLiteral("phase"), QStringLiteral("retired"));
-    root.insert(QStringLiteral("profile"), profile);
+    bundle.insert(QStringLiteral("profile"), profile);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("retired") != std::string::npos);
 }
 
 void TestBackup::rejectsWronglyTypedField()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonObject profile = bundle.value(QStringLiteral("profile")).toObject();
     profile.insert(QStringLiteral("riskToleranceBp"), QStringLiteral("high"));
-    root.insert(QStringLiteral("profile"), profile);
+    bundle.insert(QStringLiteral("profile"), profile);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("riskToleranceBp") != std::string::npos);
 }
@@ -312,26 +407,29 @@ void TestBackup::acceptsAFlowWrittenBeforeTheBreakdownExisted()
     // A backup from the release before the breakdown has no 'savingSplit' key.
     // The month is still a month: absence means the total is all that was
     // recorded, not that the file is broken.
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray flows = root.value(QStringLiteral("monthFlows")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray flows = bundle.value(QStringLiteral("monthFlows")).toArray();
     QJsonObject january = flows.at(0).toObject();
     january.remove(QStringLiteral("savingSplit"));
     flows.replace(0, january);
-    root.insert(QStringLiteral("monthFlows"), flows);
+    bundle.insert(QStringLiteral("monthFlows"), flows);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    QCOMPARE(parsed.value().monthFlows.size(), std::size_t(2));
-    QCOMPARE(parsed.value().monthFlows[0].flow.saving.minorUnits(), qint64(1000000));
-    QVERIFY(!parsed.value().monthFlows[0].flow.savingSplit.has_value());
+    QCOMPARE(parsed.value().profiles[0].monthFlows.size(), std::size_t(2));
+    QCOMPARE(parsed.value().profiles[0].monthFlows[0].flow.saving.minorUnits(), qint64(1000000));
+    QVERIFY(!parsed.value().profiles[0].monthFlows[0].flow.savingSplit.has_value());
 }
 
 void TestBackup::rejectsABreakdownThatDoesNotAddUp()
 {
     // 4 000 + 4 000 + 1 000 kr is not the 10 000 kr saved in January. The file
     // was edited, and guessing which figure to trust would invent one.
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray flows = root.value(QStringLiteral("monthFlows")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray flows = bundle.value(QStringLiteral("monthFlows")).toArray();
     QJsonObject january = flows.at(0).toObject();
     QJsonObject split = january.value(QStringLiteral("savingSplit")).toObject();
     QJsonObject amortisation = split.value(QStringLiteral("amortisation")).toObject();
@@ -339,9 +437,10 @@ void TestBackup::rejectsABreakdownThatDoesNotAddUp()
     split.insert(QStringLiteral("amortisation"), amortisation);
     january.insert(QStringLiteral("savingSplit"), split);
     flows.replace(0, january);
-    root.insert(QStringLiteral("monthFlows"), flows);
+    bundle.insert(QStringLiteral("monthFlows"), flows);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     // The message has to say which month is wrong.
     QVERIFY(parsed.error().find("2026-01") != std::string::npos);
@@ -353,14 +452,16 @@ void TestBackup::rejectsABreakdownThatDoesNotAddUp()
 /// Planning: the mode an existing household was already keeping its record in.
 void TestBackup::acceptsAProfileWrittenBeforeTrackingModeExisted()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonObject profile = bundle.value(QStringLiteral("profile")).toObject();
     profile.remove(QStringLiteral("trackingMode"));
-    root.insert(QStringLiteral("profile"), profile);
+    bundle.insert(QStringLiteral("profile"), profile);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    QCOMPARE(static_cast<int>(parsed.value().profile.trackingMode),
+    QCOMPARE(static_cast<int>(parsed.value().profiles[0].profile.trackingMode),
              static_cast<int>(domain::TrackingMode::Planning));
 }
 
@@ -369,12 +470,14 @@ void TestBackup::acceptsAProfileWrittenBeforeTrackingModeExisted()
 /// setting the household never chose.
 void TestBackup::rejectsUnknownTrackingMode()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonObject profile = bundle.value(QStringLiteral("profile")).toObject();
     profile.insert(QStringLiteral("trackingMode"), QStringLiteral("monthly"));
-    root.insert(QStringLiteral("profile"), profile);
+    bundle.insert(QStringLiteral("profile"), profile);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("monthly") != std::string::npos);
     QVERIFY(parsed.error().find("trackingMode") != std::string::npos);
@@ -385,25 +488,27 @@ void TestBackup::rejectsUnknownTrackingMode()
 /// which is the model's "no terms recorded yet".
 void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray liabilities = bundle.value(QStringLiteral("liabilities")).toArray();
     QJsonObject mortgage = liabilities.at(0).toObject();
     mortgage.remove(QStringLiteral("repaymentStyle"));
     mortgage.remove(QStringLiteral("regularPayment"));
     mortgage.remove(QStringLiteral("monthlyFee"));
     mortgage.remove(QStringLiteral("termMonths"));
     liabilities.replace(0, mortgage);
-    root.insert(QStringLiteral("liabilities"), liabilities);
+    bundle.insert(QStringLiteral("liabilities"), liabilities);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    QCOMPARE(static_cast<int>(parsed.value().liabilities[0].style),
+    QCOMPARE(static_cast<int>(parsed.value().profiles[0].liabilities[0].style),
              static_cast<int>(domain::RepaymentStyle::FixedAmortisation));
-    QVERIFY(parsed.value().liabilities[0].regularPayment.isZero());
-    QVERIFY(parsed.value().liabilities[0].monthlyFee.isZero());
+    QVERIFY(parsed.value().profiles[0].liabilities[0].regularPayment.isZero());
+    QVERIFY(parsed.value().profiles[0].liabilities[0].monthlyFee.isZero());
     // The term arrived with the recalculation: a file without one states no
     // term, so its recorded payment stays in force.
-    QCOMPARE(parsed.value().liabilities[0].termMonths, 0);
+    QCOMPARE(parsed.value().profiles[0].liabilities[0].termMonths, 0);
 }
 
 /// The rate moved from basis points to parts per 100 000. A backup written
@@ -411,31 +516,35 @@ void TestBackup::acceptsALiabilityWrittenBeforeTermsExisted()
 /// widen the old figure rather than drop it.
 void TestBackup::acceptsALiabilityWrittenBeforeThreeDecimalRatesExisted()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray liabilities = bundle.value(QStringLiteral("liabilities")).toArray();
     QJsonObject mortgage = liabilities.at(0).toObject();
     mortgage.remove(QStringLiteral("interest_100k"));
     mortgage.insert(QStringLiteral("interestBp"), 420);
     liabilities.replace(0, mortgage);
-    root.insert(QStringLiteral("liabilities"), liabilities);
+    bundle.insert(QStringLiteral("liabilities"), liabilities);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    QCOMPARE(parsed.value().liabilities[0].interestRate.partsPer100k(), 4200);
+    QCOMPARE(parsed.value().profiles[0].liabilities[0].interestRate.partsPer100k(), 4200);
 }
 
 /// A term is a count of months, and a count below zero is a file that cannot be
 /// read rather than a loan with no time left.
 void TestBackup::rejectsANegativeTerm()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray liabilities = bundle.value(QStringLiteral("liabilities")).toArray();
     QJsonObject mortgage = liabilities.at(0).toObject();
     mortgage.insert(QStringLiteral("termMonths"), -1);
     liabilities.replace(0, mortgage);
-    root.insert(QStringLiteral("liabilities"), liabilities);
+    bundle.insert(QStringLiteral("liabilities"), liabilities);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("termMonths") != std::string::npos);
 }
@@ -445,14 +554,16 @@ void TestBackup::rejectsANegativeTerm()
 /// household never recorded.
 void TestBackup::rejectsUnknownRepaymentStyle()
 {
-    QJsonObject root = parsedObject(json::toJson(fullyPopulated()));
-    QJsonArray liabilities = root.value(QStringLiteral("liabilities")).toArray();
+    QJsonObject root = parsedObject(json::toJson(singleProfile(fullyPopulated())));
+    QJsonObject bundle = firstBundle(root);
+    QJsonArray liabilities = bundle.value(QStringLiteral("liabilities")).toArray();
     QJsonObject mortgage = liabilities.at(0).toObject();
     mortgage.insert(QStringLiteral("repaymentStyle"), QStringLiteral("interest-only"));
     liabilities.replace(0, mortgage);
-    root.insert(QStringLiteral("liabilities"), liabilities);
+    bundle.insert(QStringLiteral("liabilities"), liabilities);
+    setFirstBundle(root, bundle);
 
-    const application::Result<json::BackupData> parsed = json::backupFromJson(serialise(root));
+    const application::Result<json::Backup> parsed = json::backupFromJson(serialise(root));
     QVERIFY(!parsed.ok());
     QVERIFY(parsed.error().find("interest-only") != std::string::npos);
     QVERIFY(parsed.error().find("repaymentStyle") != std::string::npos);

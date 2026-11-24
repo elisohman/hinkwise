@@ -29,68 +29,97 @@ namespace {
 // ---------------------------------------------------------------------------
 
 constexpr const char* kSelectProfile = R"(
-    SELECT display_name, base_currency, phase, risk_tolerance_bp, jurisdiction_id,
+    SELECT id, display_name, base_currency, phase, risk_tolerance_bp, jurisdiction_id,
            safe_withdrawal_bp, capital_tax_bp, fi_multiplier_low, fi_multiplier_default,
-           fi_multiplier_high, tracking_mode
+           fi_multiplier_high, tracking_mode, created_at
     FROM profile
-    WHERE id = 1
+    WHERE id = ?
 )";
+
+constexpr const char* kSelectProfiles = R"(
+    SELECT id, display_name, base_currency, tracking_mode
+    FROM profile
+    ORDER BY id
+)";
+
+constexpr const char* kSelectActiveProfileId =
+    "SELECT value FROM meta WHERE key = 'active_profile'";
+
+constexpr const char* kSetActiveProfileId = R"(
+    INSERT INTO meta (key, value) VALUES ('active_profile', ?)
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value
+)";
+
+constexpr const char* kSelectProfileExists = "SELECT 1 FROM profile WHERE id = ?";
+
+constexpr const char* kSelectProfileCount = "SELECT count(*) FROM profile";
+
+constexpr const char* kSelectFirstProfileId = "SELECT id FROM profile ORDER BY id LIMIT 1";
 
 // created_at is set on insert and left alone on update: it records when the
 // household was created, not when it was last edited.
-constexpr const char* kUpsertProfile = R"(
-    INSERT INTO profile (id, display_name, base_currency, phase, risk_tolerance_bp,
+constexpr const char* kInsertProfile = R"(
+    INSERT INTO profile (display_name, base_currency, phase, risk_tolerance_bp,
                          jurisdiction_id, safe_withdrawal_bp, capital_tax_bp,
                          fi_multiplier_low, fi_multiplier_default, fi_multiplier_high,
                          tracking_mode, created_at)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (id) DO UPDATE SET
-        display_name = excluded.display_name,
-        base_currency = excluded.base_currency,
-        phase = excluded.phase,
-        risk_tolerance_bp = excluded.risk_tolerance_bp,
-        jurisdiction_id = excluded.jurisdiction_id,
-        safe_withdrawal_bp = excluded.safe_withdrawal_bp,
-        capital_tax_bp = excluded.capital_tax_bp,
-        fi_multiplier_low = excluded.fi_multiplier_low,
-        fi_multiplier_default = excluded.fi_multiplier_default,
-        fi_multiplier_high = excluded.fi_multiplier_high,
-        tracking_mode = excluded.tracking_mode
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 )";
+
+constexpr const char* kUpdateProfile = R"(
+    UPDATE profile SET
+        display_name = ?,
+        base_currency = ?,
+        phase = ?,
+        risk_tolerance_bp = ?,
+        jurisdiction_id = ?,
+        safe_withdrawal_bp = ?,
+        capital_tax_bp = ?,
+        fi_multiplier_low = ?,
+        fi_multiplier_default = ?,
+        fi_multiplier_high = ?,
+        tracking_mode = ?
+    WHERE id = ?
+)";
+
+constexpr const char* kDeleteProfile = "DELETE FROM profile WHERE id = ?";
 
 constexpr const char* kSelectAssets = R"(
     SELECT id, name, kind, bucket, liquid, included_in_headline
     FROM asset
-    WHERE archived = 0
+    WHERE archived = 0 AND profile_id = ?
     ORDER BY name, id
 )";
 
 constexpr const char* kUpsertAsset = R"(
-    INSERT INTO asset (id, name, kind, bucket, liquid, included_in_headline, archived)
-    VALUES (?, ?, ?, ?, ?, ?, 0)
+    INSERT INTO asset (id, name, kind, bucket, liquid, included_in_headline, archived, profile_id)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
         kind = excluded.kind,
         bucket = excluded.bucket,
         liquid = excluded.liquid,
-        included_in_headline = excluded.included_in_headline
+        included_in_headline = excluded.included_in_headline,
+        profile_id = excluded.profile_id
+    WHERE profile_id = excluded.profile_id
 )";
 
-constexpr const char* kDeleteAsset = "DELETE FROM asset WHERE id = ?";
+constexpr const char* kDeleteAsset = "DELETE FROM asset WHERE id = ? AND profile_id = ?";
 
 constexpr const char* kSelectLiabilities = R"(
     SELECT id, name, kind, interest_100k, repayment_style, regular_payment_minor,
            monthly_fee_minor, term_months,
-           COALESCE((SELECT base_currency FROM profile WHERE id = 1), 'SEK')
+           COALESCE((SELECT base_currency FROM profile WHERE id = liability.profile_id), 'SEK')
     FROM liability
-    WHERE archived = 0
+    WHERE archived = 0 AND profile_id = ?
     ORDER BY name, id
 )";
 
 constexpr const char* kUpsertLiability = R"(
     INSERT INTO liability (id, name, kind, interest_100k, repayment_style,
-                           regular_payment_minor, monthly_fee_minor, term_months, archived)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                           regular_payment_minor, monthly_fee_minor, term_months, archived,
+                           profile_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
         kind = excluded.kind,
@@ -98,92 +127,125 @@ constexpr const char* kUpsertLiability = R"(
         repayment_style = excluded.repayment_style,
         regular_payment_minor = excluded.regular_payment_minor,
         monthly_fee_minor = excluded.monthly_fee_minor,
-        term_months = excluded.term_months
+        term_months = excluded.term_months,
+        profile_id = excluded.profile_id
+    WHERE profile_id = excluded.profile_id
 )";
 
-constexpr const char* kDeleteLiability = "DELETE FROM liability WHERE id = ?";
+constexpr const char* kDeleteLiability = "DELETE FROM liability WHERE id = ? AND profile_id = ?";
 
 constexpr const char* kSelectPlannedExpenses = R"(
     SELECT id, name, amount_minor, due_month, currency
     FROM planned_expense
+    WHERE profile_id = ?
     ORDER BY due_month, name, id
 )";
 
 constexpr const char* kUpsertPlannedExpense = R"(
-    INSERT INTO planned_expense (id, name, amount_minor, due_month, currency)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO planned_expense (id, name, amount_minor, due_month, currency, profile_id)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
         name = excluded.name,
         amount_minor = excluded.amount_minor,
         due_month = excluded.due_month,
-        currency = excluded.currency
+        currency = excluded.currency,
+        profile_id = excluded.profile_id
+    WHERE profile_id = excluded.profile_id
 )";
 
-constexpr const char* kDeletePlannedExpense = "DELETE FROM planned_expense WHERE id = ?";
+constexpr const char* kDeletePlannedExpense =
+    "DELETE FROM planned_expense WHERE id = ? AND profile_id = ?";
 
 // "YYYY-MM" sorts chronologically as text, which is why the month needs no
-// separate ordering column.
+// separate ordering column. Every valuation read joins its holding so another
+// household's asset id can never return history.
 constexpr const char* kSelectValuation = R"(
-    SELECT amount_minor, currency
-    FROM valuation
-    WHERE asset_id = ? AND month = ?
+    SELECT v.amount_minor, v.currency
+    FROM valuation v
+    JOIN asset a ON a.id = v.asset_id
+    WHERE v.asset_id = ? AND v.month = ? AND a.profile_id = ?
 )";
 
 constexpr const char* kSelectLatestValuation = R"(
-    SELECT amount_minor, currency
-    FROM valuation
-    WHERE asset_id = ?
-    ORDER BY month DESC
+    SELECT v.amount_minor, v.currency
+    FROM valuation v
+    JOIN asset a ON a.id = v.asset_id
+    WHERE v.asset_id = ? AND a.profile_id = ?
+    ORDER BY v.month DESC
     LIMIT 1
 )";
 
 // "YYYY-MM" sorts chronologically as text, so ORDER BY month is the calendar
 // order the history is read back in.
 constexpr const char* kSelectValuationHistory = R"(
-    SELECT month, amount_minor, currency
-    FROM valuation
-    WHERE asset_id = ?
-    ORDER BY month ASC
+    SELECT v.month, v.amount_minor, v.currency
+    FROM valuation v
+    JOIN asset a ON a.id = v.asset_id
+    WHERE v.asset_id = ? AND a.profile_id = ?
+    ORDER BY v.month ASC
 )";
 
 // "YYYY-MM" sorts chronologically as text, so MAX(month) is the latest month
-// recorded and NULL when nothing has been. One query, no rows read.
-constexpr const char* kSelectLatestValuationMonth = "SELECT MAX(month) FROM valuation";
+// recorded and NULL when nothing has been. The join is what keeps another
+// household's recent valuation from making this household's balances look
+// fresh.
+constexpr const char* kSelectLatestValuationMonth = R"(
+    SELECT MAX(v.month)
+    FROM valuation v
+    JOIN asset a ON a.id = v.asset_id
+    WHERE a.profile_id = ?
+)";
 
+// The insert only matches when the parent asset belongs to the active profile;
+// otherwise it writes no row and the caller reports the refused write. The
+// upsert then corrects the month or stores it for the first time.
 constexpr const char* kUpsertValuation = R"(
     INSERT INTO valuation (asset_id, month, amount_minor, currency)
-    VALUES (?, ?, ?, ?)
+    SELECT ?, ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM asset WHERE id = ? AND profile_id = ?)
     ON CONFLICT (asset_id, month) DO UPDATE SET
         amount_minor = excluded.amount_minor,
         currency = excluded.currency
 )";
 
 constexpr const char* kSelectDebtBalance = R"(
-    SELECT amount_minor, currency
-    FROM debt_balance
-    WHERE liability_id = ? AND month = ?
+    SELECT b.amount_minor, b.currency
+    FROM debt_balance b
+    JOIN liability l ON l.id = b.liability_id
+    WHERE b.liability_id = ? AND b.month = ? AND l.profile_id = ?
 )";
 
+constexpr const char* kSelectAssetOwner = "SELECT profile_id FROM asset WHERE id = ?";
+constexpr const char* kSelectLiabilityOwner = "SELECT profile_id FROM liability WHERE id = ?";
+
 constexpr const char* kSelectLatestDebtBalance = R"(
-    SELECT amount_minor, currency
-    FROM debt_balance
-    WHERE liability_id = ?
-    ORDER BY month DESC
+    SELECT b.amount_minor, b.currency
+    FROM debt_balance b
+    JOIN liability l ON l.id = b.liability_id
+    WHERE b.liability_id = ? AND l.profile_id = ?
+    ORDER BY b.month DESC
     LIMIT 1
 )";
 
 constexpr const char* kSelectDebtBalanceHistory = R"(
-    SELECT month, amount_minor, currency
-    FROM debt_balance
-    WHERE liability_id = ?
-    ORDER BY month ASC
+    SELECT b.month, b.amount_minor, b.currency
+    FROM debt_balance b
+    JOIN liability l ON l.id = b.liability_id
+    WHERE b.liability_id = ? AND l.profile_id = ?
+    ORDER BY b.month ASC
 )";
 
-constexpr const char* kSelectLatestDebtBalanceMonth = "SELECT MAX(month) FROM debt_balance";
+constexpr const char* kSelectLatestDebtBalanceMonth = R"(
+    SELECT MAX(b.month)
+    FROM debt_balance b
+    JOIN liability l ON l.id = b.liability_id
+    WHERE l.profile_id = ?
+)";
 
 constexpr const char* kUpsertDebtBalance = R"(
     INSERT INTO debt_balance (liability_id, month, amount_minor, currency)
-    VALUES (?, ?, ?, ?)
+    SELECT ?, ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM liability WHERE id = ? AND profile_id = ?)
     ON CONFLICT (liability_id, month) DO UPDATE SET
         amount_minor = excluded.amount_minor,
         currency = excluded.currency
@@ -193,13 +255,14 @@ constexpr const char* kSelectMonthFlow = R"(
     SELECT income_minor, needs_minor, wants_minor, saving_minor, currency,
            saving_buffer_minor, saving_invest_minor, saving_amort_minor
     FROM month_flow
-    WHERE month = ?
+    WHERE profile_id = ? AND month = ?
 )";
 
 constexpr const char* kSelectRecentMonthFlows = R"(
     SELECT month, income_minor, needs_minor, wants_minor, saving_minor, currency,
            saving_buffer_minor, saving_invest_minor, saving_amort_minor
     FROM month_flow
+    WHERE profile_id = ?
     ORDER BY month DESC
     LIMIT ?
 )";
@@ -208,10 +271,11 @@ constexpr const char* kSelectRecentMonthFlows = R"(
 // recorded breakdown, and the repository refuses a row where only some are
 // NULL. An absent breakdown is written back as NULL rather than as zeroes.
 constexpr const char* kUpsertMonthFlow = R"(
-    INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, saving_minor, currency,
-                            saving_buffer_minor, saving_invest_minor, saving_amort_minor)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (month) DO UPDATE SET
+    INSERT INTO month_flow (profile_id, month, income_minor, needs_minor, wants_minor,
+                            saving_minor, currency, saving_buffer_minor, saving_invest_minor,
+                            saving_amort_minor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (profile_id, month) DO UPDATE SET
         income_minor = excluded.income_minor,
         needs_minor = excluded.needs_minor,
         wants_minor = excluded.wants_minor,
@@ -225,11 +289,12 @@ constexpr const char* kUpsertMonthFlow = R"(
 constexpr const char* kSelectPhaseHistory = R"(
     SELECT changed_at, phase
     FROM phase_history
+    WHERE profile_id = ?
     ORDER BY changed_at
 )";
 
 constexpr const char* kInsertPhaseHistory =
-    "INSERT INTO phase_history (changed_at, phase) VALUES (?, ?)";
+    "INSERT INTO phase_history (profile_id, changed_at, phase) VALUES (?, ?, ?)";
 
 // ---------------------------------------------------------------------------
 // Small conversions shared by every repository.
@@ -283,11 +348,95 @@ public:
     bool next() { return m_query.next(); }
     QVariant value(int column) const { return m_query.value(column); }
 
+    /// The row id SQLite assigned to the last insert.
+    QVariant lastInsertId() const { return m_query.lastInsertId(); }
+
+    /// Rows matched by the last exec. An upsert whose conflict update was
+    /// filtered out by the owner check reports zero, which is how a write that
+    /// tried to overwrite another household's row is caught.
+    int affected() const { return m_query.numRowsAffected(); }
+
 private:
     QSqlQuery m_query;
     std::string m_what;
     std::string m_error;
 };
+
+/// Every scoped repository starts the same way. Zero means no profile has been
+/// chosen yet, and running the statement would either return every household's
+/// rows or none at all; neither is a truthful answer to "what does this
+/// household own".
+application::Status requireActiveProfile(std::int64_t profileId, std::string_view what)
+{
+    if (profileId > 0)
+        return application::Status::success();
+    return application::Status::err(std::string{what} + ": no active profile");
+}
+
+/// Whether a valuation's asset or a debt balance's liability exists and, when it
+/// does, whether it belongs to the repository's active household.
+///
+/// The two are different answers: a row that is simply gone is the ordinary
+/// "nothing recorded", while a row owned by another profile is a caller asking
+/// about the wrong household and must not be told anything about it.
+enum class ParentOwnership { Missing, Owned, OtherProfile };
+
+application::Result<ParentOwnership> parentOwnership(const QSqlDatabase& connection,
+                                                     const char* statement,
+                                                     std::string_view parentId,
+                                                     std::int64_t profileId, std::string_view what)
+{
+    using Outcome = application::Result<ParentOwnership>;
+
+    Statement query{connection, statement, what};
+    const application::Status ran = query.exec({toQString(parentId)});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+    if (!query.next())
+        return Outcome::ok(ParentOwnership::Missing);
+
+    if (query.value(0).toLongLong() == static_cast<qlonglong>(profileId))
+        return Outcome::ok(ParentOwnership::Owned);
+    return Outcome::ok(ParentOwnership::OtherProfile);
+}
+
+/// A read may ask about a holding that is no longer there - the caller is
+/// describing a row it is about to delete - but it may not reach into another
+/// household's history. Missing is left to the read itself, which returns no
+/// rows.
+application::Status requireReadableParent(const QSqlDatabase& connection, const char* statement,
+                                          std::string_view parentId, std::int64_t profileId,
+                                          std::string_view what)
+{
+    const application::Result<ParentOwnership> ownership =
+        parentOwnership(connection, statement, parentId, profileId, what);
+    if (!ownership.ok())
+        return application::Status::err(ownership.error());
+    if (ownership.value() == ParentOwnership::OtherProfile)
+        return application::Status::err(std::string{what} + " '" + std::string{parentId} +
+                                        "' belongs to another profile");
+    return application::Status::success();
+}
+
+/// A write may only name a holding the active household owns. A missing parent
+/// is refused with its own message rather than left to the foreign key, so the
+/// caller learns which id was wrong instead of reading SQLite's constraint text.
+application::Status requireWritableParent(const QSqlDatabase& connection, const char* statement,
+                                          std::string_view parentId, std::int64_t profileId,
+                                          std::string_view what)
+{
+    const application::Result<ParentOwnership> ownership =
+        parentOwnership(connection, statement, parentId, profileId, what);
+    if (!ownership.ok())
+        return application::Status::err(ownership.error());
+    if (ownership.value() == ParentOwnership::Missing)
+        return application::Status::err(std::string{what} + " '" + std::string{parentId} +
+                                        "' does not exist");
+    if (ownership.value() == ParentOwnership::OtherProfile)
+        return application::Status::err(std::string{what} + " '" + std::string{parentId} +
+                                        "' belongs to another profile");
+    return application::Status::success();
+}
 
 application::Result<domain::Currency> decodeCurrency(const QVariant& value,
                                                      const std::string& context)
@@ -411,6 +560,84 @@ application::Result<domain::MonthFlow> decodeFlow(const Statement& row, int firs
     return application::Result<domain::MonthFlow>::ok(flow);
 }
 
+application::Result<domain::Profile> decodeProfileRow(const Statement& row,
+                                                      const std::string& context)
+{
+    using Outcome = application::Result<domain::Profile>;
+
+    domain::Profile profile;
+    profile.id = row.value(0).toLongLong();
+    profile.displayName = toStd(row.value(1).toString());
+
+    const application::Result<domain::Currency> currency = decodeCurrency(row.value(2), context);
+    if (!currency.ok())
+        return Outcome::err(currency.error());
+    profile.baseCurrency = currency.value();
+
+    const application::Result<domain::Phase> phase = decodePhase(row.value(3), context);
+    if (!phase.ok())
+        return Outcome::err(phase.error());
+    profile.phase = phase.value();
+
+    profile.riskTolerance = domain::Percentage::fromBasisPoints(row.value(4).toInt());
+
+    domain::Jurisdiction jurisdiction;
+    jurisdiction.id = toStd(row.value(5).toString());
+    jurisdiction.safeWithdrawalRate = domain::Percentage::fromBasisPoints(row.value(6).toInt());
+    jurisdiction.capitalTaxDrag = domain::Percentage::fromBasisPoints(row.value(7).toInt());
+    jurisdiction.fiMultiplierLow = row.value(8).toInt();
+    jurisdiction.fiMultiplierDefault = row.value(9).toInt();
+    jurisdiction.fiMultiplierHigh = row.value(10).toInt();
+    profile.jurisdiction = jurisdiction;
+
+    const application::Result<domain::TrackingMode> trackingMode =
+        decodeTrackingMode(row.value(11), context);
+    if (!trackingMode.ok())
+        return Outcome::err(trackingMode.error());
+    profile.trackingMode = trackingMode.value();
+
+    return Outcome::ok(std::move(profile));
+}
+
+/// The profile the scoped repositories read, as stored in meta. Absent is the
+/// ordinary state of a database that has never held a household.
+application::Result<std::optional<std::int64_t>> readActiveProfileId(const QSqlDatabase& connection)
+{
+    using Outcome = application::Result<std::optional<std::int64_t>>;
+
+    Statement statement{connection, kSelectActiveProfileId, "load active profile"};
+    const application::Status ran = statement.exec();
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+    if (!statement.next())
+        return Outcome::ok(std::nullopt);
+
+    const QString stored = statement.value(0).toString();
+    bool parsed = false;
+    const qlonglong id = stored.toLongLong(&parsed);
+    if (!parsed || id <= 0)
+        return Outcome::err("profile: active profile id '" + toStd(stored) +
+                            "' is not a profile id");
+    return Outcome::ok(static_cast<std::int64_t>(id));
+}
+
+application::Status writeActiveProfileId(const QSqlDatabase& connection, std::int64_t id)
+{
+    return Statement{connection, kSetActiveProfileId, "set active profile"}.exec(
+        {QString::number(id)});
+}
+
+application::Result<bool> profileExists(const QSqlDatabase& connection, std::int64_t id)
+{
+    using Outcome = application::Result<bool>;
+
+    Statement statement{connection, kSelectProfileExists, "find profile"};
+    const application::Status ran = statement.exec({QString::number(id)});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+    return Outcome::ok(statement.next());
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -426,52 +653,119 @@ application::Result<std::optional<domain::Profile>> SqliteProfileRepository::loa
 {
     using Outcome = application::Result<std::optional<domain::Profile>>;
 
+    const application::Result<std::optional<std::int64_t>> active =
+        readActiveProfileId(m_connection);
+    if (!active.ok())
+        return Outcome::err(active.error());
+    if (!active.value())
+        return Outcome::ok(std::nullopt);
+
     Statement statement{m_connection, kSelectProfile, "load profile"};
+    const application::Status ran = statement.exec({QString::number(*active.value())});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+
+    // A pointer into a missing row is not "no profile": the file says which
+    // household is active and the row it names is gone, which is corrupt data
+    // the caller has to see rather than a fresh empty state.
+    if (!statement.next())
+        return Outcome::err("profile: active profile " + std::to_string(*active.value()) +
+                            " does not exist");
+
+    application::Result<domain::Profile> decoded = decodeProfileRow(statement, "profile");
+    if (!decoded.ok())
+        return Outcome::err(decoded.error());
+    return Outcome::ok(std::move(decoded.value()));
+}
+
+application::Result<std::optional<domain::Profile>>
+SqliteProfileRepository::loadById(std::int64_t id) const
+{
+    using Outcome = application::Result<std::optional<domain::Profile>>;
+
+    if (id <= 0)
+        return Outcome::ok(std::nullopt);
+
+    Statement statement{m_connection, kSelectProfile, "load profile"};
+    const application::Status ran = statement.exec({QString::number(id)});
+    if (!ran.ok())
+        return Outcome::err(ran.error());
+    if (!statement.next())
+        return Outcome::ok(std::nullopt);
+
+    application::Result<domain::Profile> decoded = decodeProfileRow(statement, "profile");
+    if (!decoded.ok())
+        return Outcome::err(decoded.error());
+    return Outcome::ok(std::move(decoded.value()));
+}
+
+application::Result<std::vector<application::ProfileSummary>> SqliteProfileRepository::list() const
+{
+    using Outcome = application::Result<std::vector<application::ProfileSummary>>;
+
+    Statement statement{m_connection, kSelectProfiles, "list profiles"};
     const application::Status ran = statement.exec();
     if (!ran.ok())
         return Outcome::err(ran.error());
 
-    if (!statement.next())
-        return Outcome::ok(std::nullopt);
-
-    domain::Profile profile;
-    profile.displayName = toStd(statement.value(0).toString());
-
-    const application::Result<domain::Currency> currency =
-        decodeCurrency(statement.value(1), "profile");
-    if (!currency.ok())
-        return Outcome::err(currency.error());
-    profile.baseCurrency = currency.value();
-
-    const application::Result<domain::Phase> phase = decodePhase(statement.value(2), "profile");
-    if (!phase.ok())
-        return Outcome::err(phase.error());
-    profile.phase = phase.value();
-
-    profile.riskTolerance = domain::Percentage::fromBasisPoints(statement.value(3).toInt());
-
-    domain::Jurisdiction jurisdiction;
-    jurisdiction.id = toStd(statement.value(4).toString());
-    jurisdiction.safeWithdrawalRate =
-        domain::Percentage::fromBasisPoints(statement.value(5).toInt());
-    jurisdiction.capitalTaxDrag = domain::Percentage::fromBasisPoints(statement.value(6).toInt());
-    jurisdiction.fiMultiplierLow = statement.value(7).toInt();
-    jurisdiction.fiMultiplierDefault = statement.value(8).toInt();
-    jurisdiction.fiMultiplierHigh = statement.value(9).toInt();
-    profile.jurisdiction = jurisdiction;
-
-    const application::Result<domain::TrackingMode> trackingMode =
-        decodeTrackingMode(statement.value(10), "profile");
-    if (!trackingMode.ok())
-        return Outcome::err(trackingMode.error());
-    profile.trackingMode = trackingMode.value();
-
-    return Outcome::ok(profile);
+    std::vector<application::ProfileSummary> profiles;
+    while (statement.next()) {
+        application::ProfileSummary summary;
+        summary.id = statement.value(0).toLongLong();
+        summary.displayName = toStd(statement.value(1).toString());
+        summary.baseCurrency = toStd(statement.value(2).toString());
+        summary.trackingMode = toStd(statement.value(3).toString());
+        profiles.push_back(std::move(summary));
+    }
+    return Outcome::ok(std::move(profiles));
 }
 
 application::Status SqliteProfileRepository::save(const domain::Profile& profile)
 {
-    return Statement{m_connection, kUpsertProfile, "save profile"}.exec({
+    const auto values = [&profile]() {
+        return QVariantList{
+            toQString(profile.displayName),
+            QString::fromUtf8(domain::storageKey(profile.baseCurrency)),
+            phaseText(profile.phase),
+            profile.riskTolerance.basisPoints(),
+            toQString(profile.jurisdiction.id),
+            profile.jurisdiction.safeWithdrawalRate.basisPoints(),
+            profile.jurisdiction.capitalTaxDrag.basisPoints(),
+            profile.jurisdiction.fiMultiplierLow,
+            profile.jurisdiction.fiMultiplierDefault,
+            profile.jurisdiction.fiMultiplierHigh,
+            QString::fromUtf8(domain::storageKey(profile.trackingMode)),
+        };
+    };
+
+    const auto update = [this, &values](std::int64_t id) -> application::Status {
+        QVariantList bound = values();
+        bound.push_back(QString::number(id));
+        Statement statement{m_connection, kUpdateProfile, "save profile"};
+        const application::Status ran = statement.exec(bound);
+        if (!ran.ok())
+            return ran;
+        if (statement.affected() == 0)
+            return application::Status::err("profile " + std::to_string(id) + " does not exist");
+        return application::Status::success();
+    };
+
+    if (profile.id > 0)
+        return update(profile.id);
+
+    // A profile without an id is either the first household this file has ever
+    // held or an edit that lost track of which row it came from. The first is
+    // the wizard's ordinary path; the second edits the active household rather
+    // than silently becoming a second one.
+    const application::Result<std::optional<std::int64_t>> active =
+        readActiveProfileId(m_connection);
+    if (!active.ok())
+        return application::Status::err(active.error());
+    if (active.value())
+        return update(*active.value());
+
+    Statement statement{m_connection, kInsertProfile, "save profile"};
+    const application::Status inserted = statement.exec({
         toQString(profile.displayName),
         QString::fromUtf8(domain::storageKey(profile.baseCurrency)),
         phaseText(profile.phase),
@@ -485,6 +779,116 @@ application::Status SqliteProfileRepository::save(const domain::Profile& profile
         QString::fromUtf8(domain::storageKey(profile.trackingMode)),
         toQString(nowIso()),
     });
+    if (!inserted.ok())
+        return inserted;
+
+    const qlonglong id = statement.lastInsertId().toLongLong();
+    if (id <= 0)
+        return application::Status::err("save profile: the new profile got no id");
+    return writeActiveProfileId(m_connection, id);
+}
+
+application::Result<domain::Profile> SqliteProfileRepository::create(const domain::Profile& profile)
+{
+    using Outcome = application::Result<domain::Profile>;
+
+    Statement statement{m_connection, kInsertProfile, "create profile"};
+    const application::Status inserted = statement.exec({
+        toQString(profile.displayName),
+        QString::fromUtf8(domain::storageKey(profile.baseCurrency)),
+        phaseText(profile.phase),
+        profile.riskTolerance.basisPoints(),
+        toQString(profile.jurisdiction.id),
+        profile.jurisdiction.safeWithdrawalRate.basisPoints(),
+        profile.jurisdiction.capitalTaxDrag.basisPoints(),
+        profile.jurisdiction.fiMultiplierLow,
+        profile.jurisdiction.fiMultiplierDefault,
+        profile.jurisdiction.fiMultiplierHigh,
+        QString::fromUtf8(domain::storageKey(profile.trackingMode)),
+        toQString(nowIso()),
+    });
+    if (!inserted.ok())
+        return Outcome::err(inserted.error());
+
+    const qlonglong id = statement.lastInsertId().toLongLong();
+    if (id <= 0)
+        return Outcome::err("create profile: the new profile got no id");
+
+    const application::Status activated =
+        writeActiveProfileId(m_connection, static_cast<std::int64_t>(id));
+    if (!activated.ok())
+        return Outcome::err(activated.error());
+
+    domain::Profile created = profile;
+    created.id = static_cast<std::int64_t>(id);
+    return Outcome::ok(std::move(created));
+}
+
+application::Status SqliteProfileRepository::remove(std::int64_t id)
+{
+    // The count, the delete and the pointer are one decision. If the delete
+    // committed before the pointer was rewritten, a failure in between would
+    // leave meta naming a profile that is gone, and the application could not
+    // open the file at all.
+    if (!m_connection.transaction())
+        return application::Status::err("remove profile: cannot begin transaction: " +
+                                        toStd(m_connection.lastError().text()));
+
+    const auto fail = [this](const std::string& message) {
+        m_connection.rollback();
+        return application::Status::err(message);
+    };
+
+    Statement count{m_connection, kSelectProfileCount, "count profiles"};
+    const application::Status counted = count.exec();
+    if (!counted.ok())
+        return fail(counted.error());
+    if (!count.next())
+        return fail("count profiles: no result");
+    if (count.value(0).toInt() <= 1)
+        return fail("remove profile: cannot remove the last profile");
+
+    // The data goes with it: asset, liability, planned_expense, month_flow and
+    // phase_history all cascade from profile, and valuation and debt_balance
+    // cascade from the asset and liability rows that do.
+    const application::Status removed =
+        Statement{m_connection, kDeleteProfile, "remove profile"}.exec({QString::number(id)});
+    if (!removed.ok())
+        return fail(removed.error());
+
+    // Removing the household that was being read leaves the file pointing at a
+    // row that is gone. The next household by id takes over, so the application
+    // always has somewhere to write.
+    const application::Result<std::optional<std::int64_t>> active =
+        readActiveProfileId(m_connection);
+    if (!active.ok())
+        return fail(active.error());
+    if (active.value() && *active.value() == id) {
+        Statement first{m_connection, kSelectFirstProfileId, "find first profile"};
+        const application::Status ran = first.exec();
+        if (!ran.ok())
+            return fail(ran.error());
+        if (first.next()) {
+            const application::Status pointed =
+                writeActiveProfileId(m_connection, first.value(0).toLongLong());
+            if (!pointed.ok())
+                return fail(pointed.error());
+        }
+    }
+
+    if (!m_connection.commit())
+        return fail("remove profile: cannot commit: " + toStd(m_connection.lastError().text()));
+    return application::Status::success();
+}
+
+application::Status SqliteProfileRepository::setActive(std::int64_t id)
+{
+    const application::Result<bool> exists = profileExists(m_connection, id);
+    if (!exists.ok())
+        return application::Status::err(exists.error());
+    if (!exists.value())
+        return application::Status::err("profile " + std::to_string(id) + " does not exist");
+    return writeActiveProfileId(m_connection, id);
 }
 
 // ---------------------------------------------------------------------------
@@ -500,8 +904,12 @@ application::Result<std::vector<domain::Asset>> SqliteAssetRepository::all() con
 {
     using Outcome = application::Result<std::vector<domain::Asset>>;
 
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "load assets");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectAssets, "load assets"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -532,19 +940,39 @@ application::Result<std::vector<domain::Asset>> SqliteAssetRepository::all() con
 
 application::Status SqliteAssetRepository::upsert(const domain::Asset& asset)
 {
-    return Statement{m_connection, kUpsertAsset, "save asset"}.exec({
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "save asset");
+    if (!scoped.ok())
+        return scoped;
+
+    Statement statement{m_connection, kUpsertAsset, "save asset"};
+    const application::Status ran = statement.exec({
         toQString(asset.id),
         toQString(asset.name),
         QString::fromUtf8(domain::storageKey(asset.kind)),
         QString::fromUtf8(domain::storageKey(asset.bucket)),
         asset.liquid ? 1 : 0,
         asset.includedInHeadline ? 1 : 0,
+        QString::number(m_activeProfileId),
     });
+    if (!ran.ok())
+        return ran;
+    // The id is globally unique, so a conflict with another household's row is
+    // a caller that reused an id rather than an edit. The owner check in the
+    // upsert leaves that row alone; refusing the write says so.
+    if (statement.affected() == 0)
+        return application::Status::err("save asset: asset '" + asset.id +
+                                        "' belongs to another profile");
+    return application::Status::success();
 }
 
 application::Status SqliteAssetRepository::remove(std::string_view id)
 {
-    return Statement{m_connection, kDeleteAsset, "delete asset"}.exec({toQString(id)});
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "delete asset");
+    if (!scoped.ok())
+        return scoped;
+
+    return Statement{m_connection, kDeleteAsset, "delete asset"}.exec(
+        {toQString(id), QString::number(m_activeProfileId)});
 }
 
 // ---------------------------------------------------------------------------
@@ -560,8 +988,12 @@ application::Result<std::vector<domain::Liability>> SqliteLiabilityRepository::a
 {
     using Outcome = application::Result<std::vector<domain::Liability>>;
 
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "load liabilities");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectLiabilities, "load liabilities"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -606,7 +1038,12 @@ application::Result<std::vector<domain::Liability>> SqliteLiabilityRepository::a
 
 application::Status SqliteLiabilityRepository::upsert(const domain::Liability& liability)
 {
-    return Statement{m_connection, kUpsertLiability, "save liability"}.exec({
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "save liability");
+    if (!scoped.ok())
+        return scoped;
+
+    Statement statement{m_connection, kUpsertLiability, "save liability"};
+    const application::Status ran = statement.exec({
         toQString(liability.id),
         toQString(liability.name),
         QString::fromUtf8(domain::storageKey(liability.kind)),
@@ -615,12 +1052,24 @@ application::Status SqliteLiabilityRepository::upsert(const domain::Liability& l
         static_cast<qlonglong>(liability.regularPayment.minorUnits()),
         static_cast<qlonglong>(liability.monthlyFee.minorUnits()),
         liability.termMonths,
+        QString::number(m_activeProfileId),
     });
+    if (!ran.ok())
+        return ran;
+    if (statement.affected() == 0)
+        return application::Status::err("save liability: liability '" + liability.id +
+                                        "' belongs to another profile");
+    return application::Status::success();
 }
 
 application::Status SqliteLiabilityRepository::remove(std::string_view id)
 {
-    return Statement{m_connection, kDeleteLiability, "delete liability"}.exec({toQString(id)});
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "delete liability");
+    if (!scoped.ok())
+        return scoped;
+
+    return Statement{m_connection, kDeleteLiability, "delete liability"}.exec(
+        {toQString(id), QString::number(m_activeProfileId)});
 }
 
 // ---------------------------------------------------------------------------
@@ -636,8 +1085,13 @@ application::Result<std::vector<domain::PlannedExpense>> SqlitePlannedExpenseRep
 {
     using Outcome = application::Result<std::vector<domain::PlannedExpense>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load planned expenses");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectPlannedExpenses, "load planned expenses"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -667,19 +1121,37 @@ application::Result<std::vector<domain::PlannedExpense>> SqlitePlannedExpenseRep
 
 application::Status SqlitePlannedExpenseRepository::upsert(const domain::PlannedExpense& expense)
 {
-    return Statement{m_connection, kUpsertPlannedExpense, "save planned expense"}.exec({
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "save planned expense");
+    if (!scoped.ok())
+        return scoped;
+
+    Statement statement{m_connection, kUpsertPlannedExpense, "save planned expense"};
+    const application::Status ran = statement.exec({
         toQString(expense.id),
         toQString(expense.name),
         static_cast<qint64>(expense.amount.minorUnits()),
         monthText(expense.dueMonth),
         QString::fromUtf8(domain::storageKey(expense.amount.currency())),
+        QString::number(m_activeProfileId),
     });
+    if (!ran.ok())
+        return ran;
+    if (statement.affected() == 0)
+        return application::Status::err("save planned expense: planned expense '" + expense.id +
+                                        "' belongs to another profile");
+    return application::Status::success();
 }
 
 application::Status SqlitePlannedExpenseRepository::remove(std::string_view id)
 {
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "delete planned expense");
+    if (!scoped.ok())
+        return scoped;
+
     return Statement{m_connection, kDeletePlannedExpense, "delete planned expense"}.exec(
-        {toQString(id)});
+        {toQString(id), QString::number(m_activeProfileId)});
 }
 
 // ---------------------------------------------------------------------------
@@ -696,8 +1168,18 @@ SqliteValuationRepository::balanceAt(std::string_view assetId, domain::YearMonth
 {
     using Outcome = application::Result<std::optional<domain::Money>>;
 
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "load valuation");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable = requireReadableParent(
+        m_connection, kSelectAssetOwner, assetId, m_activeProfileId, "load valuation: asset");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectValuation, "load valuation"};
-    const application::Status ran = statement.exec({toQString(assetId), monthText(month)});
+    const application::Status ran =
+        statement.exec({toQString(assetId), monthText(month), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -717,8 +1199,20 @@ SqliteValuationRepository::latest(std::string_view assetId) const
 {
     using Outcome = application::Result<std::optional<domain::Money>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load latest valuation");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable =
+        requireReadableParent(m_connection, kSelectAssetOwner, assetId, m_activeProfileId,
+                              "load latest valuation: asset");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectLatestValuation, "load latest valuation"};
-    const application::Status ran = statement.exec({toQString(assetId)});
+    const application::Status ran =
+        statement.exec({toQString(assetId), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -738,8 +1232,20 @@ SqliteValuationRepository::history(std::string_view assetId) const
 {
     using Outcome = application::Result<std::vector<application::MoneyPoint>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load valuation history");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable =
+        requireReadableParent(m_connection, kSelectAssetOwner, assetId, m_activeProfileId,
+                              "load valuation history: asset");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectValuationHistory, "load valuation history"};
-    const application::Status ran = statement.exec({toQString(assetId)});
+    const application::Status ran =
+        statement.exec({toQString(assetId), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -764,12 +1270,32 @@ application::Status SqliteValuationRepository::upsert(std::string_view assetId,
                                                       domain::YearMonth month,
                                                       domain::Money balance)
 {
-    return Statement{m_connection, kUpsertValuation, "save valuation"}.exec({
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "save valuation");
+    if (!scoped.ok())
+        return scoped;
+
+    const application::Status writable = requireWritableParent(
+        m_connection, kSelectAssetOwner, assetId, m_activeProfileId, "save valuation: asset");
+    if (!writable.ok())
+        return writable;
+
+    Statement statement{m_connection, kUpsertValuation, "save valuation"};
+    const application::Status ran = statement.exec({
         toQString(assetId),
         monthText(month),
         static_cast<qint64>(balance.minorUnits()),
         QString::fromUtf8(domain::storageKey(balance.currency())),
+        toQString(assetId),
+        QString::number(m_activeProfileId),
     });
+    if (!ran.ok())
+        return ran;
+    // The ownership check above already refused a foreign asset; this catches
+    // the same disagreement if it happened between the check and the write.
+    if (statement.affected() == 0)
+        return application::Status::err("save valuation: asset '" + std::string{assetId} +
+                                        "' does not belong to the active profile");
+    return application::Status::success();
 }
 
 application::Result<std::optional<domain::YearMonth>>
@@ -777,8 +1303,13 @@ SqliteValuationRepository::mostRecentMonth() const
 {
     using Outcome = application::Result<std::optional<domain::YearMonth>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load latest valuation month");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectLatestValuationMonth, "load latest valuation month"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -801,8 +1332,19 @@ SqliteDebtBalanceRepository::balanceAt(std::string_view liabilityId, domain::Yea
 {
     using Outcome = application::Result<std::optional<domain::Money>>;
 
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "load debt balance");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable =
+        requireReadableParent(m_connection, kSelectLiabilityOwner, liabilityId, m_activeProfileId,
+                              "load debt balance: liability");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectDebtBalance, "load debt balance"};
-    const application::Status ran = statement.exec({toQString(liabilityId), monthText(month)});
+    const application::Status ran = statement.exec(
+        {toQString(liabilityId), monthText(month), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -822,8 +1364,20 @@ SqliteDebtBalanceRepository::latest(std::string_view liabilityId) const
 {
     using Outcome = application::Result<std::optional<domain::Money>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load latest debt balance");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable =
+        requireReadableParent(m_connection, kSelectLiabilityOwner, liabilityId, m_activeProfileId,
+                              "load latest debt balance: liability");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectLatestDebtBalance, "load latest debt balance"};
-    const application::Status ran = statement.exec({toQString(liabilityId)});
+    const application::Status ran =
+        statement.exec({toQString(liabilityId), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -843,8 +1397,20 @@ SqliteDebtBalanceRepository::history(std::string_view liabilityId) const
 {
     using Outcome = application::Result<std::vector<application::MoneyPoint>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load debt balance history");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
+    const application::Status readable =
+        requireReadableParent(m_connection, kSelectLiabilityOwner, liabilityId, m_activeProfileId,
+                              "load debt balance history: liability");
+    if (!readable.ok())
+        return Outcome::err(readable.error());
+
     Statement statement{m_connection, kSelectDebtBalanceHistory, "load debt balance history"};
-    const application::Status ran = statement.exec({toQString(liabilityId)});
+    const application::Status ran =
+        statement.exec({toQString(liabilityId), QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -870,12 +1436,32 @@ application::Status SqliteDebtBalanceRepository::upsert(std::string_view liabili
                                                         domain::YearMonth month,
                                                         domain::Money balance)
 {
-    return Statement{m_connection, kUpsertDebtBalance, "save debt balance"}.exec({
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "save debt balance");
+    if (!scoped.ok())
+        return scoped;
+
+    const application::Status writable =
+        requireWritableParent(m_connection, kSelectLiabilityOwner, liabilityId, m_activeProfileId,
+                              "save debt balance: liability");
+    if (!writable.ok())
+        return writable;
+
+    Statement statement{m_connection, kUpsertDebtBalance, "save debt balance"};
+    const application::Status ran = statement.exec({
         toQString(liabilityId),
         monthText(month),
         static_cast<qint64>(balance.minorUnits()),
         QString::fromUtf8(domain::storageKey(balance.currency())),
+        toQString(liabilityId),
+        QString::number(m_activeProfileId),
     });
+    if (!ran.ok())
+        return ran;
+    if (statement.affected() == 0)
+        return application::Status::err("save debt balance: liability '" +
+                                        std::string{liabilityId} +
+                                        "' does not belong to the active profile");
+    return application::Status::success();
 }
 
 application::Result<std::optional<domain::YearMonth>>
@@ -883,9 +1469,14 @@ SqliteDebtBalanceRepository::mostRecentMonth() const
 {
     using Outcome = application::Result<std::optional<domain::YearMonth>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load latest debt balance month");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectLatestDebtBalanceMonth,
                         "load latest debt balance month"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -908,8 +1499,13 @@ SqliteMonthFlowRepository::at(domain::YearMonth month) const
 {
     using Outcome = application::Result<std::optional<domain::MonthFlow>>;
 
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "load month flow");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectMonthFlow, "load month flow"};
-    const application::Status ran = statement.exec({monthText(month)});
+    const application::Status ran =
+        statement.exec({QString::number(m_activeProfileId), monthText(month)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -931,8 +1527,13 @@ SqliteMonthFlowRepository::recent(int count) const
     if (count < 0)
         return Outcome::err("load recent month flows: count must not be negative");
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load recent month flows");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectRecentMonthFlows, "load recent month flows"};
-    const application::Status ran = statement.exec({count});
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId), count});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -974,6 +1575,10 @@ SqliteMonthFlowRepository::recent(int count) const
 application::Status SqliteMonthFlowRepository::upsert(domain::YearMonth month,
                                                       const domain::MonthFlow& flow)
 {
+    const application::Status scoped = requireActiveProfile(m_activeProfileId, "save month flow");
+    if (!scoped.ok())
+        return scoped;
+
     const std::string context = "save month flow " + month.toString();
     const domain::Currency currency = flow.income.currency();
 
@@ -1011,6 +1616,7 @@ application::Status SqliteMonthFlowRepository::upsert(domain::YearMonth month,
     }
 
     return Statement{m_connection, kUpsertMonthFlow, "save month flow"}.exec({
+        QString::number(m_activeProfileId),
         monthText(month),
         static_cast<qint64>(flow.income.minorUnits()),
         static_cast<qint64>(flow.needs.minorUnits()),
@@ -1036,8 +1642,13 @@ application::Result<std::vector<application::PhaseChange>> SqlitePhaseHistoryRep
 {
     using Outcome = application::Result<std::vector<application::PhaseChange>>;
 
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "load phase history");
+    if (!scoped.ok())
+        return Outcome::err(scoped.error());
+
     Statement statement{m_connection, kSelectPhaseHistory, "load phase history"};
-    const application::Status ran = statement.exec();
+    const application::Status ran = statement.exec({QString::number(m_activeProfileId)});
     if (!ran.ok())
         return Outcome::err(ran.error());
 
@@ -1059,8 +1670,13 @@ application::Result<std::vector<application::PhaseChange>> SqlitePhaseHistoryRep
 
 application::Status SqlitePhaseHistoryRepository::append(const application::PhaseChange& change)
 {
+    const application::Status scoped =
+        requireActiveProfile(m_activeProfileId, "append phase change");
+    if (!scoped.ok())
+        return scoped;
+
     return Statement{m_connection, kInsertPhaseHistory, "append phase change"}.exec(
-        {toQString(change.changedAt), phaseText(change.phase)});
+        {QString::number(m_activeProfileId), toQString(change.changedAt), phaseText(change.phase)});
 }
 
 } // namespace hinkwise::infrastructure::sqlite

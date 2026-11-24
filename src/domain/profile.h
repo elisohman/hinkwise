@@ -38,6 +38,10 @@ const char* labelOf(TrackingMode mode);
 /// profile is a value: it is read at startup, edited as a unit, and stored as
 /// one row.
 struct Profile {
+    /// The row this profile was read from, zero before it has been stored.
+    /// The application layer carries it so a saved profile edits the same
+    /// household rather than becoming a second one.
+    std::int64_t id = 0;
     std::string displayName;
     Currency baseCurrency = Currency::Sek;
     Phase phase = Phase::BuildingWealth;

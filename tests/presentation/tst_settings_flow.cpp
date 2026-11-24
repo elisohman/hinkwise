@@ -14,6 +14,8 @@
 #include "domain/targets.h"
 #include "domain/year_month.h"
 #include "infrastructure/json/backup.h"
+#include "infrastructure/sqlite/database.h"
+#include "infrastructure/sqlite/repositories.h"
 #include "presentation/app_controller.h"
 #include "presentation/input_text.h"
 #include "presentation/settings_view_model.h"
@@ -23,6 +25,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLocale>
+#include <QSqlDatabase>
 #include <QString>
 #include <QTemporaryDir>
 #include <QTest>
@@ -77,6 +80,9 @@ private slots:
     void bufferTargetFollowsTheBandAndSaves();
     void draftsSurviveReloadAndDiscard();
     void trackingModeOffersBothChoicesAndPersists();
+    void exportIncludesEveryHousehold();
+    void controllerFollowsAProfileSwitchedByAnotherConnection();
+    void aProfileSwitchInsideATransactionIsRefused();
 
 private:
     QTemporaryDir m_dataDirectory;
@@ -360,10 +366,11 @@ void TestSettingsFlow::exportWritesEveryRecordedPoint()
 
     QFile file{path};
     QVERIFY(file.open(QIODevice::ReadOnly));
-    const application::Result<infrastructure::json::BackupData> parsed =
+    const application::Result<infrastructure::json::Backup> parsed =
         infrastructure::json::backupFromJson(file.readAll().toStdString());
     QVERIFY2(parsed.ok(), parsed.error().c_str());
-    const infrastructure::json::BackupData& data = parsed.value();
+    QCOMPARE(parsed.value().profiles.size(), std::size_t{1});
+    const infrastructure::json::BackupData& data = parsed.value().profiles.front();
 
     QCOMPARE(QString::fromStdString(data.profile.displayName), QStringLiteral("Familjen"));
     QCOMPARE(data.assets.size(), std::size_t{2});
@@ -394,7 +401,7 @@ void TestSettingsFlow::exportWritesEveryRecordedPoint()
 
     // The weekday the file was written is not part of the format, so a second
     // export of the same household produces the same text.
-    const QString first = QString::fromStdString(infrastructure::json::toJson(data));
+    const QString first = QString::fromStdString(infrastructure::json::toJson(parsed.value()));
     QCOMPARE(settings.exportBackup(QUrl::fromLocalFile(path)), QString{});
     QFile again{path};
     QVERIFY(again.open(QIODevice::ReadOnly));
@@ -592,6 +599,156 @@ void TestSettingsFlow::trackingModeOffersBothChoicesAndPersists()
     QCOMPARE(settings.saveTrackingMode(), QString{});
     QCOMPARE(static_cast<int>(m_controller->profile()->trackingMode),
              static_cast<int>(domain::TrackingMode::Planning));
+}
+
+void TestSettingsFlow::exportIncludesEveryHousehold()
+{
+    const qint64 originalId = m_controller->activeProfileId();
+    QVERIFY(originalId > 0);
+    const QString originalName = QString::fromStdString(m_controller->profile()->displayName);
+
+    auto opened = infrastructure::sqlite::Database::open(m_controller->databasePath());
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    const QSqlDatabase connection = opened.value().connection();
+
+    infrastructure::sqlite::SqliteProfileRepository profiles{connection};
+    domain::Profile second;
+    second.displayName = "Export second household";
+    second.baseCurrency = Currency::Sek;
+    second.phase = Phase::BuildingWealth;
+    second.jurisdiction = swedishJurisdiction();
+    second.trackingMode = TrackingMode::Planning;
+
+    const application::Result<domain::Profile> created = profiles.create(second);
+    QVERIFY2(created.ok(), created.error().c_str());
+    const std::int64_t secondId = created.value().id;
+
+    infrastructure::sqlite::SqliteAssetRepository assets{connection};
+    assets.setActiveProfile(secondId);
+    QVERIFY(assets.upsert(makeAsset("export-fund", "Export fund", AssetKind::Fund)).ok());
+
+    infrastructure::sqlite::SqliteValuationRepository valuations{connection};
+    valuations.setActiveProfile(secondId);
+    QVERIFY(valuations.upsert("export-fund", YearMonth{2026, 2}, sek(4321)).ok());
+
+    SettingsViewModel settings;
+    const QString path = m_dataDirectory.path() + QStringLiteral("/backup-every.json");
+    QCOMPARE(settings.exportBackup(QUrl::fromLocalFile(path)), QString{});
+
+    QFile file{path};
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const application::Result<infrastructure::json::Backup> parsed =
+        infrastructure::json::backupFromJson(file.readAll().toStdString());
+    QVERIFY2(parsed.ok(), parsed.error().c_str());
+    QVERIFY(parsed.value().profiles.size() >= std::size_t{2});
+
+    bool sawOriginal = false;
+    bool sawSecond = false;
+    for (const infrastructure::json::BackupData& bundle : parsed.value().profiles) {
+        if (bundle.profile.displayName == originalName.toStdString())
+            sawOriginal = true;
+        if (bundle.profile.displayName == "Export second household") {
+            sawSecond = true;
+            QCOMPARE(bundle.assets.size(), std::size_t{1});
+            QCOMPARE(QString::fromStdString(bundle.assets[0].id), QStringLiteral("export-fund"));
+            QCOMPARE(bundle.assetValuations.size(), std::size_t{1});
+            QCOMPARE(bundle.assetValuations[0].points.size(), std::size_t{1});
+            QCOMPARE(bundle.assetValuations[0].points[0].amount.minorUnits(), qint64{4321});
+        }
+    }
+    QVERIFY(sawOriginal);
+    QVERIFY(sawSecond);
+
+    // Leave the stored pointer where it was: writing a backup is a read.
+    QVERIFY(profiles.setActive(originalId).ok());
+}
+
+void TestSettingsFlow::controllerFollowsAProfileSwitchedByAnotherConnection()
+{
+    const qint64 originalId = m_controller->activeProfileId();
+    QVERIFY(originalId > 0);
+    const QString originalName = QString::fromStdString(m_controller->profile()->displayName);
+    const std::vector<Asset> originalAssets = m_controller->assets();
+
+    auto opened = infrastructure::sqlite::Database::open(m_controller->databasePath());
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    const QSqlDatabase connection = opened.value().connection();
+
+    infrastructure::sqlite::SqliteProfileRepository profiles{connection};
+    domain::Profile second;
+    second.displayName = "Switch second household";
+    second.baseCurrency = Currency::Sek;
+    second.phase = Phase::BuildingWealth;
+    second.jurisdiction = swedishJurisdiction();
+    second.trackingMode = TrackingMode::Planning;
+
+    const application::Result<domain::Profile> created = profiles.create(second);
+    QVERIFY2(created.ok(), created.error().c_str());
+    const std::int64_t secondId = created.value().id;
+
+    infrastructure::sqlite::SqliteAssetRepository assets{connection};
+    assets.setActiveProfile(secondId);
+    QVERIFY(assets.upsert(makeAsset("switch-fund", "Switch fund", AssetKind::Fund)).ok());
+
+    // The second connection moved meta.active_profile. The controller has to
+    // notice on the next call rather than keep reading the old household.
+    QCOMPARE(m_controller->activeProfileId(), secondId);
+    QVERIFY(m_controller->profile().has_value());
+    QCOMPARE(QString::fromStdString(m_controller->profile()->displayName),
+             QStringLiteral("Switch second household"));
+
+    const std::vector<Asset> switchedAssets = m_controller->assets();
+    QCOMPARE(switchedAssets.size(), std::size_t{1});
+    QCOMPARE(QString::fromStdString(switchedAssets[0].id), QStringLiteral("switch-fund"));
+
+    // Switching back through the same second connection brings the original
+    // household back, with no row from the other one mixed in.
+    QVERIFY(profiles.setActive(originalId).ok());
+    QCOMPARE(m_controller->activeProfileId(), originalId);
+    QCOMPARE(QString::fromStdString(m_controller->profile()->displayName), originalName);
+
+    const std::vector<Asset> restoredAssets = m_controller->assets();
+    QCOMPARE(restoredAssets.size(), originalAssets.size());
+    for (const Asset& asset : restoredAssets)
+        QVERIFY(QString::fromStdString(asset.id) != QStringLiteral("switch-fund"));
+}
+
+void TestSettingsFlow::aProfileSwitchInsideATransactionIsRefused()
+{
+    const qint64 originalId = m_controller->activeProfileId();
+    QVERIFY(originalId > 0);
+
+    auto opened = infrastructure::sqlite::Database::open(m_controller->databasePath());
+    QVERIFY2(opened.ok(), opened.error().c_str());
+    const QSqlDatabase connection = opened.value().connection();
+
+    infrastructure::sqlite::SqliteProfileRepository profiles{connection};
+    domain::Profile second;
+    second.displayName = "Transaction second household";
+    second.baseCurrency = Currency::Sek;
+    second.phase = Phase::BuildingWealth;
+    second.jurisdiction = swedishJurisdiction();
+    second.trackingMode = TrackingMode::Planning;
+
+    const application::Result<domain::Profile> created = profiles.create(second);
+    QVERIFY2(created.ok(), created.error().c_str());
+    QVERIFY(profiles.setActive(originalId).ok());
+
+    application::Result<std::unique_ptr<application::Transaction>> transaction =
+        m_controller->beginTransaction();
+    QVERIFY2(transaction.ok(), transaction.error().c_str());
+
+    // The repositories must not move to another household while the open
+    // transaction may still roll its writes back.
+    const application::Status switched = m_controller->setActiveProfile(created.value().id);
+    QVERIFY(!switched.ok());
+    QVERIFY(switched.error().find("transaction") != std::string::npos);
+    QCOMPARE(m_controller->activeProfileId(), originalId);
+    QCOMPARE(m_controller->profile()->id, originalId);
+
+    const application::Status committed = transaction.value()->commit();
+    QVERIFY2(committed.ok(), committed.error().c_str());
+    QCOMPARE(m_controller->activeProfileId(), originalId);
 }
 
 QTEST_GUILESS_MAIN(TestSettingsFlow)

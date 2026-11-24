@@ -158,6 +158,15 @@ void TestMultiWriteFlow::aRefusedBalanceLeavesNoHouseholdBehind()
     QVERIFY(!m_controller->profile().has_value());
     QVERIFY(m_controller->assets().empty());
     QVERIFY(!m_controller->monthFlow(AppController::currentMonth()).has_value());
+
+    // The rollback also restores the controller's pointer: the next write must
+    // fail as "no active profile" rather than aim at the profile the database
+    // threw away.
+    QCOMPARE(m_controller->activeProfileId(), qint64{0});
+    const application::Status afterRollback =
+        m_controller->addAsset(domain::makeAsset("ghost", "Ghost", domain::AssetKind::Fund));
+    QVERIFY(!afterRollback.ok());
+    QVERIFY(afterRollback.error().find("no active profile") != std::string::npos);
 }
 
 /// The other half of the boundary: when every write succeeds, the single commit

@@ -46,9 +46,9 @@ QString storageKeyText(std::string_view text)
     return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
 }
 
-std::string indexed(const char* field, qsizetype index)
+std::string indexedIn(const std::string& context, const char* field, qsizetype index)
 {
-    return "backup: '" + std::string{field} + "'[" + std::to_string(index) + "]";
+    return context + ": '" + std::string{field} + "'[" + std::to_string(index) + "]";
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +164,57 @@ QJsonObject phaseChangeToJson(const application::PhaseChange& change)
     QJsonObject object;
     put(object, "changedAt", storageKeyText(change.changedAt));
     put(object, "phase", storageKeyText(domain::storageKey(change.phase)));
+    return object;
+}
+
+QJsonObject profileBundleToJson(const BackupData& data)
+{
+    QJsonObject object;
+    put(object, "profile", profileToJson(data.profile));
+
+    QJsonArray assets;
+    for (const domain::Asset& asset : data.assets)
+        assets.append(assetToJson(asset));
+    put(object, "assets", assets);
+
+    QJsonArray liabilities;
+    for (const domain::Liability& liability : data.liabilities)
+        liabilities.append(liabilityToJson(liability));
+    put(object, "liabilities", liabilities);
+
+    QJsonArray plannedExpenses;
+    for (const domain::PlannedExpense& expense : data.plannedExpenses)
+        plannedExpenses.append(plannedExpenseToJson(expense));
+    put(object, "plannedExpenses", plannedExpenses);
+
+    QJsonArray assetValuations;
+    for (const AssetValuations& valuations : data.assetValuations) {
+        QJsonObject entry;
+        put(entry, "assetId", storageKeyText(valuations.assetId));
+        put(entry, "points", pointsToJson(valuations.points));
+        assetValuations.append(entry);
+    }
+    put(object, "assetValuations", assetValuations);
+
+    QJsonArray liabilityBalances;
+    for (const LiabilityBalances& balances : data.liabilityBalances) {
+        QJsonObject entry;
+        put(entry, "liabilityId", storageKeyText(balances.liabilityId));
+        put(entry, "points", pointsToJson(balances.points));
+        liabilityBalances.append(entry);
+    }
+    put(object, "liabilityBalances", liabilityBalances);
+
+    QJsonArray monthFlows;
+    for (const application::MonthFlowRecord& record : data.monthFlows)
+        monthFlows.append(monthFlowToJson(record));
+    put(object, "monthFlows", monthFlows);
+
+    QJsonArray phaseHistory;
+    for (const application::PhaseChange& change : data.phaseHistory)
+        phaseHistory.append(phaseChangeToJson(change));
+    put(object, "phaseHistory", phaseHistory);
+
     return object;
 }
 
@@ -576,7 +627,7 @@ application::Result<std::vector<MoneyPoint>> pointsFromJson(const QJsonValue& va
 
     std::vector<MoneyPoint> points;
     for (qsizetype i = 0; i < array.value().size(); ++i) {
-        const std::string where = indexed("points", i);
+        const std::string where = indexedIn(context, "points", i);
         const application::Result<QJsonObject> object = asObject(array.value().at(i), where);
         if (!object.ok())
             return Outcome::err(object.error());
@@ -698,132 +749,61 @@ application::Result<application::PhaseChange> phaseChangeFromJson(const QJsonVal
     return Outcome::ok(change);
 }
 
-} // namespace
-
-std::string toJson(const BackupData& data)
-{
-    QJsonObject root;
-    put(root, "version", kBackupVersion);
-    put(root, "profile", profileToJson(data.profile));
-
-    QJsonArray assets;
-    for (const domain::Asset& asset : data.assets)
-        assets.append(assetToJson(asset));
-    put(root, "assets", assets);
-
-    QJsonArray liabilities;
-    for (const domain::Liability& liability : data.liabilities)
-        liabilities.append(liabilityToJson(liability));
-    put(root, "liabilities", liabilities);
-
-    QJsonArray plannedExpenses;
-    for (const domain::PlannedExpense& expense : data.plannedExpenses)
-        plannedExpenses.append(plannedExpenseToJson(expense));
-    put(root, "plannedExpenses", plannedExpenses);
-
-    QJsonArray assetValuations;
-    for (const AssetValuations& valuations : data.assetValuations) {
-        QJsonObject object;
-        put(object, "assetId", storageKeyText(valuations.assetId));
-        put(object, "points", pointsToJson(valuations.points));
-        assetValuations.append(object);
-    }
-    put(root, "assetValuations", assetValuations);
-
-    QJsonArray liabilityBalances;
-    for (const LiabilityBalances& balances : data.liabilityBalances) {
-        QJsonObject object;
-        put(object, "liabilityId", storageKeyText(balances.liabilityId));
-        put(object, "points", pointsToJson(balances.points));
-        liabilityBalances.append(object);
-    }
-    put(root, "liabilityBalances", liabilityBalances);
-
-    QJsonArray monthFlows;
-    for (const application::MonthFlowRecord& record : data.monthFlows)
-        monthFlows.append(monthFlowToJson(record));
-    put(root, "monthFlows", monthFlows);
-
-    QJsonArray phaseHistory;
-    for (const application::PhaseChange& change : data.phaseHistory)
-        phaseHistory.append(phaseChangeToJson(change));
-    put(root, "phaseHistory", phaseHistory);
-
-    return toStd(QString::fromUtf8(QJsonDocument{root}.toJson(QJsonDocument::Indented)));
-}
-
-application::Result<BackupData> backupFromJson(std::string_view text)
+application::Result<BackupData> profileBundleFromJson(const QJsonObject& root,
+                                                      const std::string& context)
 {
     using Outcome = application::Result<BackupData>;
-
-    QJsonParseError error{};
-    const QByteArray bytes{text.data(), static_cast<qsizetype>(text.size())};
-    const QJsonDocument document = QJsonDocument::fromJson(bytes, &error);
-    if (error.error != QJsonParseError::NoError)
-        return Outcome::err("backup: invalid JSON at offset " + std::to_string(error.offset) +
-                            ": " + toStd(error.errorString()));
-
-    if (!document.isObject())
-        return Outcome::err("backup: the file is not a JSON object");
-    const QJsonObject root = document.object();
-
-    const application::Result<int> version = requireInt(root, "version", "backup");
-    if (!version.ok())
-        return Outcome::err(version.error());
-    if (version.value() != kBackupVersion)
-        return Outcome::err("backup: unsupported version " + std::to_string(version.value()) +
-                            ", this build reads version " + std::to_string(kBackupVersion));
 
     BackupData data;
 
     const application::Result<domain::Profile> profile =
-        profileFromJson(root.value(key("profile")), "backup: 'profile'");
+        profileFromJson(root.value(key("profile")), context + ": 'profile'");
     if (!profile.ok())
         return Outcome::err(profile.error());
     data.profile = profile.value();
 
     const application::Result<QJsonArray> assets =
-        asArray(root.value(key("assets")), "backup: 'assets'");
+        asArray(root.value(key("assets")), context + ": 'assets'");
     if (!assets.ok())
         return Outcome::err(assets.error());
     for (qsizetype i = 0; i < assets.value().size(); ++i) {
         const application::Result<domain::Asset> asset =
-            assetFromJson(assets.value().at(i), indexed("assets", i));
+            assetFromJson(assets.value().at(i), indexedIn(context, "assets", i));
         if (!asset.ok())
             return Outcome::err(asset.error());
         data.assets.push_back(asset.value());
     }
 
     const application::Result<QJsonArray> liabilities =
-        asArray(root.value(key("liabilities")), "backup: 'liabilities'");
+        asArray(root.value(key("liabilities")), context + ": 'liabilities'");
     if (!liabilities.ok())
         return Outcome::err(liabilities.error());
     for (qsizetype i = 0; i < liabilities.value().size(); ++i) {
         const application::Result<domain::Liability> liability =
-            liabilityFromJson(liabilities.value().at(i), indexed("liabilities", i));
+            liabilityFromJson(liabilities.value().at(i), indexedIn(context, "liabilities", i));
         if (!liability.ok())
             return Outcome::err(liability.error());
         data.liabilities.push_back(liability.value());
     }
 
     const application::Result<QJsonArray> plannedExpenses =
-        asArray(root.value(key("plannedExpenses")), "backup: 'plannedExpenses'");
+        asArray(root.value(key("plannedExpenses")), context + ": 'plannedExpenses'");
     if (!plannedExpenses.ok())
         return Outcome::err(plannedExpenses.error());
     for (qsizetype i = 0; i < plannedExpenses.value().size(); ++i) {
-        const application::Result<domain::PlannedExpense> expense =
-            plannedExpenseFromJson(plannedExpenses.value().at(i), indexed("plannedExpenses", i));
+        const application::Result<domain::PlannedExpense> expense = plannedExpenseFromJson(
+            plannedExpenses.value().at(i), indexedIn(context, "plannedExpenses", i));
         if (!expense.ok())
             return Outcome::err(expense.error());
         data.plannedExpenses.push_back(expense.value());
     }
 
     const application::Result<QJsonArray> assetValuations =
-        asArray(root.value(key("assetValuations")), "backup: 'assetValuations'");
+        asArray(root.value(key("assetValuations")), context + ": 'assetValuations'");
     if (!assetValuations.ok())
         return Outcome::err(assetValuations.error());
     for (qsizetype i = 0; i < assetValuations.value().size(); ++i) {
-        const std::string where = indexed("assetValuations", i);
+        const std::string where = indexedIn(context, "assetValuations", i);
         const application::Result<QJsonObject> object =
             asObject(assetValuations.value().at(i), where);
         if (!object.ok())
@@ -846,11 +826,11 @@ application::Result<BackupData> backupFromJson(std::string_view text)
     }
 
     const application::Result<QJsonArray> liabilityBalances =
-        asArray(root.value(key("liabilityBalances")), "backup: 'liabilityBalances'");
+        asArray(root.value(key("liabilityBalances")), context + ": 'liabilityBalances'");
     if (!liabilityBalances.ok())
         return Outcome::err(liabilityBalances.error());
     for (qsizetype i = 0; i < liabilityBalances.value().size(); ++i) {
-        const std::string where = indexed("liabilityBalances", i);
+        const std::string where = indexedIn(context, "liabilityBalances", i);
         const application::Result<QJsonObject> object =
             asObject(liabilityBalances.value().at(i), where);
         if (!object.ok())
@@ -873,27 +853,95 @@ application::Result<BackupData> backupFromJson(std::string_view text)
     }
 
     const application::Result<QJsonArray> monthFlows =
-        asArray(root.value(key("monthFlows")), "backup: 'monthFlows'");
+        asArray(root.value(key("monthFlows")), context + ": 'monthFlows'");
     if (!monthFlows.ok())
         return Outcome::err(monthFlows.error());
     for (qsizetype i = 0; i < monthFlows.value().size(); ++i) {
         const application::Result<application::MonthFlowRecord> record =
-            monthFlowFromJson(monthFlows.value().at(i), indexed("monthFlows", i));
+            monthFlowFromJson(monthFlows.value().at(i), indexedIn(context, "monthFlows", i));
         if (!record.ok())
             return Outcome::err(record.error());
         data.monthFlows.push_back(record.value());
     }
 
     const application::Result<QJsonArray> phaseHistory =
-        asArray(root.value(key("phaseHistory")), "backup: 'phaseHistory'");
+        asArray(root.value(key("phaseHistory")), context + ": 'phaseHistory'");
     if (!phaseHistory.ok())
         return Outcome::err(phaseHistory.error());
     for (qsizetype i = 0; i < phaseHistory.value().size(); ++i) {
         const application::Result<application::PhaseChange> change =
-            phaseChangeFromJson(phaseHistory.value().at(i), indexed("phaseHistory", i));
+            phaseChangeFromJson(phaseHistory.value().at(i), indexedIn(context, "phaseHistory", i));
         if (!change.ok())
             return Outcome::err(change.error());
         data.phaseHistory.push_back(change.value());
+    }
+
+    return Outcome::ok(std::move(data));
+}
+
+} // namespace
+
+std::string toJson(const Backup& data)
+{
+    QJsonObject root;
+    put(root, "version", kBackupVersion);
+
+    QJsonArray profiles;
+    for (const BackupData& profile : data.profiles)
+        profiles.append(profileBundleToJson(profile));
+    put(root, "profiles", profiles);
+
+    return toStd(QString::fromUtf8(QJsonDocument{root}.toJson(QJsonDocument::Indented)));
+}
+
+application::Result<Backup> backupFromJson(std::string_view text)
+{
+    using Outcome = application::Result<Backup>;
+
+    QJsonParseError error{};
+    const QByteArray bytes{text.data(), static_cast<qsizetype>(text.size())};
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &error);
+    if (error.error != QJsonParseError::NoError)
+        return Outcome::err("backup: invalid JSON at offset " + std::to_string(error.offset) +
+                            ": " + toStd(error.errorString()));
+
+    if (!document.isObject())
+        return Outcome::err("backup: the file is not a JSON object");
+    const QJsonObject root = document.object();
+
+    const application::Result<int> version = requireInt(root, "version", "backup");
+    if (!version.ok())
+        return Outcome::err(version.error());
+
+    Backup data;
+    if (version.value() == 1) {
+        // Version 1 held one profile at the root. It is read as a one-element
+        // list, which is the same file the release before profiles wrote.
+        const application::Result<BackupData> single = profileBundleFromJson(root, "backup");
+        if (!single.ok())
+            return Outcome::err(single.error());
+        data.profiles.push_back(single.value());
+        return Outcome::ok(std::move(data));
+    }
+
+    if (version.value() != kBackupVersion)
+        return Outcome::err("backup: unsupported version " + std::to_string(version.value()) +
+                            ", this build reads versions 1 and " + std::to_string(kBackupVersion));
+
+    const application::Result<QJsonArray> profiles =
+        asArray(root.value(key("profiles")), "backup: 'profiles'");
+    if (!profiles.ok())
+        return Outcome::err(profiles.error());
+    for (qsizetype i = 0; i < profiles.value().size(); ++i) {
+        const std::string where = "backup: 'profiles'[" + std::to_string(i) + "]";
+        const application::Result<QJsonObject> object = asObject(profiles.value().at(i), where);
+        if (!object.ok())
+            return Outcome::err(object.error());
+
+        const application::Result<BackupData> bundle = profileBundleFromJson(object.value(), where);
+        if (!bundle.ok())
+            return Outcome::err(bundle.error());
+        data.profiles.push_back(bundle.value());
     }
 
     return Outcome::ok(std::move(data));

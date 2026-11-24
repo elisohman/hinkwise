@@ -22,6 +22,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -86,6 +87,11 @@ private slots:
 private:
     QSqlDatabase connection() const;
 
+    /// Stores the household every scoped repository in these tests belongs to
+    /// and returns its id. The repositories refuse to run without one, which
+    /// is the rule under test elsewhere; here it is the starting state.
+    std::int64_t seedProfile();
+
     std::optional<QTemporaryDir> m_directory;
     std::optional<sqlite::Database> m_database;
     QString m_path;
@@ -110,6 +116,25 @@ void TestRepositories::init()
 QSqlDatabase TestRepositories::connection() const
 {
     return m_database->connection();
+}
+
+std::int64_t TestRepositories::seedProfile()
+{
+    sqlite::SqliteProfileRepository profiles{connection()};
+
+    domain::Profile profile;
+    profile.displayName = "Elis";
+    profile.baseCurrency = domain::Currency::Sek;
+    profile.phase = domain::Phase::BuildingWealth;
+    profile.jurisdiction = domain::swedishJurisdiction();
+
+    if (!profiles.save(profile).ok())
+        return 0;
+
+    const application::Result<std::optional<domain::Profile>> loaded = profiles.load();
+    if (!loaded.ok() || !loaded.value())
+        return 0;
+    return loaded.value()->id;
 }
 
 void TestRepositories::profileIsMissingOnAFreshDatabase()
@@ -185,7 +210,11 @@ void TestRepositories::profileRoundTrip()
 
 void TestRepositories::assetRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
 
     const domain::Asset fund = domain::makeAsset("fund", "Global fund", domain::AssetKind::Fund);
     domain::Asset flat = domain::withBucket(
@@ -220,7 +249,11 @@ void TestRepositories::assetRoundTrip()
 
 void TestRepositories::assetUpsertOverwrites()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
 
     QVERIFY(assets.upsert(domain::makeAsset("fund", "Global fund", domain::AssetKind::Fund)).ok());
 
@@ -243,7 +276,11 @@ void TestRepositories::assetUpsertOverwrites()
 
 void TestRepositories::liabilityRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteLiabilityRepository liabilities{connection()};
+    liabilities.setActiveProfile(profileId);
 
     const domain::Liability mortgage =
         domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
@@ -286,7 +323,11 @@ void TestRepositories::liabilityRoundTrip()
 
 void TestRepositories::plannedExpenseRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqlitePlannedExpenseRepository expenses{connection()};
+    expenses.setActiveProfile(profileId);
 
     domain::PlannedExpense roof;
     roof.id = "roof";
@@ -322,10 +363,15 @@ void TestRepositories::plannedExpenseRoundTrip()
 
 void TestRepositories::valuationRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     QVERIFY(assets.upsert(domain::makeAsset("fund", "Global fund", domain::AssetKind::Fund)).ok());
 
     sqlite::SqliteValuationRepository valuations{connection()};
+    valuations.setActiveProfile(profileId);
     QVERIFY(valuations.upsert("fund", domain::YearMonth{2026, 1}, sek(1000000)).ok());
     QVERIFY(valuations.upsert("fund", domain::YearMonth{2026, 3}, sek(1200000)).ok());
 
@@ -389,8 +435,13 @@ void TestRepositories::valuationRoundTrip()
 /// failed.
 void TestRepositories::mostRecentMonthIsEmptyOnAnEmptyTable()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteValuationRepository valuations{connection()};
     sqlite::SqliteDebtBalanceRepository balances{connection()};
+    valuations.setActiveProfile(profileId);
+    balances.setActiveProfile(profileId);
 
     const application::Result<std::optional<domain::YearMonth>> valuationMonth =
         valuations.mostRecentMonth();
@@ -405,8 +456,13 @@ void TestRepositories::mostRecentMonthIsEmptyOnAnEmptyTable()
 
 void TestRepositories::deletingAnAssetCascadesItsValuations()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     sqlite::SqliteValuationRepository valuations{connection()};
+    valuations.setActiveProfile(profileId);
 
     QVERIFY(assets.upsert(domain::makeAsset("fund", "Global fund", domain::AssetKind::Fund)).ok());
     QVERIFY(valuations.upsert("fund", domain::YearMonth{2026, 1}, sek(1000000)).ok());
@@ -434,13 +490,18 @@ void TestRepositories::deletingAnAssetCascadesItsValuations()
 
 void TestRepositories::debtBalanceRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteLiabilityRepository liabilities{connection()};
+    liabilities.setActiveProfile(profileId);
     QVERIFY(liabilities
                 .upsert(domain::makeLiability("bolan", "Mortgage", domain::LiabilityKind::Mortgage,
                                               domain::InterestRate::fromPartsPer100k(4200)))
                 .ok());
 
     sqlite::SqliteDebtBalanceRepository balances{connection()};
+    balances.setActiveProfile(profileId);
     QVERIFY(balances.upsert("bolan", domain::YearMonth{2026, 1}, sek(250000000)).ok());
     QVERIFY(balances.upsert("bolan", domain::YearMonth{2026, 2}, sek(247500000)).ok());
 
@@ -506,7 +567,11 @@ void TestRepositories::debtBalanceRoundTrip()
 
 void TestRepositories::monthFlowRoundTrip()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteMonthFlowRepository flows{connection()};
+    flows.setActiveProfile(profileId);
 
     // January records where its 10 000 kr of saving went; February records only
     // the total, which is what a month written before the breakdown has.
@@ -601,13 +666,17 @@ void TestRepositories::monthFlowRoundTrip()
 /// because that would drop the parts that are there.
 void TestRepositories::monthFlowWithAPartlyStoredBreakdownIsAnError()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     QSqlQuery insert{connection()};
     QVERIFY(insert.exec(
-        QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, "
-                       "saving_minor, currency, saving_buffer_minor) VALUES "
-                       "('2026-03', 3000000, 1500000, 500000, 1000000, 'SEK', 400000)")));
+        QStringLiteral("INSERT INTO month_flow (profile_id, month, income_minor, needs_minor, "
+                       "wants_minor, saving_minor, currency, saving_buffer_minor) VALUES "
+                       "(1, '2026-03', 3000000, 1500000, 500000, 1000000, 'SEK', 400000)")));
 
     sqlite::SqliteMonthFlowRepository flows{connection()};
+    flows.setActiveProfile(profileId);
 
     const application::Result<std::optional<domain::MonthFlow>> at =
         flows.at(domain::YearMonth{2026, 3});
@@ -625,15 +694,19 @@ void TestRepositories::monthFlowWithAPartlyStoredBreakdownIsAnError()
 /// household a split that contradicts its own saving.
 void TestRepositories::monthFlowBreakdownThatDoesNotAddUpIsAnError()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     QSqlQuery insert{connection()};
     QVERIFY(insert.exec(
-        QStringLiteral("INSERT INTO month_flow (month, income_minor, needs_minor, wants_minor, "
-                       "saving_minor, currency, saving_buffer_minor, saving_invest_minor, "
-                       "saving_amort_minor) VALUES "
-                       "('2026-04', 3000000, 1500000, 500000, 1000000, 'SEK', 400000, "
+        QStringLiteral("INSERT INTO month_flow (profile_id, month, income_minor, needs_minor, "
+                       "wants_minor, saving_minor, currency, saving_buffer_minor, "
+                       "saving_invest_minor, saving_amort_minor) VALUES "
+                       "(1, '2026-04', 3000000, 1500000, 500000, 1000000, 'SEK', 400000, "
                        "400000, 100000)")));
 
     sqlite::SqliteMonthFlowRepository flows{connection()};
+    flows.setActiveProfile(profileId);
 
     const application::Result<std::optional<domain::MonthFlow>> at =
         flows.at(domain::YearMonth{2026, 4});
@@ -651,7 +724,11 @@ void TestRepositories::monthFlowBreakdownThatDoesNotAddUpIsAnError()
 
 void TestRepositories::monthFlowCurrencyMismatchIsAnError()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     sqlite::SqliteMonthFlowRepository flows{connection()};
+    flows.setActiveProfile(profileId);
 
     // A single month in another currency is not a problem in itself.
     const domain::MonthFlow january = euroFlowOf(3000000);
@@ -675,14 +752,18 @@ void TestRepositories::monthFlowCurrencyMismatchIsAnError()
 
 void TestRepositories::unknownStoredTextIsAnError()
 {
+    const std::int64_t profileId = seedProfile();
+    QVERIFY(profileId > 0);
+
     // Text the domain does not recognise - a hand-edited file, or a row from a
     // future release - is reported, not thrown and not guessed.
     QSqlQuery insert{connection()};
     QVERIFY(insert.exec(QStringLiteral("INSERT INTO asset (id, name, kind, bucket, liquid, "
-                                       "included_in_headline) VALUES ('x', 'Mystery', "
-                                       "'space-ship', 'growth', 1, 1)")));
+                                       "included_in_headline, profile_id) VALUES ('x', "
+                                       "'Mystery', 'space-ship', 'growth', 1, 1, 1)")));
 
     sqlite::SqliteAssetRepository assets{connection()};
+    assets.setActiveProfile(profileId);
     const application::Result<std::vector<domain::Asset>> all = assets.all();
     QVERIFY(!all.ok());
     QVERIFY(all.error().find("space-ship") != std::string::npos);

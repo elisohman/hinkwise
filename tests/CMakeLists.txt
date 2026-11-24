@@ -155,4 +155,5 @@ target_link_libraries(tst_transactions PRIVATE hinkwise_application)
 
 hinkwise_add_infrastructure_test(tst_backup infrastructure/tst_backup.cpp)
 hinkwise_add_infrastructure_test(tst_migrator infrastructure/tst_migrator.cpp)
+hinkwise_add_infrastructure_test(tst_profiles infrastructure/tst_profiles.cpp)
 hinkwise_add_infrastructure_test(tst_repositories infrastructure/tst_repositories.cpp)
